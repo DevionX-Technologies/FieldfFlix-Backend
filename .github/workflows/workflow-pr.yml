@@ -1,0 +1,63 @@
+# Workflow name that describes the main purpose
+name: Continuous Deployment
+
+# Trigger conditions for the workflow
+on:
+  # Triggered when a PR is closed
+  pull_request:
+    branches:
+      - 'main'
+    types: [closed]
+  # Manual trigger with environment selection
+  workflow_dispatch:
+    inputs:
+      choice:
+        type: choice
+        description: 'Select the target environment'
+        required: true
+        options:
+          - dev
+
+jobs:
+  # Job to verify if PR was merged
+  check-merged:
+    runs-on: ubuntu-latest
+    outputs:
+      is_merged: ${{ steps.check_if_merged.outputs.is_merged }}
+    steps:
+      - name: Check if the PR is merged
+        id: check_if_merged
+        run: echo "::set-output name=is_merged::${{ github.event.pull_request.merged }}"
+
+  # Job to build and lint the project
+  lint-and-build:
+    runs-on: ubuntu-latest
+    needs: [check-merged]
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '20.12'
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint:check
+
+      - name: Build Project
+        run: npm run build
+
+  # Job to deploy to Elastic Beanstalk dev environment
+  elasticbeanstalk-deploy-dev:
+    # Only runs if PR was merged or manually triggered for dev
+    if: ${{ needs.check-merged.outputs.is_merged == 'true' }} || (github.event_name == 'workflow_dispatch' && github.event.inputs.choice == 'dev')
+    uses: ./.github/workflows/template-deploy.yml
+    needs: [check-merged, lint-and-build]
+    with:
+      env: dev
+      region: ap-south-1
+    secrets: inherit

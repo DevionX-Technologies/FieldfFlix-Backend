@@ -1,0 +1,209 @@
+service: fieldflicks
+
+plugins:
+  # - serverless-plugin-warmup # Disabled temporarily for deployment
+  - serverless-esbuild
+  - serverless-offline
+  - serverless-deployment-bucket
+  - serverless-dotenv-plugin
+  - serverless-prune-plugin
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: ${opt:region, 'ap-south-1'}
+  stage: ${opt:stage, 'production'}
+  timeout: 900
+  memorySize: 3008
+  architecture: x86_64
+  tracing:
+    lambda: true
+  deploymentBucket:
+    name: ${self:service}-${opt:stage, 'production'}-deployment-bucket
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - 'xray:PutTraceSegments'
+            - 'xray:PutTelemetryRecords'
+            - 'xray:GetSamplingRules'
+            - 'xray:GetSamplingTargets'
+            - 'xray:GetSamplingStatisticSummaries'
+          Resource: '*'
+        - Effect: Allow
+          Action:
+            - s3:GetObject
+            - s3:PutObject
+            - s3:PutObjectAcl
+            - s3:DeleteObject
+          Resource: 'arn:aws:s3:::*/*'
+        - Effect: Allow
+          Action:
+            - s3:ListBucket
+          Resource: 'arn:aws:s3:::*'
+        - Effect: Allow
+          Action:
+            - lambda:InvokeFunction
+          Resource: '*'
+        - Effect: Allow
+          Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:DescribeLogGroups
+            - logs:DescribeLogStreams
+            - logs:PutLogEvents
+            - logs:GetLogEvents
+            - logs:FilterLogEvents
+          Resource: '*'
+        - Effect: Allow
+          Action:
+            - ec2:CreateNetworkInterface
+            - ec2:DescribeNetworkInterfaces
+            - ec2:DeleteNetworkInterface
+          Resource: '*'
+        - Effect: Allow
+          Action:
+            - sqs:SendMessage
+            - sqs:ReceiveMessage
+            - sqs:DeleteMessage
+            - sqs:ChangeMessageVisibility
+            - sqs:GetQueueAttributes
+            - sqs:GetQueueUrl
+          Resource:
+            - !GetAtt ClipProcessingQueue.Arn
+
+custom:
+  serverless-offline:
+    httpPort: 8080
+  warmup:
+    default:
+      enabled: true
+      events:
+        - schedule: rate(5 minutes)
+      payload:
+        source: 'serverless-plugin-warmup'
+      concurrency: 1
+      prewarm: true
+      timeout: 10
+  prune:
+    automatic: true
+    number: 5
+  esbuild:
+    bundle: true
+    config: './esbuild.config.js'
+    external: []
+    platform: node
+    target: node20
+    format: cjs
+    sourcemap: true
+    keepNames: true
+
+package:
+  individually: true
+  exclude:
+    - node_modules/**
+    - src/**
+    - test/**
+    - '*.md'
+    - .git/**
+    - .gitignore
+    - .env*
+
+functions:
+  muxM3u8Converter:
+    handler: dist/src/lambda/mux-m3u8-converter/mux-m3u8-converter_lambda.main
+    name: ${self:service}-${self:provider.stage}-m3u8-converter
+    description: Convert Mux M3U8 streams to MP4 and upload to S3 (Direct Invocation)
+    memorySize: 512
+    timeout: 900
+    architecture: x86_64
+    ephemeralStorageSize: 8192
+    environment:
+      FFMPEG_PATH: /opt/bin/ffmpeg # <— tell the code the exact binary to use
+    layers:
+      - arn:aws:lambda:ap-south-1:047719657860:layer:fieldflicks-ffmpeg-layer:1
+    package:
+      individually: true
+      exclude:
+        - node_modules/**
+        - src/**
+        - test/**
+        - '*.md'
+        - .git/**
+        - .gitignore
+        - .env*
+      include:
+        - dist/src/lambda/mux-m3u8-converter/**
+
+  retryFailedHighlights:
+    handler: dist/src/lambda/retry-failed-highlights/retry-failed-highlights_lambda.main
+    name: ${self:service}-${self:provider.stage}-retry-failed-highlights
+    description: Sweep stuck/failed highlights, reset status, and enqueue distinct recordings to SQS
+    memorySize: 512
+    timeout: 900
+    architecture: x86_64
+    environment:
+      CLIP_PROCESSING_QUEUE_URL: !Ref ClipProcessingQueue
+    events:
+      - schedule:
+          rate: rate(10 minutes)
+          description: 'Sweep stuck/failed highlights and enqueue recordings to SQS every 10 minutes'
+          enabled: true
+    layers:
+      - arn:aws:lambda:ap-south-1:047719657860:layer:npm-dependencies:2
+    package:
+      individually: true
+      exclude:
+        - node_modules/**
+        - src/**
+        - test/**
+        - '*.md'
+        - .git/**
+        - .gitignore
+        - .env*
+      include:
+        - dist/src/lambda/retry-failed-highlights/**
+        - dist/src/constant/constant.js
+
+  muxUploadVideo:
+    handler: dist/src/lambda/mux-upload-video/mux-upload-video_lambda.main
+    name: ${self:service}-${self:provider.stage}-mux-upload-video
+    description: Upload video recordings from S3 to Mux when files are uploaded to recordings folder
+    memorySize: 512
+    timeout: 900
+    architecture: x86_64
+    events:
+      - s3:
+          bucket: ${self:service}-${self:provider.stage}-media
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: recordings/
+            - suffix: .mp4
+          existing: true
+          forceDeploy: true
+    layers:
+      - arn:aws:lambda:ap-south-1:047719657860:layer:npm-dependencies:2
+    package:
+      individually: true
+      exclude:
+        - node_modules/**
+        - src/**
+        - test/**
+        - '*.md'
+        - .git/**
+        - .gitignore
+        - .env*
+      include:
+        - dist/src/lambda/mux-upload-video/**
+        - dist/src/constant/constant.js
+
+resources:
+  Resources:
+    ClipProcessingQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-${self:provider.stage}-clip-processing
+        VisibilityTimeout: 960
+        MessageRetentionPeriod: 1209600
+        ReceiveMessageWaitTimeSeconds: 20

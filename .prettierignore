@@ -1,0 +1,25 @@
+# Ignore artifacts:
+build
+coverage
+
+# Ignore node_modules directory:
+node_modules
+
+# Ignore all JSON files:
+*.json
+
+# Ignore all minified files
+*.min.js
+*.min.css
+
+# Ignore all log files:
+*.log
+
+# Ignore package-lock.json:
+package-lock.json
+
+.eslintrc.js
+jest.config.js
+tsconfig.json
+tsconfig.build.json
+nest-cli.json

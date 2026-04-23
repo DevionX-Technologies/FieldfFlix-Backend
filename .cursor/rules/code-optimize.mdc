@@ -1,0 +1,57 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+JSDoc Comments
+
+Use clear and descriptive JSDoc comments for all classes, methods, and functions to improve maintainability and understanding of the codebase.
+
+Swagger API Documentation
+
+Use @nestjs/swagger (or your framework's equivalent) to generate Swagger documentation.
+
+Annotate all controllers, DTOs, and endpoints with appropriate decorators for automatic API documentation.
+
+Validation
+
+Use DTOs and class-based validation with class-validator and class-transformer.
+
+Apply appropriate decorators (e.g., @IsString(), @IsUUID(), @IsOptional()) to validate and transform incoming requests.
+
+Testing
+
+Write unit tests using Jest.
+
+Cover all:
+
+Core business logic
+
+Edge cases
+
+Controller methods
+
+Service methods
+
+Error handling paths
+
+Code Quality and Reusability
+
+Follow SOLID principles (Single Responsibility, Open/Closed, etc.).
+
+Break reusable logic into services, utils, or helpers to avoid code duplication.
+
+Keep controller logic minimal; move business logic to services.
+
+Error Handling
+
+Use consistent error formats with meaningful messages and HTTP status codes.
+
+Handle edge cases such as:
+
+Camera already in use
+
+Missing or invalid data
+
+
+External service failures (e.g., S3, Ngrok, RaspberryPi)

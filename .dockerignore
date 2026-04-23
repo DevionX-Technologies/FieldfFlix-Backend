@@ -1,0 +1,33 @@
+node_modules
+.husky
+.github
+.vscode
+database
+docs
+infrastructure
+changelog-template.hbs
+check-code-quality.sh
+CODE_OF_CONDUCT.md
+commitlint.config.js
+CONTRIBUTING.md
+validate-branch.sh
+changelog-template-hbs
+check-code-quality.sh
+validate-branch.sh
+# Logs
+logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+# compiled output
+/dist
+.env
+.env.example
+yarn.lock
+/swagger-spec
+/swagger-spec.json
+.backend-api
+README.md
