@@ -1102,20 +1102,30 @@ export class RecordingHighlightsService {
       },
     );
 
-    // Update recording status and set isVideoCreated = true
+    // Update recording status, persist the playback id from the webhook (so the
+    // app's list/highlight endpoints have a valid stream URL even if the upload
+    // path didn't store one), and mark the video as created.
+    const recordingUpdate: Partial<Recording> = {
+      status: 'ready',
+      isVideoCreated: true,
+    };
+    if (webhookPlaybackId && !recording.mux_playback_id) {
+      recordingUpdate.mux_playback_id = webhookPlaybackId;
+      recordingUpdate.mux_media_url = `https://stream.mux.com/${webhookPlaybackId}.m3u8`;
+    }
+
     await queryRunner.manager.update(
       Recording,
       { id: recording.id },
-      {
-        status: 'ready',
-        isVideoCreated: true,
-      },
+      recordingUpdate,
     );
 
     this.logger.log(
       `Updated recording status to ready and isVideoCreated=true`,
       {
         recordingId: recording.id,
+        persistedPlaybackId:
+          recordingUpdate.mux_playback_id ?? '(already set)',
       },
     );
 
