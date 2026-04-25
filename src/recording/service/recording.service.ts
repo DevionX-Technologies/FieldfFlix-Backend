@@ -46,6 +46,9 @@ export class RecordingService {
   private readonly logger = new Logger(RecordingService.name);
   private readonly lambdaClient: LambdaClient;
 
+  /** If `in_progress` is older than this, it is treated as abandoned (app crash / no stop) and cleared. */
+  private static readonly STALE_IN_PROGRESS_MS = 2 * 60 * 60 * 1000; // 2 hours
+
   /**
    * @param recordingRepository The repository for the Recording entity.
    * @param sharedRecordingRepository The repository for the SharedRecording entity.
@@ -135,6 +138,38 @@ export class RecordingService {
     await queryRunner.manager.save(NotificationEntity, notificationPayload);
   }
 
+  private isInProgressRecordingStale(rec: Recording): boolean {
+    if (!rec?.startTime) return true;
+    const start = new Date(rec.startTime).getTime();
+    if (Number.isNaN(start)) return true;
+    return Date.now() - start > RecordingService.STALE_IN_PROGRESS_MS;
+  }
+
+  /**
+   * Marks a stuck `in_progress` row as ended so a new session can start.
+   * Best-effort stop on the Raspberry Pi (do not block start on failure).
+   */
+  private async abandonOrphanInProgressRecording(rec: Recording): Promise<void> {
+    this.logger.warn(
+      `Clearing stale in_progress recording ${rec.id} for camera ${rec.cameraId} (started ${rec.startTime})`,
+    );
+    rec.status = 'interrupted';
+    rec.endTime = new Date();
+    await this.recordingRepository.save(rec);
+
+    const baseUrl = rec.camera?.raspberryPiBaseUrl;
+    const piId = rec.raspberryPiRecordingId;
+    if (baseUrl && piId) {
+      this.raspberryPiApiService
+        .stopRecording(baseUrl, piId)
+        .catch((e: Error) =>
+          this.logger.warn(
+            `Best-effort Pi stop for abandoned recording ${rec.id}: ${e?.message}`,
+          ),
+        );
+    }
+  }
+
   /**
    * Starts a new recording for a user and camera.
    * Checks if a recording is already in progress for the camera.
@@ -164,12 +199,19 @@ export class RecordingService {
     // 2. Check if a recording is already in progress for this camera
     const existingRecording = await this.recordingRepository.findOne({
       where: { cameraId, status: 'in_progress' },
+      relations: ['camera'],
     });
 
     if (existingRecording) {
-      throw new ConflictException(
-        `Recording is already in progress for camera with ID ${cameraId}.`,
-      );
+      if (this.isInProgressRecordingStale(existingRecording)) {
+        await this.abandonOrphanInProgressRecording(existingRecording);
+      } else {
+        throw new ConflictException({
+          message: `Recording is already in progress for camera with ID ${cameraId}.`,
+          existingRecordingId: existingRecording.id,
+          cameraId,
+        });
+      }
     }
 
     // 3. Call Raspberry Pi API to start recording with exponential backoff retry logic

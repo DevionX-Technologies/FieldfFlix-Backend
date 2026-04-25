@@ -6,6 +6,7 @@ import {
   IsBoolean,
   IsEnum,
   IsPhoneNumber,
+  ValidateIf,
 } from 'class-validator';
 import { SingUpType } from 'src/auth/enum/auth.enum';
 
@@ -93,6 +94,15 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   name?: string;
+
+  @ApiPropertyOptional({
+    example: 'user@example.com',
+    description: 'User email address',
+  })
+  @IsOptional()
+  @ValidateIf((_, v) => v != null)
+  @IsEmail()
+  email?: string | null;
 
   @ApiPropertyOptional({
     example: '+91 797113822',

@@ -321,6 +321,7 @@ describe('RecordingService', () => {
       });
       expect(recordingRepository.findOne).toHaveBeenCalledWith({
         where: { cameraId: startRecordingDto.cameraId, status: 'in_progress' },
+        relations: ['camera'],
       });
       expect(raspberryPiApiService.startRecording).toHaveBeenCalledWith(
         camera.raspberryPiBaseUrl,
@@ -397,6 +398,7 @@ describe('RecordingService', () => {
       });
       expect(recordingRepository.findOne).toHaveBeenCalledWith({
         where: { cameraId: startRecordingDto.cameraId, status: 'in_progress' },
+        relations: ['camera'],
       });
       // Ensure no further calls were made if existing recording found
       expect(raspberryPiApiService.startRecording).not.toHaveBeenCalled();
@@ -432,6 +434,7 @@ describe('RecordingService', () => {
       });
       expect(recordingRepository.findOne).toHaveBeenCalledWith({
         where: { cameraId: startRecordingDto.cameraId, status: 'in_progress' },
+        relations: ['camera'],
       });
       // Expect the RPi service to have been called maxRetries times (3 times)
       expect(raspberryPiApiService.startRecording).toHaveBeenCalledTimes(3);
@@ -489,6 +492,7 @@ describe('RecordingService', () => {
       });
       expect(recordingRepository.findOne).toHaveBeenCalledWith({
         where: { cameraId: startRecordingDto.cameraId, status: 'in_progress' },
+        relations: ['camera'],
       });
       expect(raspberryPiApiService.startRecording).toHaveBeenCalledTimes(2);
       // Expect create to be called with the DTO data plus base properties that create mock handles
