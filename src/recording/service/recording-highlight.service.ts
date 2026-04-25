@@ -12,6 +12,10 @@ import {
   HIGHLIGHT_STATUS,
 } from 'src/constant/constant';
 import { ClipProcessingEnqueueService } from 'src/clip-processing/clip-processing.enqueue.service';
+import { FireBaseNotificationService } from 'src/common/service/fire-base.service';
+import { User } from 'src/user/entities/user.entity';
+import { NotificationEntity } from 'src/notification/entities/notification.entity';
+import { MessageStatus, NotificationType } from 'src/constant/enum';
 
 @Injectable()
 export class RecordingHighlightsService {
@@ -21,7 +25,67 @@ export class RecordingHighlightsService {
     @InjectDataSource() private readonly dataSource: DataSource,
     private readonly muxService: MuxService,
     private readonly enqueueService: ClipProcessingEnqueueService,
+    private readonly fireBaseNotificationService: FireBaseNotificationService,
   ) {}
+
+  /**
+   * Fires a `RECORDING_COMPLETE` push + DB notification once a Mux source asset becomes ready
+   * (the recording is now playable in-app). Uses the same shape as `RECORDING_STOP` so the
+   * mobile client can reuse its existing notification deep-link handler.
+   */
+  private async sendRecordingCompleteNotification(
+    recordingId: string,
+    userId: string,
+    muxPlaybackId: string | null,
+    queryRunner: QueryRunner,
+  ): Promise<void> {
+    try {
+      const user = await queryRunner.manager.findOne(User, {
+        where: { id: userId },
+        relations: ['user_devices_token'],
+      });
+
+      if (!user || !user.user_devices_token?.length) return;
+
+      const title = 'Your highlights are ready';
+      const body = 'Tap to watch your match preview and saved highlights.';
+      const dbData = [
+        {
+          recordingId,
+          userId,
+          mux_playback_id: muxPlaybackId,
+          status: 'ready',
+          completedAt: new Date(),
+        },
+      ];
+
+      for (const deviceTokenObj of user.user_devices_token) {
+        const token = deviceTokenObj.devices_id;
+        await this.fireBaseNotificationService.sendNotification(
+          {
+            notification: { title, body },
+            token,
+            data: { click_action: 'RECORDING_COMPLETE' },
+          },
+          user.id,
+        );
+      }
+
+      await queryRunner.manager.save(NotificationEntity, {
+        user_id: user.id,
+        title,
+        body,
+        data: dbData,
+        message_status: MessageStatus.UNREAD,
+        notification_type: NotificationType.RECORDING_COMPLETE,
+        is_soft_delete: false,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Failed to send RECORDING_COMPLETE notification for ${recordingId}: ${err?.message || err}`,
+      );
+    }
+  }
 
   /**
    * Formats seconds into HH:MM:SS or MM:SS format depending on duration
@@ -1054,6 +1118,17 @@ export class RecordingHighlightsService {
         recordingId: recording.id,
       },
     );
+
+    // Notify the owner that the recording is now viewable in-app.
+    // Use the playback id from the webhook (more reliable than the DB at this point).
+    if (recording.userId) {
+      await this.sendRecordingCompleteNotification(
+        recording.id,
+        recording.userId,
+        webhookPlaybackId,
+        queryRunner,
+      );
+    }
 
     // Find all pending highlights that need clip creation
     const pendingHighlights = await queryRunner.manager.find(

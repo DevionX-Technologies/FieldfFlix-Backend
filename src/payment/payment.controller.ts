@@ -104,6 +104,28 @@ export class PaymentController {
   }
 
   /**
+   * Returns the user's currently active premium plan, if any.
+   * The mobile client uses this as the source-of-truth entitlement for
+   * gating the 2.5-minute video preview vs. full playback.
+   */
+  @Get('plan/active')
+  @ApiOperation({
+    summary: 'Get active plan',
+    description:
+      'Returns { active, plan, paid_at, expires_at } based on the latest completed MEDIA_ACCESS payment for the user.',
+  })
+  @ApiResponse({ status: 200, description: 'Active plan retrieved' })
+  async getActivePlan(@Request() req: any): Promise<{
+    active: boolean;
+    plan: 'free' | 'pro' | 'premium' | null;
+    paid_at: Date | null;
+    expires_at: Date | null;
+    payment_id: string | null;
+  }> {
+    return this.paymentService.getActivePlan(req.user.user_id);
+  }
+
+  /**
    * Get payment details by ID
    */
   @Get(':paymentId')

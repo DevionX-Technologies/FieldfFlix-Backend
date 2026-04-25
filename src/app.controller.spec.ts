@@ -15,9 +15,9 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return payment module health string', () => {
+    it('should return recording updates health string', () => {
       expect(appController.getHello()).toBe(
-        'FieldFlicks — payment module (POST /payments/plan/create-order, /payments/verify).',
+        'FieldFlicks — recording updates (Mux signed playback, share deep links, /recording/:id/highlights, /payments/plan/active).',
       );
     });
   });

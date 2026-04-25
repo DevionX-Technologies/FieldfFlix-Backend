@@ -283,6 +283,54 @@ export class PaymentService {
     }
   }
 
+  /**
+   * Returns the latest active premium plan for a user (one-time `MEDIA_ACCESS` payment).
+   * Plan name is parsed back from `description` since the payments schema does not
+   * carry a dedicated plan column yet ("FieldFlicks pro plan" -> "pro").
+   */
+  async getActivePlan(userId: string): Promise<{
+    active: boolean;
+    plan: 'free' | 'pro' | 'premium' | null;
+    paid_at: Date | null;
+    expires_at: Date | null;
+    payment_id: string | null;
+  }> {
+    try {
+      const payment = await this.paymentRepository.findOne({
+        where: {
+          user_id: userId,
+          status: PaymentStatus.COMPLETED,
+          payment_type: PaymentType.MEDIA_ACCESS,
+        },
+        order: { paid_at: 'DESC', created_at: 'DESC' },
+      });
+
+      if (!payment) {
+        return { active: false, plan: null, paid_at: null, expires_at: null, payment_id: null };
+      }
+
+      // Plan-style purchases have `expires_at == null` (lifetime). Order-style purchases
+      // (recording access) keep their 30-min order TTL in `expires_at`; ignore those for plans.
+      // For now, treat any completed MEDIA_ACCESS as "active".
+      const desc = (payment.description || '').toLowerCase();
+      let plan: 'free' | 'pro' | 'premium' | null = null;
+      if (desc.includes('premium')) plan = 'premium';
+      else if (desc.includes('pro')) plan = 'pro';
+      else if (desc.includes('free')) plan = 'free';
+
+      return {
+        active: true,
+        plan,
+        paid_at: payment.paid_at ?? null,
+        expires_at: null,
+        payment_id: payment.id,
+      };
+    } catch (error) {
+      this.logger.error('Failed to load active plan', error);
+      return { active: false, plan: null, paid_at: null, expires_at: null, payment_id: null };
+    }
+  }
+
   async hasUserPaidForContent(
     userId: string,
     recordingId?: string,

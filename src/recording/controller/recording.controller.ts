@@ -379,23 +379,20 @@ export class RecordingController {
   }
 
   /**
-   * Streams a shared video file using a share token.
-   * This endpoint is public.
-   *
-   * @param shareToken The share token for the video.
-   * @returns A JSON object with the presigned URL.
-   * @throws NotFoundException if the share token is invalid or the video is not found.
+   * Resolves a share token to a viewer-friendly recording payload.
+   * Public — anyone with the link can land on the in-app Highlights screen and see the
+   * 2.5-minute preview. Full playback is gated by the user's plan in the mobile client.
+   * If a JWT happens to be present we also stamp a `SharedRecording` row for the viewer.
    */
+  @Public()
   @ApiOperation({
-    summary: 'Get presigned URL for shared video by share token (Public)',
+    summary: 'Resolve a share token (Public)',
+    description:
+      'Returns the recording metadata required to render the Highlights screen for a shared link. Anonymous-friendly — the app gates full playback by entitlement client-side.',
   })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Returns the S3 presigned URL for the shared video.',
-    schema: {
-      type: 'object',
-      properties: { presignedUrl: { type: 'string' } },
-    },
+    description: 'Shared recording resolved successfully.',
   })
   @ApiResponse({
     status: HttpStatus.NOT_FOUND,
@@ -407,28 +404,98 @@ export class RecordingController {
   async streamSharedVideo(
     @Req() req: Request,
     @Param('share_token') shareTokenParam: string,
-  ): Promise<{ presignedUrl: string }> {
+  ): Promise<{
+    recording_id: string | null;
+    owner_id: string | null;
+    mux_playback_id: string | null;
+    mux_media_url: string | null;
+    duration_seconds: number | null;
+    start_time: Date | null;
+    end_time: Date | null;
+    turf_name: string | null;
+    owner_name: string | null;
+    status: string | null;
+    presignedUrl: string | null;
+  }> {
     const actualShareToken = shareTokenParam;
 
-    // Add the URL and decoding logic from MediaUploadController if necessary
-    // For now, assuming shareTokenParam is the actual token.
-    const { user_id } = await this.commonService.extractDataFromToken(req);
+    // The endpoint is public, but a JWT may still be present (logged-in viewer).
+    let viewerUserId: string | null = null;
+    try {
+      const tokenData = await this.commonService.extractDataFromToken(req);
+      viewerUserId = tokenData?.user_id ?? null;
+    } catch {
+      viewerUserId = null;
+    }
 
-    const presignedUrl = await this.recordingService.getMediaByShareToken(
+    const resolved = await this.recordingService.resolveShareToken(
       actualShareToken,
-      user_id,
+      viewerUserId,
     );
 
-    // if (!presignedUrl) {
-    //   this.logger.warn(
-    //     `No presigned URL found for shareToken: ${actualShareToken} (param: ${shareTokenParam})`,
-    //   );
-    //   throw new NotFoundException(
-    //     'Shared media not found or token is invalid.',
-    //   );
-    // }
+    if (!resolved) {
+      throw new NotFoundException(
+        'Shared media not found or token is invalid.',
+      );
+    }
 
-    return { presignedUrl };
+    return {
+      ...resolved,
+      // Backwards compatibility with the previous shape used by older app builds.
+      presignedUrl: resolved.mux_media_url,
+    };
+  }
+
+  /**
+   * Returns the list of READY highlights for a recording, shaped for the mobile
+   * Highlights screen. Auto-generation of highlights is NOT performed here — this
+   * endpoint surfaces what the existing button-press + clip-processing pipeline produced.
+   */
+  @Get(':id/highlights')
+  @ApiOperation({ summary: 'List ready highlights for a recording' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Highlights returned' })
+  async getRecordingHighlights(@Param('id') recordingId: string) {
+    return this.recordingService.getReadyHighlightsForRecording(recordingId);
+  }
+
+  /**
+   * Returns a fresh signed Mux playback token + URL for a recording, suitable for
+   * in-app playback of recordings whose Mux assets are configured with a `signed`
+   * playback policy. Falls back to the existing public URL for older "public" assets.
+   */
+  @Get(':id/playback')
+  @ApiOperation({ summary: 'Get a playback token / URL for a recording' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Playback URL returned' })
+  async getRecordingPlayback(@Param('id') recordingId: string) {
+    const recording = await this.recordingService.getRecordingById(recordingId);
+    if (!recording) {
+      throw new NotFoundException(`Recording with ID ${recordingId} not found`);
+    }
+
+    const playbackId = recording.mux_playback_id;
+    if (!playbackId) {
+      return {
+        recording_id: recording.id,
+        playback_id: null,
+        mux_public_url: null,
+        signed_token: null,
+        signed_url: null,
+        expires_at: null,
+      };
+    }
+
+    const signed = this.muxService.signPlaybackToken(playbackId);
+    const publicUrl = `https://stream.mux.com/${playbackId}.m3u8`;
+    return {
+      recording_id: recording.id,
+      playback_id: playbackId,
+      mux_public_url: publicUrl,
+      signed_token: signed?.token ?? null,
+      signed_url: signed?.token
+        ? `${publicUrl}?token=${signed.token}`
+        : publicUrl,
+      expires_at: signed?.expires_at ?? null,
+    };
   }
 
   /**

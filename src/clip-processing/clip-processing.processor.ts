@@ -265,7 +265,11 @@ export class ClipProcessingProcessor {
               start_time: startTime,
               end_time: endTime,
             }],
-            playback_policy: ['public'],
+            // Match the source asset's policy: when signed playback is configured we mint
+            // signed clips so they only play through the app via a backend-issued JWT.
+            playback_policy: [
+              process.env.MUX_SIGNING_KEY_ID ? 'signed' : 'public',
+            ],
             video_quality: 'basic',
           },
         });

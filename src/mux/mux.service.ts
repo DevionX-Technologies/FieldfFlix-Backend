@@ -64,9 +64,13 @@ export class MuxService {
       }
 
       // Prepare request data
+      // When `MUX_SIGNING_KEY_ID` is configured we issue assets with the `signed` policy so
+      // playback URLs only work in-app (the app obtains a short-lived JWT from the backend).
+      // Otherwise we keep the original `public` policy for backwards compatibility.
+      const usesSignedPolicy = !!process.env.MUX_SIGNING_KEY_ID;
       const data = {
         input: cleanUrl,
-        playback_policy: ['public'],
+        playback_policy: [usesSignedPolicy ? 'signed' : 'public'],
         encoding_tier: 'smart',
       };
 
@@ -387,5 +391,76 @@ export class MuxService {
 
   verifyWebhookSignatureOld(body: any, headers: any, secret: any) {
     this.mux.webhooks.verifySignature(body, headers, secret);
+  }
+
+  /**
+   * Issues a Mux signed-playback JWT (RS256) for a given `playback_id`.
+   * Returns `null` if the signing key isn't configured — the caller can fall back to
+   * the bare public URL for legacy assets created before signed-policy was enabled.
+   *
+   * Required env: `MUX_SIGNING_KEY_ID`, `MUX_PRIVATE_KEY` (PEM, may be base64-encoded).
+   */
+  signPlaybackToken(
+    playbackId: string,
+    ttlSeconds = 60 * 60 * 6,
+  ): { token: string; expires_at: Date } | null {
+    const keyId = process.env.MUX_SIGNING_KEY_ID;
+    let privateKeyRaw = process.env.MUX_PRIVATE_KEY;
+
+    if (!keyId || !privateKeyRaw) {
+      return null;
+    }
+
+    try {
+      // Allow callers to pass the PEM as base64 to avoid newline/escape issues in env files.
+      if (!privateKeyRaw.includes('BEGIN')) {
+        try {
+          privateKeyRaw = Buffer.from(privateKeyRaw, 'base64').toString('utf8');
+        } catch {
+          // fall through with the original value
+        }
+      }
+      // Convert literal "\n" sequences (common in env loaders) into real newlines.
+      const privateKey = privateKeyRaw.replace(/\\n/g, '\n');
+
+      const now = Math.floor(Date.now() / 1000);
+      const exp = now + ttlSeconds;
+      const header = {
+        alg: 'RS256',
+        typ: 'JWT',
+        kid: keyId,
+      };
+      const payload = {
+        sub: playbackId,
+        aud: 'v',
+        exp,
+        kid: keyId,
+      };
+
+      const b64url = (input: Buffer | string) =>
+        (typeof input === 'string' ? Buffer.from(input) : input)
+          .toString('base64')
+          .replace(/=+$/g, '')
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_');
+
+      const headerB64 = b64url(JSON.stringify(header));
+      const payloadB64 = b64url(JSON.stringify(payload));
+      const signingInput = `${headerB64}.${payloadB64}`;
+
+      const signer = crypto.createSign('RSA-SHA256');
+      signer.update(signingInput);
+      signer.end();
+      const signature = signer.sign(privateKey);
+      const signatureB64 = b64url(signature);
+
+      return {
+        token: `${signingInput}.${signatureB64}`,
+        expires_at: new Date(exp * 1000),
+      };
+    } catch (err) {
+      this.logger.error('Failed to sign Mux playback token', err);
+      return null;
+    }
   }
 }

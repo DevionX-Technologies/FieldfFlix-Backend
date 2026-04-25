@@ -35,7 +35,7 @@ import {
   calculatePaymentAmountFromDuration,
   formatDurationToHHMMSS,
 } from 'src/utils/utils';
-import { HOURLY_RATE } from 'src/constant/constant';
+import { HIGHLIGHT_STATUS, HOURLY_RATE } from 'src/constant/constant';
 import { SharedRecordingResponseDto } from '../dto/shared-recording-response.dto';
 
 /**
@@ -816,18 +816,20 @@ export class RecordingService {
       return null;
     }
 
-    const share = await this.sharedRecordingRepository.findOne({
-      where: {
-        recording_id: recording.id,
-        shared_with_user_id: userId,
-      },
-    });
-
-    if (!share) {
-      await this.sharedRecordingRepository.save({
-        recording_id: recording.id,
-        shared_with_user_id: userId,
+    if (userId) {
+      const share = await this.sharedRecordingRepository.findOne({
+        where: {
+          recording_id: recording.id,
+          shared_with_user_id: userId,
+        },
       });
+
+      if (!share) {
+        await this.sharedRecordingRepository.save({
+          recording_id: recording.id,
+          shared_with_user_id: userId,
+        });
+      }
     }
 
     // Ensure essential fields are present
@@ -1230,6 +1232,120 @@ export class RecordingService {
     );
 
     return formattedRecordings;
+  }
+
+  /**
+   * Resolves a share token into a viewer-friendly payload (no auth required).
+   * The mobile app uses this when a user follows a `https://.../shared/media/<token>` link
+   * to land on the Highlights screen. If a user is logged in we also stamp a `SharedRecording`
+   * row so the recording shows up under their "Shared with me" tab.
+   */
+  async resolveShareToken(
+    shareToken: string,
+    viewerUserId: string | null,
+  ): Promise<{
+    recording_id: string;
+    owner_id: string;
+    mux_playback_id: string | null;
+    mux_media_url: string | null;
+    duration_seconds: number | null;
+    start_time: Date | null;
+    end_time: Date | null;
+    turf_name: string | null;
+    owner_name: string | null;
+    status: string | null;
+  } | null> {
+    const recording = await this.recordingRepositoryForMedia.findOne({
+      where: { share_token: shareToken },
+      relations: ['turf', 'user'],
+    });
+
+    if (!recording) return null;
+
+    if (viewerUserId && viewerUserId !== recording.userId) {
+      const existing = await this.sharedRecordingRepository.findOne({
+        where: {
+          recording_id: recording.id,
+          shared_with_user_id: viewerUserId,
+        },
+      });
+      if (!existing) {
+        try {
+          await this.sharedRecordingRepository.save({
+            recording_id: recording.id,
+            shared_with_user_id: viewerUserId,
+          });
+        } catch (e) {
+          this.logger.warn(
+            `Failed to stamp SharedRecording for token ${shareToken}: ${e?.message || e}`,
+          );
+        }
+      }
+    }
+
+    let durationSeconds: number | null = null;
+    if (recording.startTime && recording.endTime) {
+      durationSeconds = Math.max(
+        0,
+        Math.floor(
+          (new Date(recording.endTime).getTime() -
+            new Date(recording.startTime).getTime()) /
+            1000,
+        ),
+      );
+    }
+
+    return {
+      recording_id: recording.id,
+      owner_id: recording.userId,
+      mux_playback_id: recording.mux_playback_id ?? null,
+      mux_media_url: recording.mux_media_url ?? null,
+      duration_seconds: durationSeconds,
+      start_time: recording.startTime ?? null,
+      end_time: recording.endTime ?? null,
+      turf_name: recording.turf?.name ?? null,
+      owner_name:
+        (recording as any)?.user?.name ?? (recording as any)?.user?.full_name ?? null,
+      status: recording.status ?? null,
+    };
+  }
+
+  /**
+   * Returns ready highlights for a single recording, shaped for the mobile Highlights screen.
+   */
+  async getReadyHighlightsForRecording(
+    recordingId: string,
+  ): Promise<
+    Array<{
+      id: string;
+      relative_timestamp: string | null;
+      button_click_timestamp: Date;
+      playback_id: string | null;
+      mux_public_playback_url: string | null;
+      thumbnail_url: string | null;
+      status: string;
+    }>
+  > {
+    const rows = await this.recordingHighlightsRepository.find({
+      where: { recordingId },
+      order: { processing_order: 'ASC', created_at: 'ASC' },
+    });
+
+    return rows
+      .filter((h) => h.status === 'ready' || h.status === HIGHLIGHT_STATUS.READY)
+      .map((h) => ({
+        id: h.id,
+        relative_timestamp: h.relative_timestamp ?? null,
+        button_click_timestamp: h.button_click_timestamp,
+        playback_id: h.playback_id ?? null,
+        mux_public_playback_url:
+          h.mux_public_playback_url ??
+          (h.playback_id ? `https://stream.mux.com/${h.playback_id}.m3u8` : null),
+        thumbnail_url: h.playback_id
+          ? `https://image.mux.com/${h.playback_id}/thumbnail.jpg?time=2`
+          : null,
+        status: h.status ?? 'unknown',
+      }));
   }
 
   /**
