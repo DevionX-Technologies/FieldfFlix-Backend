@@ -9,6 +9,7 @@ import {
   HttpCode,
   HttpStatus,
   HttpException,
+  ValidationPipe,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -19,6 +20,7 @@ import {
 } from '@nestjs/swagger';
 import { PaymentService } from './payment.service';
 import {
+  CreatePlanOrderDto,
   VerifyPaymentDto,
   PaymentVerificationResponseDto,
 } from './dto/payment.dto';
@@ -65,6 +67,23 @@ export class PaymentController {
       req.user.user_id,
       verifyPaymentDto,
     );
+  }
+
+  /**
+   * Create Razorpay order for premium plan (in-app “Upgrade your plan” checkout).
+   */
+  @Post('plan/create-order')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Create order for plan upgrade',
+    description: 'Returns `razorpay_order_id` for client-side Checkout',
+  })
+  @ApiResponse({ status: 200, description: 'Order created' })
+  async createPlanOrder(
+    @Request() req: any,
+    @Body(ValidationPipe) body: CreatePlanOrderDto,
+  ) {
+    return this.paymentService.createPlanOrder(req.user.user_id, body.plan);
   }
 
   /**

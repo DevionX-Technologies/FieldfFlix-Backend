@@ -4,6 +4,7 @@ import {
   IsEnum,
   IsOptional,
   IsUUID,
+  IsIn,
   Min,
   Max,
 } from 'class-validator';
@@ -56,6 +57,13 @@ export class CreatePaymentOrderDto {
   @IsString()
   @IsOptional()
   description?: string;
+}
+
+/** Premium / plan checkout — amounts match mobile `ProfilePremium` copy. */
+export class CreatePlanOrderDto {
+  @ApiProperty({ enum: ['free', 'pro', 'premium'] })
+  @IsIn(['free', 'pro', 'premium'])
+  plan: 'free' | 'pro' | 'premium';
 }
 
 /**

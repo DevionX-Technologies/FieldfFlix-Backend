@@ -15,8 +15,10 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return "Hello World!"', () => {
-      expect(appController.getHello()).toBe('Hello World!');
+    it('should return payment module health string', () => {
+      expect(appController.getHello()).toBe(
+        'FieldFlicks — payment module (POST /payments/plan/create-order, /payments/verify).',
+      );
     });
   });
 });

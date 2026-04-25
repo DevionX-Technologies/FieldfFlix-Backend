@@ -22,12 +22,10 @@ import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
 export class NotificationController {
   constructor(private readonly notificationService: NotificationService) {}
 
-  @Get(':id')
-  findNotificationById(
-    @Req() req: Request,
-    @Param('id') id: string,
-  ): Promise<NotificationEntity> {
-    return this.notificationService.findNotificationById(req, id);
+  /** Static path must be registered before `@Get(':id')` or `user` is captured as the id. */
+  @Get('user/count')
+  countNotificationsByUserId(@Req() req: Request): Promise<number> {
+    return this.notificationService.countNotificationsByUserId(req);
   }
 
   @Get()
@@ -41,9 +39,12 @@ export class NotificationController {
     );
   }
 
-  @Get('user/count')
-  countNotificationsByUserId(@Req() req: Request): Promise<number> {
-    return this.notificationService.countNotificationsByUserId(req);
+  @Get(':id')
+  findNotificationById(
+    @Req() req: Request,
+    @Param('id') id: string,
+  ): Promise<NotificationEntity> {
+    return this.notificationService.findNotificationById(req, id);
   }
 
   @Patch('/:id')

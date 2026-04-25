@@ -13,6 +13,7 @@ import {
 } from './entities/payment.entity';
 import {
   CreatePaymentOrderDto,
+  CreatePlanOrderDto,
   VerifyPaymentDto,
   PaymentResponseDto,
   PaymentVerificationResponseDto,
@@ -142,6 +143,30 @@ export class PaymentService {
       this.logger.error('Failed to create payment order for recording', error);
       throw error;
     }
+  }
+
+  /**
+   * One-time plan purchase (Razorpay). Uses `MEDIA_ACCESS` as a general “non-recording”
+   * payment type until a dedicated `SUBSCRIPTION` type exists in the schema.
+   */
+  async createPlanOrder(
+    userId: string,
+    plan: CreatePlanOrderDto['plan'],
+  ): Promise<PaymentResponseDto> {
+    const prices: Record<CreatePlanOrderDto['plan'], number> = {
+      free: 149,
+      pro: 199,
+      premium: 399,
+    };
+    const amount = prices[plan];
+    if (amount == null) {
+      throw new BadRequestException('Invalid plan');
+    }
+    return this.createPaymentOrder(userId, {
+      amount,
+      payment_type: PaymentType.MEDIA_ACCESS,
+      description: `FieldFlicks ${plan} plan`,
+    });
   }
 
   async createPaymentOrder(

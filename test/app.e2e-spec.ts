@@ -19,6 +19,8 @@ describe('AppController (e2e)', () => {
     return request(app.getHttpServer())
       .get('/')
       .expect(200)
-      .expect('Hello World!');
+      .expect(
+        'FieldFlicks — payment module (POST /payments/plan/create-order, /payments/verify).',
+      );
   });
 });
