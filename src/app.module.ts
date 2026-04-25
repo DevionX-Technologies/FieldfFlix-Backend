@@ -2,6 +2,7 @@ import { MiddlewareConsumer, Module, RequestMethod } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { SharedMediaRootController } from './shared-media-root.controller';
 import { RequestLoggerMiddleware } from './middleware/request-logger.middleware';
 import { RawBodyMiddleware } from './middleware/raw-body.middleware';
 import envConfig from './env.config';
@@ -61,7 +62,7 @@ import { ClipProcessingModule } from './clip-processing/clip-processing.module';
     PaymentModule,
     ClipProcessingModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, SharedMediaRootController],
   providers: [
     AppService,
     AppLogger,

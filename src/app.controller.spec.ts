@@ -15,10 +15,8 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return recording updates health string', () => {
-      expect(appController.getHello()).toBe(
-        'FieldFlicks — recording updates (Mux signed playback, share deep links, /recording/:id/highlights, /payments/plan/active).',
-      );
+    it('should return Highlights page string', () => {
+      expect(appController.getHello()).toBe('Highlights page');
     });
   });
 });
