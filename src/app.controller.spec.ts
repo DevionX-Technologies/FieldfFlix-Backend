@@ -15,8 +15,8 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return previewplayer health string', () => {
-      expect(appController.getHello()).toBe('previewplayer-mux-selfheal');
+    it('should return backendfix health string', () => {
+      expect(appController.getHello()).toBe('backendfix');
     });
   });
 });
