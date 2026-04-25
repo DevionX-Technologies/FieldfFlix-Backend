@@ -15,8 +15,8 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return backendfix health string', () => {
-      expect(appController.getHello()).toBe('backendfix');
+    it('should return muxfix health string', () => {
+      expect(appController.getHello()).toBe('muxfix');
     });
   });
 });
