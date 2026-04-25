@@ -612,7 +612,7 @@ export class RecordingService {
   async getRecordingById(recordingId: string): Promise<Recording | null> {
     const recording = await this.recordingRepository.findOne({
       where: { id: recordingId },
-      relations: ['user', 'turf', 'camera', 'recordingTimestamp'],
+      relations: ['user', 'turf', 'camera'],
     });
     if (!recording) return null;
 
