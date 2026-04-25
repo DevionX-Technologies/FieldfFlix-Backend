@@ -550,9 +550,13 @@ export class RecordingController {
       user_id,
     );
 
-    const appBaseUrl =
-      this.configService.get<string>('APP_BASE_URL') ||
-      'https://www.fieldflicks.com';
+    // Public origin that serves `GET /shared/media/:token` (SharedMediaRootController).
+    // Prefer `APP_BASE_URL` in env; if unset (misconfigured deploy), use production API
+    // so links are not silently wrong.
+    const rawBase =
+      this.configService.get<string>('APP_BASE_URL')?.trim() ||
+      'https://api.devionx.com';
+    const appBaseUrl = rawBase.replace(/\/+$/, '');
     const shareableLink = `${appBaseUrl}/shared/media/${share_token}`;
 
     return { shareableLink };
