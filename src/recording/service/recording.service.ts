@@ -610,10 +610,46 @@ export class RecordingService {
    * @returns The Recording entity with user and camera relations, or null if not found.
    */
   async getRecordingById(recordingId: string): Promise<Recording | null> {
-    return this.recordingRepository.findOne({
+    const recording = await this.recordingRepository.findOne({
       where: { id: recordingId },
-      relations: ['user', 'turf', 'camera', 'recordingTimestamp'], // Include user and camera relations
+      relations: ['user', 'turf', 'camera', 'recordingTimestamp'],
     });
+    if (!recording) return null;
+
+    // If the asset is already published on Mux but the DB still says "processing"
+    // (because a webhook didn't land), trust Mux and patch the row + response.
+    if (
+      recording.mux_asset_id &&
+      (recording.status !== 'ready' || !recording.mux_playback_id)
+    ) {
+      try {
+        const asset = await this.muxService.getAssetDetails(recording.mux_asset_id);
+        if (asset?.status === 'ready') {
+          const livePlaybackId = Array.isArray(asset.playback_ids)
+            ? asset.playback_ids.find((p: any) => p?.policy === 'public')?.id ??
+              asset.playback_ids[0]?.id ??
+              null
+            : null;
+
+          const patch: Partial<Recording> = {};
+          if (recording.status !== 'ready') patch.status = 'ready';
+          if (livePlaybackId && !recording.mux_playback_id) {
+            patch.mux_playback_id = livePlaybackId;
+            patch.mux_media_url = `https://stream.mux.com/${livePlaybackId}.m3u8`;
+          }
+          if (Object.keys(patch).length > 0) {
+            await this.recordingRepository.update(recording.id, patch);
+            Object.assign(recording, patch);
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `Mux self-heal in getRecordingById(${recordingId}) failed: ${err?.message ?? err}`,
+        );
+      }
+    }
+
+    return recording;
   }
 
   /**
@@ -1028,6 +1064,46 @@ export class RecordingService {
           paymentInfo.payment_amount = calculatePaymentAmountFromDuration(
             assetDetails.duration,
           );
+        }
+
+        // Treat Mux as the source of truth for "is the asset playable yet?"
+        // The DB row can be left at `processing`/`completed` if the
+        // `video.asset.ready` webhook never persisted (stale instance, missed
+        // delivery, etc.). When Mux reports `ready` we patch the response (and
+        // best-effort patch the DB) so the app stops showing "Processing".
+        if (assetDetails && assetDetails.status === 'ready') {
+          const livePlaybackId = Array.isArray(assetDetails.playback_ids)
+            ? assetDetails.playback_ids.find((p: any) => p?.policy === 'public')?.id ??
+              assetDetails.playback_ids[0]?.id ??
+              null
+            : null;
+
+          if (recording.status !== 'ready') {
+            (recording as any).status = 'ready';
+          }
+          if (livePlaybackId && !recording.mux_playback_id) {
+            (recording as any).mux_playback_id = livePlaybackId;
+            (recording as any).mux_media_url = `https://stream.mux.com/${livePlaybackId}.m3u8`;
+          }
+
+          // Self-heal the DB row in the background — never block the response.
+          const needsDbPatch =
+            recording.status !== 'ready' ||
+            (livePlaybackId && !recording.mux_playback_id);
+          if (needsDbPatch) {
+            const patch: Partial<Recording> = { status: 'ready' };
+            if (livePlaybackId && !recording.mux_playback_id) {
+              patch.mux_playback_id = livePlaybackId;
+              patch.mux_media_url = `https://stream.mux.com/${livePlaybackId}.m3u8`;
+            }
+            this.recordingRepository
+              .update(recording.id, patch)
+              .catch((err) =>
+                this.logger.warn(
+                  `Self-heal recording ${recording.id} failed: ${err?.message ?? err}`,
+                ),
+              );
+          }
         }
 
         // Process existing payment
