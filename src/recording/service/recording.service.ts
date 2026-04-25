@@ -1328,7 +1328,7 @@ export class RecordingService {
   > {
     const rows = await this.recordingHighlightsRepository.find({
       where: { recordingId },
-      order: { processing_order: 'ASC', created_at: 'ASC' },
+      order: { processing_order: 'ASC', createdAt: 'ASC' },
     });
 
     return rows
