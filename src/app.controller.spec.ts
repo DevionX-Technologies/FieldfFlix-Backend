@@ -15,8 +15,8 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return Highlights page string', () => {
-      expect(appController.getHello()).toBe('Highlights page');
+    it('should return previewplayer health string', () => {
+      expect(appController.getHello()).toBe('previewplayer');
     });
   });
 });
