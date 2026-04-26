@@ -399,6 +399,11 @@ export class MuxService {
    * the bare public URL for legacy assets created before signed-policy was enabled.
    *
    * Required env: `MUX_SIGNING_KEY_ID`, `MUX_PRIVATE_KEY` (PEM, may be base64-encoded).
+   *
+   * The JWT **payload** must be only Mux’s documented claims: `sub`, `aud`, `exp` (and
+   * any optional flags). The signing key id belongs in the **JWS header** as `kid` only —
+   * duplicating `kid` in the body makes `stream.mux.com/.../....m3u8?token=...` return
+   * `{ "type": "invalid_parameters" }`.
    */
   signPlaybackToken(
     playbackId: string,
@@ -430,11 +435,11 @@ export class MuxService {
         typ: 'JWT',
         kid: keyId,
       };
+      // Payload: only Mux’s signed-playback claims (no `kid` here — that breaks validation).
       const payload = {
         sub: playbackId,
         aud: 'v',
         exp,
-        kid: keyId,
       };
 
       const b64url = (input: Buffer | string) =>
