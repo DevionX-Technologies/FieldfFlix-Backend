@@ -15,8 +15,8 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return fieldflicks-api-live health string', () => {
-      expect(appController.getHello()).toBe('fieldflicks-api-live');
+    it('should return fieldflicks-stream-ok health string', () => {
+      expect(appController.getHello()).toBe('fieldflicks-stream-ok');
     });
   });
 });

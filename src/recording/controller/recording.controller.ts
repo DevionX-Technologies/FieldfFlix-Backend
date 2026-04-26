@@ -484,7 +484,7 @@ export class RecordingController {
       };
     }
 
-    const signed = this.muxService.signPlaybackToken(playbackId);
+    const signed = await this.muxService.signPlaybackToken(playbackId);
     const publicUrl = `https://stream.mux.com/${playbackId}.m3u8`;
     return {
       recording_id: recording.id,
@@ -492,7 +492,7 @@ export class RecordingController {
       mux_public_url: publicUrl,
       signed_token: signed?.token ?? null,
       signed_url: signed?.token
-        ? `${publicUrl}?token=${signed.token}`
+        ? `${publicUrl}?token=${encodeURIComponent(signed.token)}`
         : publicUrl,
       expires_at: signed?.expires_at ?? null,
     };
