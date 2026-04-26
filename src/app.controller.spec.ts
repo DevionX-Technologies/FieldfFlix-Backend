@@ -15,8 +15,8 @@ describe('AppController', () => {
   });
 
   describe('root', () => {
-    it('should return appbugs health string', () => {
-      expect(appController.getHello()).toBe('appbugs');
+    it('should return appbugs 2,0 health string', () => {
+      expect(appController.getHello()).toBe('appbugs 2,0');
     });
   });
 });
