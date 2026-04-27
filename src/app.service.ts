@@ -3,6 +3,6 @@ import { Injectable } from '@nestjs/common';
 @Injectable()
 export class AppService {
   getHello(): string {
-    return 'fieldflicks-admin-recording-picker-live';
+    return 'fieldflicks-api-queue-studio-v5';
   }
 }

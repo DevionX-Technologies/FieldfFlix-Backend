@@ -31,6 +31,7 @@ import {
   PaymentStatus,
   PaymentEntity,
 } from 'src/payment/entities/payment.entity';
+import { deriveFlickSportFromTurf } from 'src/common/turf-flick-sport.util';
 import {
   calculatePaymentAmountFromDuration,
   formatDurationToHHMMSS,
@@ -1003,6 +1004,8 @@ export class RecordingService {
       endTime: string | null;
       recording_name: string | null;
       turfName: string | null;
+      flick_sport: 'pickleball' | 'padel' | 'cricket';
+      turf_sports_supported: string[];
     }>
   > {
     const rows = await this.recordingRepository.find({
@@ -1031,6 +1034,8 @@ export class RecordingService {
           : null,
         recording_name: r.recording_name ?? null,
         turfName: r.turf?.name ?? null,
+        flick_sport: deriveFlickSportFromTurf(r.turf?.sports_supported),
+        turf_sports_supported: (r.turf?.sports_supported ?? []).map((x) => String(x)),
       }));
   }
 

@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { deriveFlickSportFromTurf } from 'src/common/turf-flick-sport.util';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
 import { AdminRoleService, FLICK_SHORT_MAX_SEC } from 'src/admin/admin-role.service';
@@ -117,6 +118,7 @@ export class FlickShortsService {
     const { start, end } = resolveClipWindow(dto);
     const rec = await this.recordingRepo.findOne({
       where: { id: dto.recordingId },
+      relations: ['turf'],
     });
     if (!rec) {
       throw new NotFoundException('Recording not found');
@@ -124,9 +126,10 @@ export class FlickShortsService {
     if (!rec.mux_playback_id) {
       throw new BadRequestException('Recording is not ready for streaming yet');
     }
+    const sport = deriveFlickSportFromTurf(rec.turf?.sports_supported);
     const row = this.flickRepo.create({
       recordingId: rec.id,
-      sport: dto.sport,
+      sport,
       title: dto.title.trim(),
       topText: dto.topText,
       bottomText: dto.bottomText,
@@ -140,6 +143,19 @@ export class FlickShortsService {
     });
     const saved = await this.flickRepo.save(row);
     return this.toPublic(saved);
+  }
+
+  async deleteAsAdmin(userId: string, id: string): Promise<{ ok: boolean }> {
+    await this.requireAdminByUserId(userId);
+    const row = await this.flickRepo.findOne({ where: { id } });
+    if (!row) {
+      throw new NotFoundException();
+    }
+    if (row.approved) {
+      throw new BadRequestException('Cannot delete an approved FlickShort');
+    }
+    await this.flickRepo.remove(row);
+    return { ok: true };
   }
 
   async setApproved(

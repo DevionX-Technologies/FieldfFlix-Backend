@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   ParseUUIDPipe,
@@ -48,6 +49,14 @@ export class FlickShortsController {
     @Body() body: SetApprovedBodyDto,
   ) {
     return this.service.setApproved(req.user.user_id, id, body.approved !== false);
+  }
+
+  @Delete(':id')
+  remove(
+    @Req() req: Request & { user: ILocalLoginPayload },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.service.deleteAsAdmin(req.user.user_id, id);
   }
 
   @Post(':id/like')
