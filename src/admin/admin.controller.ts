@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { Request } from 'express';
 import { ILocalLoginPayload } from 'src/auth/strategy/jwt.strategy';
+import { RecordingService } from 'src/recording/service/recording.service';
 import { UserService } from 'src/user/user.service';
 import { AdminRoleService } from './admin-role.service';
 import { AddAdminPhoneDto } from './dto/add-admin-phone.dto';
@@ -23,6 +24,7 @@ export class AdminController {
   constructor(
     private readonly adminRole: AdminRoleService,
     private readonly userService: UserService,
+    private readonly recordingService: RecordingService,
   ) {}
 
   /** Any authenticated user: whether they have admin UI access. */
@@ -31,6 +33,15 @@ export class AdminController {
     const u = await this.userService.findOne(req.user.user_id);
     const isAdmin = await this.adminRole.isAdminByPhone(u.phone_number);
     return { isAdmin };
+  }
+
+  /**
+   * Mux-ready recordings for the FlickShort admin picker (no manual UUID paste).
+   */
+  @Get('recordings-for-flickshorts')
+  async recordingsForFlickshorts(@Req() req: Request & { user: ILocalLoginPayload }) {
+    await this.assertAdmin(req.user.user_id);
+    return this.recordingService.listMuxReadyRecordingsForAdmin();
   }
 
   @Get('phones')

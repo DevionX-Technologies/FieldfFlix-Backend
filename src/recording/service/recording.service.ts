@@ -9,7 +9,7 @@ import {
   HttpException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Not, QueryRunner, Repository } from 'typeorm';
+import { DataSource, IsNull, Not, QueryRunner, Repository } from 'typeorm';
 import { StartRecordingDto } from '../dto/start-recording.dto';
 import { RaspberryPiApiService } from '../../raspberry-pi/raspberry-pi-api.service';
 import { Camera } from '../../camera/camera.entity';
@@ -987,6 +987,52 @@ export class RecordingService {
   /**
    * Converts seconds to HH:MM:SS format
    */
+
+  /**
+   * Mux-ready recordings for admin FlickShort creation (picker + preview).
+   * Returns a compact list; newest first.
+   */
+  async listMuxReadyRecordingsForAdmin(
+    limit = 300,
+  ): Promise<
+    Array<{
+      id: string;
+      mux_playback_id: string;
+      status: string;
+      startTime: string;
+      endTime: string | null;
+      recording_name: string | null;
+      turfName: string | null;
+    }>
+  > {
+    const rows = await this.recordingRepository.find({
+      where: {
+        mux_playback_id: Not(IsNull()),
+      },
+      relations: ['turf'],
+      order: { startTime: 'DESC', id: 'DESC' },
+      take: Math.min(Math.max(limit, 1), 500),
+    });
+
+    return rows
+      .filter((r) => r.mux_playback_id && String(r.mux_playback_id).trim().length > 0)
+      .map((r) => ({
+        id: r.id,
+        mux_playback_id: r.mux_playback_id as string,
+        status: r.status,
+        startTime:
+          r.startTime instanceof Date
+            ? r.startTime.toISOString()
+            : new Date(r.startTime as unknown as string).toISOString(),
+        endTime: r.endTime
+          ? r.endTime instanceof Date
+            ? r.endTime.toISOString()
+            : new Date(r.endTime as unknown as string).toISOString()
+          : null,
+        recording_name: r.recording_name ?? null,
+        turfName: r.turf?.name ?? null,
+      }));
+  }
 
   async getMyRecordings(userId: string): Promise<Recording[]> {
     const recordings = await this.recordingRepository.find({
