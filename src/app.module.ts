@@ -26,6 +26,8 @@ import { RecordingModule } from './recording/recording.module';
 import { MuxModule } from './mux/mux.module';
 import { PaymentModule } from './payment/payment.module';
 import { ClipProcessingModule } from './clip-processing/clip-processing.module';
+import { FlickShortsModule } from './flick-shorts/flick-shorts.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -61,6 +63,8 @@ import { ClipProcessingModule } from './clip-processing/clip-processing.module';
     MuxModule,
     PaymentModule,
     ClipProcessingModule,
+    AdminModule,
+    FlickShortsModule,
   ],
   controllers: [AppController, SharedMediaRootController],
   providers: [
