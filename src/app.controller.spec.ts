@@ -16,7 +16,7 @@ describe('AppController', () => {
 
   describe('root', () => {
     it('should return fieldflicks-stream-ok health string', () => {
-      expect(appController.getHello()).toBe('fieldflicks-backend-deploy-2026-04-28');
+      expect(appController.getHello()).toBe('fieldflicks-backend-deploy-2026-04-28-2');
     });
   });
 });
