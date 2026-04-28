@@ -1458,8 +1458,23 @@ export class RecordingService {
       order: { processing_order: 'ASC', createdAt: 'ASC' },
     });
 
+    /** Include mux-ready clips stuck in `clip_created` (webhook sometimes never flips to `ready`). */
     return rows
-      .filter((h) => h.status === 'ready' || h.status === HIGHLIGHT_STATUS.READY)
+      .filter((h) => {
+        const st = String(h.status ?? '').toLowerCase();
+        if (
+          st === HIGHLIGHT_STATUS.FAILED ||
+          st === HIGHLIGHT_STATUS.PERMANENTLY_FAILED
+        ) {
+          return false;
+        }
+        const hasStream =
+          Boolean(h.playback_id?.trim?.()) || Boolean(h.mux_public_playback_url);
+        if (!hasStream) return false;
+        return (
+          st === HIGHLIGHT_STATUS.READY || st === HIGHLIGHT_STATUS.CLIP_CREATED
+        );
+      })
       .map((h) => ({
         id: h.id,
         relative_timestamp: h.relative_timestamp ?? null,
