@@ -34,6 +34,14 @@ export class AuthService {
     return { message: 'OTP sent to your phone number' };
   }
 
+  async accountExistsByPhone(mobile: string): Promise<{ exists: boolean }> {
+    const phoneNumber = mobile.startsWith('+') ? mobile : `+${mobile}`;
+    const user = await this.userService.findUserPhoneNumberOrEmail({
+      phone_number: phoneNumber,
+    });
+    return { exists: !!user };
+  }
+
   /** Verifies the OTP, then issues the app JWT. */
   async verifyOtp(mobile: string, otp: string): Promise<{
     token: string;

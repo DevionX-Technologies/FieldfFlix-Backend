@@ -1343,6 +1343,7 @@ export class RecordingService {
             id: recording.id,
             userId: recording.userId,
             owner_name: owner?.name || '',
+            owner_phone: owner?.phone_number || '',
             turfId: recording.turfId || null,
             turf_detail: turfDetail,
             startTime: recording.startTime,
@@ -1359,6 +1360,146 @@ export class RecordingService {
     );
 
     return formattedRecordings;
+  }
+
+  /**
+   * Retrieves all recordings shared by a specific owner, including recipient details.
+   */
+  async getRecordingsSharedByMe(userId: string): Promise<
+    Array<{
+      id: string;
+      shared_to_user_id: string;
+      shared_to_user_name: string;
+      shared_to_user_phone: string;
+      recording: {
+        id: string;
+        userId: string;
+        owner_name: string;
+        turfId: string | null;
+        turf_detail: {
+          id: string;
+          name: string;
+          geo_location: any;
+          address_line: string | null;
+          city: string | null;
+          state: string | null;
+          postal_code: string | null;
+          location: string | null;
+          country: string | null;
+        } | null;
+        startTime: Date | null;
+        endTime: Date | null;
+        s3Path: string | null;
+        status: string;
+        mux_asset_id: string | null;
+        mux_playback_id: string | null;
+        mux_media_url: string | null;
+        recordingHighlights: Array<{
+          id: string;
+          button_click_timestamp: Date;
+          relative_timestamp: string | null;
+          asset_id: string | null;
+          status: string | null;
+          playback_id: string | null;
+          mux_public_playback_url: string | null;
+        }>;
+      };
+    }>
+  > {
+    const sharedRows = await this.sharedRecordingRepository.find({
+      where: {
+        recording: {
+          userId,
+        } as any,
+      },
+      relations: [
+        'recording',
+        'recording.recordingHighlights',
+        'recording.turf',
+        'recording.user',
+        'sharedWithUser',
+      ],
+      order: {
+        created_at: 'DESC',
+      },
+    });
+
+    return Promise.all(
+      sharedRows.map(async (sharedRecording) => {
+        const recording = sharedRecording.recording;
+        const owner = recording?.user;
+        const turf = recording?.turf;
+        const recipient = sharedRecording.sharedWithUser;
+
+        let presignedS3Path: string | null = null;
+        if (recording?.s3Path) {
+          try {
+            const s3UrlParts = recording.s3Path.replace('s3://', '').split('/');
+            const bucketName = s3UrlParts[0];
+            const s3Key = s3UrlParts.slice(1).join('/');
+
+            if (bucketName && s3Key) {
+              presignedS3Path =
+                await this.fileServiceService.getSignedUrlFromS3(
+                  s3Key,
+                  bucketName,
+                );
+            }
+          } catch (error) {
+            this.logger.error(
+              `Error generating presigned URL for recording ${recording.id}: ${error.message}`,
+            );
+          }
+        }
+
+        const turfDetail = turf
+          ? {
+            id: turf.id,
+            name: turf.name || '',
+            geo_location: turf.geo_location || null,
+            address_line: turf.address_line || null,
+            city: turf.city || null,
+            state: turf.state || null,
+            postal_code: turf.postal_code || null,
+            location: turf.location || null,
+            country: turf.country || null,
+          }
+          : null;
+
+        const recordingHighlights =
+          recording?.recordingHighlights?.map((highlight) => ({
+            id: highlight.id,
+            button_click_timestamp: highlight.button_click_timestamp,
+            relative_timestamp: highlight.relative_timestamp || null,
+            asset_id: highlight.asset_id || null,
+            status: highlight.status || null,
+            playback_id: highlight.playback_id || null,
+            mux_public_playback_url: highlight.mux_public_playback_url || null,
+          })) || [];
+
+        return {
+          id: sharedRecording.id,
+          shared_to_user_id: sharedRecording.shared_with_user_id,
+          shared_to_user_name: recipient?.name || '',
+          shared_to_user_phone: recipient?.phone_number || '',
+          recording: {
+            id: recording.id,
+            userId: recording.userId,
+            owner_name: owner?.name || '',
+            turfId: recording.turfId || null,
+            turf_detail: turfDetail,
+            startTime: recording.startTime,
+            endTime: recording.endTime || null,
+            s3Path: presignedS3Path,
+            status: recording.status,
+            mux_asset_id: recording.mux_asset_id || null,
+            mux_playback_id: recording.mux_playback_id || null,
+            mux_media_url: recording.mux_media_url || null,
+            recordingHighlights,
+          },
+        };
+      }),
+    );
   }
 
   /**

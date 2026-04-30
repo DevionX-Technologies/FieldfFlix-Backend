@@ -18,6 +18,12 @@ export class AuthController {
   }
 
   @Public()
+  @Post('account-exists')
+  async accountExists(@Body() dto: SendOtpDto) {
+    return this.authService.accountExistsByPhone(dto.mobile);
+  }
+
+  @Public()
   @Post('verify-otp')
   async verifyOtp(@Body() dto: VerifyOtpDto) {
     return this.authService.verifyOtp(dto.mobile, dto.otp);

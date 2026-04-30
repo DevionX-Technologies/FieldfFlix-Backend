@@ -178,6 +178,17 @@ export class RecordingController {
     return this.recordingService.getSharedRecordings(user_id);
   }
 
+  @ApiOperation({ summary: 'Get all recordings shared by the user' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Successfully retrieved recordings shared by current user',
+  })
+  @Get('shared-by-me')
+  async getRecordingsSharedByMe(@Req() req: Request) {
+    const { user_id } = await this.commonService.extractDataFromToken(req);
+    return this.recordingService.getRecordingsSharedByMe(user_id);
+  }
+
   /**
    * Get or create a shared recording for the current user.
    * If the user already has access to the recording via a shared record, returns it.
