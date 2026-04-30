@@ -1576,8 +1576,14 @@ export class RecordingService {
       //   );
       // }
 
-      // Check if highlight has required data for processing
-      if (!highlight.mux_public_playback_url) {
+      // Check if highlight has required data for processing.
+      // Fallback to a direct Mux URL when only playback_id is present.
+      const muxUrl =
+        highlight.mux_public_playback_url ||
+        (highlight.playback_id
+          ? `https://stream.mux.com/${highlight.playback_id}.m3u8`
+          : undefined);
+      if (!muxUrl) {
         throw new BadRequestException(
           'Highlight does not have a Mux playback URL for processing',
         );
@@ -1599,7 +1605,7 @@ export class RecordingService {
 
       // Prepare Lambda invocation payload
       const lambdaPayload = {
-        muxUrl: highlight.mux_public_playback_url,
+        muxUrl,
         muxAssetId: highlight.asset_id,
         uploadS3Path: uploadS3Path,
         bucketName: bucketName,
@@ -1675,6 +1681,24 @@ export class RecordingService {
         error instanceof BadRequestException
       ) {
         throw error;
+      }
+
+      const fallbackHighlight = await this.recordingHighlightsRepository.findOne({
+        where: { id: highlightId },
+      });
+      const fallbackSignedUrl =
+        fallbackHighlight?.mux_public_playback_url ||
+        (fallbackHighlight?.playback_id
+          ? `https://stream.mux.com/${fallbackHighlight.playback_id}.m3u8`
+          : undefined);
+      if (fallbackSignedUrl) {
+        return {
+          success: true,
+          highlightId,
+          signedUrl: fallbackSignedUrl,
+          message:
+            'Highlight processing failed; returned direct playback URL fallback',
+        };
       }
 
       throw new InternalServerErrorException(

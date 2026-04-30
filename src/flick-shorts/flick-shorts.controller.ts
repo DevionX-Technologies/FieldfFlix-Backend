@@ -25,8 +25,11 @@ export class FlickShortsController {
 
   @Get('public')
   @Public()
-  listPublic(@Query('sport') sport?: string) {
-    return this.service.listPublic(sport);
+  listPublic(
+    @Req() req: Request & { user?: ILocalLoginPayload },
+    @Query('sport') sport?: string,
+  ) {
+    return this.service.listPublic(sport, req.user?.user_id);
   }
 
   @Get('admin')
@@ -65,6 +68,15 @@ export class FlickShortsController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.service.addLike(req.user.user_id, id);
+  }
+
+  @Post(':id/view')
+  @Public()
+  addView(
+    @Req() req: Request & { user?: ILocalLoginPayload },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.service.addView(id, req.user?.user_id);
   }
 
   @Post(':id/comment')

@@ -54,6 +54,13 @@ export class FlickShort {
   @Column({ name: 'likes_count', type: 'int', default: 0 })
   likesCount: number;
 
+  @Column({ name: 'views_count', type: 'int', default: 0 })
+  viewsCount: number;
+
+  /** User ids that currently like this short (used for toggle + per-user state). */
+  @Column({ name: 'liked_user_ids', type: 'jsonb', default: () => "'[]'" })
+  likedUserIds: string[];
+
   @Column({ name: 'created_by_user_id', type: 'uuid', nullable: true })
   createdByUserId: string | null;
 

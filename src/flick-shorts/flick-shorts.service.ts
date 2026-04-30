@@ -27,6 +27,8 @@ export type FlickShortPublicDto = {
   endSec: number;
   approved: boolean;
   likesCount: number;
+  viewsCount: number;
+  likedByCurrentUser: boolean;
   comments: {
     id: string;
     userName: string | null;
@@ -61,7 +63,11 @@ export class FlickShortsService {
     private readonly adminRole: AdminRoleService,
   ) {}
 
-  private toPublic(s: FlickShort): FlickShortPublicDto {
+  private toPublic(
+    s: FlickShort,
+    viewerUserId?: string | null,
+  ): FlickShortPublicDto {
+    const likedUserIds = Array.isArray(s.likedUserIds) ? s.likedUserIds : [];
     return {
       id: s.id,
       recordingId: s.recordingId,
@@ -75,6 +81,10 @@ export class FlickShortsService {
       endSec: s.endSec,
       approved: s.approved,
       likesCount: s.likesCount,
+      viewsCount: s.viewsCount ?? 0,
+      likedByCurrentUser: viewerUserId
+        ? likedUserIds.includes(String(viewerUserId))
+        : false,
       comments: (s.comments ?? []).map((c) => ({
         id: c.id,
         userName: c.userName,
@@ -92,7 +102,10 @@ export class FlickShortsService {
     }
   }
 
-  async listPublic(sport: string | undefined): Promise<FlickShortPublicDto[]> {
+  async listPublic(
+    sport: string | undefined,
+    viewerUserId?: string | null,
+  ): Promise<FlickShortPublicDto[]> {
     const qb = this.flickRepo
       .createQueryBuilder('f')
       .where('f.approved = :approved', { approved: true })
@@ -101,13 +114,13 @@ export class FlickShortsService {
       qb.andWhere('f.sport = :sport', { sport });
     }
     const rows = await qb.getMany();
-    return rows.map((r) => this.toPublic(r));
+    return rows.map((r) => this.toPublic(r, viewerUserId));
   }
 
   async listAllForAdmin(_userId: string): Promise<FlickShortPublicDto[]> {
     await this.requireAdminByUserId(_userId);
     const rows = await this.flickRepo.find({ order: { createdAt: 'DESC' } });
-    return rows.map((r) => this.toPublic(r));
+    return rows.map((r) => this.toPublic(r, _userId));
   }
 
   async create(
@@ -142,7 +155,7 @@ export class FlickShortsService {
       comments: [],
     });
     const saved = await this.flickRepo.save(row);
-    return this.toPublic(saved);
+    return this.toPublic(saved, userId);
   }
 
   async deleteAsAdmin(userId: string, id: string): Promise<{ ok: boolean }> {
@@ -168,21 +181,38 @@ export class FlickShortsService {
     if (!row) throw new NotFoundException();
     row.approved = approved;
     const saved = await this.flickRepo.save(row);
-    return this.toPublic(saved);
+    return this.toPublic(saved, userId);
   }
 
-  async addLike(
-    _userId: string,
-    id: string,
-  ): Promise<FlickShortPublicDto> {
+  async addLike(userId: string, id: string): Promise<FlickShortPublicDto> {
     const row = await this.flickRepo.findOne({ where: { id } });
     if (!row) throw new NotFoundException();
     if (!row.approved) {
       throw new NotFoundException();
     }
-    row.likesCount = (row.likesCount ?? 0) + 1;
+    const likedUserIds = new Set(
+      Array.isArray(row.likedUserIds) ? row.likedUserIds.map(String) : [],
+    );
+    if (likedUserIds.has(String(userId))) {
+      likedUserIds.delete(String(userId));
+    } else {
+      likedUserIds.add(String(userId));
+    }
+    row.likedUserIds = Array.from(likedUserIds);
+    row.likesCount = row.likedUserIds.length;
     const saved = await this.flickRepo.save(row);
-    return this.toPublic(saved);
+    return this.toPublic(saved, userId);
+  }
+
+  async addView(id: string, viewerUserId?: string | null): Promise<FlickShortPublicDto> {
+    const row = await this.flickRepo.findOne({ where: { id } });
+    if (!row) throw new NotFoundException();
+    if (!row.approved) {
+      throw new NotFoundException();
+    }
+    row.viewsCount = (row.viewsCount ?? 0) + 1;
+    const saved = await this.flickRepo.save(row);
+    return this.toPublic(saved, viewerUserId);
   }
 
   async addComment(
@@ -210,6 +240,6 @@ export class FlickShortsService {
     list.push(c);
     row.comments = list;
     const saved = await this.flickRepo.save(row);
-    return this.toPublic(saved);
+    return this.toPublic(saved, userId);
   }
 }

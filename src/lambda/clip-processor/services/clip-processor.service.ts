@@ -7,7 +7,6 @@ import {
   CLIP_PROCESSING,
   HIGHLIGHT_STATUS,
   TERMINAL_STATUSES,
-  NON_BLOCKING_STATUSES,
 } from 'src/constant/constant';
 import {
   ClipProcessorMessage,
