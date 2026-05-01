@@ -92,6 +92,9 @@ export class RecordingHighlights {
   @Column({ type: 'integer', default: 0 })
   lock_version: number;
 
+  @Column({ name: 'likes_count', type: 'int', default: 0 })
+  likesCount: number;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

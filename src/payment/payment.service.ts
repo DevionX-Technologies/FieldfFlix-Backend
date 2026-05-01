@@ -22,6 +22,7 @@ import { RazorpayService } from '../common/service/razorpay.service';
 import { User } from '../user/entities/user.entity';
 import { Recording } from '../recording/entities/recording.entity';
 import { Request } from 'express';
+import { randomUUID } from 'crypto';
 import { CommonService } from 'src/common/service/common.service';
 import { MuxService } from '../mux/mux.service';
 import { HOURLY_RATE } from 'src/constant/constant';
@@ -153,12 +154,52 @@ export class PaymentService {
     userId: string,
     plan: CreatePlanOrderDto['plan'],
   ): Promise<PaymentResponseDto> {
-    const prices: Record<CreatePlanOrderDto['plan'], number> = {
+    if (plan === 'cricket') {
+      const payment = this.paymentRepository.create({
+        user_id: userId,
+        recording_id: null,
+        amount: 0,
+        base_amount: 0,
+        currency: 'INR',
+        status: PaymentStatus.COMPLETED,
+        payment_type: PaymentType.MEDIA_ACCESS,
+        description: 'FieldFlicks cricket plan (free)',
+        razorpay_order_id: `ff_free_${randomUUID()}`.slice(0, 100),
+        razorpay_payment_id: null,
+        paid_at: new Date(),
+        expires_at: null,
+      });
+      const saved = await this.paymentRepository.save(payment);
+      return {
+        id: saved.id,
+        razorpay_order_id: saved.razorpay_order_id,
+        amount: Number(saved.amount),
+        base_amount: Number(saved.base_amount),
+        currency: saved.currency,
+        status: saved.status,
+        payment_type: saved.payment_type,
+        created_at: saved.created_at,
+        expires_at: saved.expires_at ?? undefined,
+      };
+    }
+
+    if (plan === 'pickleball' || plan === 'padel') {
+      const base = plan === 'pickleball' ? 200 : 250;
+      const amount = Math.round(base * 1.18);
+      return this.createPaymentOrder(userId, {
+        amount,
+        payment_type: PaymentType.MEDIA_ACCESS,
+        description: `FieldFlicks ${plan} plan (incl. 18% GST)`,
+        base_amount: base,
+      });
+    }
+
+    const legacy: Partial<Record<CreatePlanOrderDto['plan'], number>> = {
       free: 149,
       pro: 199,
       premium: 399,
     };
-    const amount = prices[plan];
+    const amount = legacy[plan];
     if (amount == null) {
       throw new BadRequestException('Invalid plan');
     }
@@ -184,7 +225,7 @@ export class PaymentService {
         user_id: userId,
         recording_id: createPaymentDto.recording_id,
         amount: createPaymentDto.amount,
-        base_amount: HOURLY_RATE,
+        base_amount: createPaymentDto.base_amount ?? HOURLY_RATE,
         currency: 'INR',
         status: PaymentStatus.PENDING,
         payment_type: createPaymentDto.payment_type,
@@ -290,7 +331,14 @@ export class PaymentService {
    */
   async getActivePlan(userId: string): Promise<{
     active: boolean;
-    plan: 'free' | 'pro' | 'premium' | null;
+    plan:
+      | 'free'
+      | 'pro'
+      | 'premium'
+      | 'cricket'
+      | 'pickleball'
+      | 'padel'
+      | null;
     paid_at: Date | null;
     expires_at: Date | null;
     payment_id: string | null;
@@ -313,8 +361,18 @@ export class PaymentService {
       // (recording access) keep their 30-min order TTL in `expires_at`; ignore those for plans.
       // For now, treat any completed MEDIA_ACCESS as "active".
       const desc = (payment.description || '').toLowerCase();
-      let plan: 'free' | 'pro' | 'premium' | null = null;
-      if (desc.includes('premium')) plan = 'premium';
+      let plan:
+        | 'free'
+        | 'pro'
+        | 'premium'
+        | 'cricket'
+        | 'pickleball'
+        | 'padel'
+        | null = null;
+      if (desc.includes('pickleball')) plan = 'pickleball';
+      else if (desc.includes('cricket')) plan = 'cricket';
+      else if (desc.includes('padel')) plan = 'padel';
+      else if (desc.includes('premium')) plan = 'premium';
       else if (desc.includes('pro')) plan = 'pro';
       else if (desc.includes('free')) plan = 'free';
 

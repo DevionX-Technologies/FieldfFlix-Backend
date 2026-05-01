@@ -117,7 +117,14 @@ export class PaymentController {
   @ApiResponse({ status: 200, description: 'Active plan retrieved' })
   async getActivePlan(@Request() req: any): Promise<{
     active: boolean;
-    plan: 'free' | 'pro' | 'premium' | null;
+    plan:
+      | 'free'
+      | 'pro'
+      | 'premium'
+      | 'cricket'
+      | 'pickleball'
+      | 'padel'
+      | null;
     paid_at: Date | null;
     expires_at: Date | null;
     payment_id: string | null;

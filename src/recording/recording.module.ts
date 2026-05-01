@@ -14,16 +14,24 @@ import { JwtModule } from '@nestjs/jwt';
 import { UserModule } from 'src/user/user.module';
 import { RecordingService } from './service/recording.service';
 import { RecordingHighlightsService } from './service/recording-highlight.service';
+import { RecordingHighlightEngagementService } from './service/recording-highlight-engagement.service';
 import { RecordingPaymentService } from './service/recording-payment.service';
 import { MuxWebhookController } from './controller/mux-webhook.controller';
 import { RecordingHighlights } from './entities/recording-highlights.entity';
+import { RecordingHighlightEngagement } from './entities/recording-highlight-engagement.entity';
 import { WebhookEvent } from './entities/webhook-event.entity';
 import { PaymentModule } from 'src/payment/payment.module';
 import { ClipProcessingModule } from 'src/clip-processing/clip-processing.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Recording, SharedRecording, RecordingHighlights, WebhookEvent]),
+    TypeOrmModule.forFeature([
+      Recording,
+      SharedRecording,
+      RecordingHighlights,
+      RecordingHighlightEngagement,
+      WebhookEvent,
+    ]),
     CameraModule,
     UserModule,
     HttpModule,
@@ -43,8 +51,13 @@ import { ClipProcessingModule } from 'src/clip-processing/clip-processing.module
     RecordingService,
     RaspberryPiApiService,
     RecordingHighlightsService,
+    RecordingHighlightEngagementService,
     RecordingPaymentService,
   ],
-  exports: [RecordingService, RecordingPaymentService],
+  exports: [
+    RecordingService,
+    RecordingPaymentService,
+    RecordingHighlightEngagementService,
+  ],
 })
 export class RecordingModule {}

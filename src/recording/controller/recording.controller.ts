@@ -44,6 +44,7 @@ import { SharedRecording } from '../entities/shared-recording.entity';
 import { SharedRecordingResponseDto } from '../dto/shared-recording-response.dto';
 import { RecordingHighlightsService } from '../service/recording-highlight.service';
 import { RecordingService } from '../service/recording.service';
+import { RecordingHighlightEngagementService } from '../service/recording-highlight-engagement.service';
 import { MuxService } from '../../mux/mux.service';
 
 /**
@@ -66,6 +67,7 @@ export class RecordingController {
     private readonly configService: ConfigService,
     private readonly recordingHighlightsService: RecordingHighlightsService,
     private readonly muxService: MuxService,
+    private readonly recordingHighlightEngagementService: RecordingHighlightEngagementService,
   ) { }
 
   /**
@@ -457,16 +459,68 @@ export class RecordingController {
     };
   }
 
+  @Get('highlights/saved')
+  @ApiOperation({ summary: 'List saved recording highlights for the current user' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Saved highlights returned' })
+  async listSavedRecordingHighlights(@Req() req: Request) {
+    const { user_id } = await this.commonService.extractDataFromToken(req);
+    return this.recordingHighlightEngagementService.listSavedSummaries(user_id);
+  }
+
+  @Post('highlights/:highlightId/like')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Toggle like on a recording highlight' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Like toggled' })
+  async toggleRecordingHighlightLike(
+    @Param('highlightId') highlightId: string,
+    @Req() req: Request,
+  ) {
+    const { user_id } = await this.commonService.extractDataFromToken(req);
+    return this.recordingHighlightEngagementService.toggleLike(
+      user_id,
+      highlightId,
+    );
+  }
+
+  @Post('highlights/:highlightId/save')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Toggle save on a recording highlight' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Save toggled' })
+  async toggleRecordingHighlightSave(
+    @Param('highlightId') highlightId: string,
+    @Req() req: Request,
+  ) {
+    const { user_id } = await this.commonService.extractDataFromToken(req);
+    return this.recordingHighlightEngagementService.toggleSave(
+      user_id,
+      highlightId,
+    );
+  }
+
   /**
    * Returns the list of READY highlights for a recording, shaped for the mobile
    * Highlights screen. Auto-generation of highlights is NOT performed here — this
    * endpoint surfaces what the existing button-press + clip-processing pipeline produced.
    */
+  @Public()
   @Get(':id/highlights')
   @ApiOperation({ summary: 'List ready highlights for a recording' })
   @ApiResponse({ status: HttpStatus.OK, description: 'Highlights returned' })
-  async getRecordingHighlights(@Param('id') recordingId: string) {
-    return this.recordingService.getReadyHighlightsForRecording(recordingId);
+  async getRecordingHighlights(
+    @Param('id') recordingId: string,
+    @Req() req: Request,
+  ) {
+    let viewerUserId: string | null = null;
+    try {
+      const t = await this.commonService.extractDataFromToken(req);
+      viewerUserId = t?.user_id ?? null;
+    } catch {
+      viewerUserId = null;
+    }
+    return this.recordingService.getReadyHighlightsForRecording(
+      recordingId,
+      viewerUserId,
+    );
   }
 
   /**

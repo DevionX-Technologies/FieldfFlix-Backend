@@ -38,6 +38,7 @@ import {
 } from 'src/utils/utils';
 import { HIGHLIGHT_STATUS, HOURLY_RATE } from 'src/constant/constant';
 import { SharedRecordingResponseDto } from '../dto/shared-recording-response.dto';
+import { RecordingHighlightEngagementService } from './recording-highlight-engagement.service';
 
 /**
  * Service for managing recordings.
@@ -79,6 +80,7 @@ export class RecordingService {
     private readonly fireBaseNotificationService: FireBaseNotificationService,
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly recordingHighlightEngagementService: RecordingHighlightEngagementService,
   ) {
     // Initialize Lambda client
     this.lambdaClient = new LambdaClient({
@@ -1583,6 +1585,7 @@ export class RecordingService {
    */
   async getReadyHighlightsForRecording(
     recordingId: string,
+    viewerUserId?: string | null,
   ): Promise<
     Array<{
       id: string;
@@ -1592,6 +1595,9 @@ export class RecordingService {
       mux_public_playback_url: string | null;
       thumbnail_url: string | null;
       status: string;
+      likesCount: number;
+      viewerLiked: boolean;
+      viewerSaved: boolean;
     }>
   > {
     const rows = await this.recordingHighlightsRepository.find({
@@ -1600,23 +1606,32 @@ export class RecordingService {
     });
 
     /** Include mux-ready clips stuck in `clip_created` (webhook sometimes never flips to `ready`). */
-    return rows
-      .filter((h) => {
-        const st = String(h.status ?? '').toLowerCase();
-        if (
-          st === HIGHLIGHT_STATUS.FAILED ||
-          st === HIGHLIGHT_STATUS.PERMANENTLY_FAILED
-        ) {
-          return false;
-        }
-        const hasStream =
-          Boolean(h.playback_id?.trim?.()) || Boolean(h.mux_public_playback_url);
-        if (!hasStream) return false;
-        return (
-          st === HIGHLIGHT_STATUS.READY || st === HIGHLIGHT_STATUS.CLIP_CREATED
-        );
-      })
-      .map((h) => ({
+    const filtered = rows.filter((h) => {
+      const st = String(h.status ?? '').toLowerCase();
+      if (
+        st === HIGHLIGHT_STATUS.FAILED ||
+        st === HIGHLIGHT_STATUS.PERMANENTLY_FAILED
+      ) {
+        return false;
+      }
+      const hasStream =
+        Boolean(h.playback_id?.trim?.()) || Boolean(h.mux_public_playback_url);
+      if (!hasStream) return false;
+      return (
+        st === HIGHLIGHT_STATUS.READY || st === HIGHLIGHT_STATUS.CLIP_CREATED
+      );
+    });
+
+    const ids = filtered.map((h) => h.id);
+    const viewer =
+      await this.recordingHighlightEngagementService.viewerStateMap(
+        viewerUserId,
+        ids,
+      );
+
+    return filtered.map((h) => {
+      const v = viewer.get(h.id);
+      return {
         id: h.id,
         relative_timestamp: h.relative_timestamp ?? null,
         button_click_timestamp: h.button_click_timestamp,
@@ -1628,7 +1643,11 @@ export class RecordingService {
           ? `https://image.mux.com/${h.playback_id}/thumbnail.jpg?time=2`
           : null,
         status: h.status ?? 'unknown',
-      }));
+        likesCount: Number(h.likesCount ?? 0),
+        viewerLiked: v?.liked ?? false,
+        viewerSaved: v?.saved ?? false,
+      };
+    });
   }
 
   /**

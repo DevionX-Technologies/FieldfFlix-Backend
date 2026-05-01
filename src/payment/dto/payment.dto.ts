@@ -57,13 +57,39 @@ export class CreatePaymentOrderDto {
   @IsString()
   @IsOptional()
   description?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Ledger base amount (e.g. pre-GST). Defaults to hourly rate for recording flows.',
+    example: 200,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(10000)
+  base_amount?: number;
 }
 
 /** Premium / plan checkout — amounts match mobile `ProfilePremium` copy. */
 export class CreatePlanOrderDto {
-  @ApiProperty({ enum: ['free', 'pro', 'premium'] })
-  @IsIn(['free', 'pro', 'premium'])
-  plan: 'free' | 'pro' | 'premium';
+  @ApiProperty({
+    enum: [
+      'free',
+      'pro',
+      'premium',
+      'cricket',
+      'pickleball',
+      'padel',
+    ],
+  })
+  @IsIn(['free', 'pro', 'premium', 'cricket', 'pickleball', 'padel'])
+  plan:
+    | 'free'
+    | 'pro'
+    | 'premium'
+    | 'cricket'
+    | 'pickleball'
+    | 'padel';
 }
 
 /**
