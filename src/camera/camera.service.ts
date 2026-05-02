@@ -12,6 +12,7 @@ interface PaginationResult<T> {
 interface PaginationParams {
   page?: number;
   limit?: number;
+  turfId?: string;
 }
 
 /**
@@ -36,12 +37,16 @@ export class CameraService {
 
   /**
    * Finds all cameras with pagination.
-   * @param params - Pagination parameters (page and limit).
+   * @param params - Pagination parameters (page, limit, and optional turfId).
    * @returns A promise that resolves to a paginated list of camera entities.
    */
   async findAll(params: PaginationParams): Promise<PaginationResult<Camera>> {
-    const { page = 1, limit = 10 } = params;
+    const { page = 1, limit = 10, turfId } = params;
+    
+    const whereCondition = turfId ? { turfId } : {};
+
     const [data, total] = await this.cameraRepository.findAndCount({
+      where: whereCondition,
       skip: (page - 1) * limit,
       take: limit,
     });

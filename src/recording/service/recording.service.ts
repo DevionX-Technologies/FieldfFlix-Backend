@@ -11,6 +11,7 @@ import {
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, Not, QueryRunner, Repository } from 'typeorm';
 import { StartRecordingDto } from '../dto/start-recording.dto';
+import { FindAndClaimRecordingDto } from '../dto/find-claim-recording.dto';
 import { RaspberryPiApiService } from '../../raspberry-pi/raspberry-pi-api.service';
 import { Camera } from '../../camera/camera.entity';
 import { FileServiceService } from 'src/file-service/file-service.service';
@@ -1865,5 +1866,67 @@ export class RecordingService {
         `Failed to process highlight: ${error.message}`,
       );
     }
+  }
+
+  /**
+   * Find a recording by turf, optional camera, time range, and creator's phone number.
+   * Grants the requesting user access via SharedRecording if a match is found.
+   */
+  async findAndClaimRecording(dto: FindAndClaimRecordingDto, requestingUserId: string): Promise<Recording[]> {
+    const { turfId, cameraId, date, startTime, endTime, phoneLast10 } = dto;
+    
+    // Parse time boundaries
+    const startTimestamp = new Date(`${date}T${startTime}:00`);
+    const endTimestamp = new Date(`${date}T${endTime}:00`);
+
+    if (isNaN(startTimestamp.getTime()) || isNaN(endTimestamp.getTime())) {
+      throw new BadRequestException('Invalid date or time format');
+    }
+
+    // Build the query
+    const qb = this.recordingRepository.createQueryBuilder('recording')
+      .leftJoinAndSelect('recording.user', 'user')
+      .leftJoinAndSelect('recording.turf', 'turf')
+      .leftJoinAndSelect('recording.camera', 'camera')
+      .where('recording.turfId = :turfId', { turfId })
+      .andWhere('recording.startTime >= :startTimestamp', { startTimestamp })
+      .andWhere('recording.startTime <= :endTimestamp', { endTimestamp })
+      .andWhere('user.phone_number LIKE :phonePattern', { phonePattern: `%${phoneLast10}` });
+
+    if (cameraId) {
+      qb.andWhere('recording.cameraId = :cameraId', { cameraId });
+    }
+
+    const matches = await qb.getMany();
+
+    if (matches.length === 0) {
+      return [];
+    }
+
+    // For each match, ensure the requesting user has access
+    for (const match of matches) {
+      // If the requester is already the owner, skip
+      if (match.userId === requestingUserId) {
+        continue;
+      }
+
+      // Check if already shared
+      const existingShare = await this.sharedRecordingRepository.findOne({
+        where: {
+          recording_id: match.id,
+          shared_with_user_id: requestingUserId,
+        }
+      });
+
+      if (!existingShare) {
+        const share = this.sharedRecordingRepository.create({
+          recording_id: match.id,
+          shared_with_user_id: requestingUserId,
+        });
+        await this.sharedRecordingRepository.save(share);
+      }
+    }
+
+    return matches;
   }
 }

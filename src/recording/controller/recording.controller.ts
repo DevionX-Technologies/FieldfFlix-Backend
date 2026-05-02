@@ -31,6 +31,7 @@ import {
   ApiBody,
 } from '@nestjs/swagger';
 import { StartRecordingDto } from '../dto/start-recording.dto';
+import { FindAndClaimRecordingDto } from '../dto/find-claim-recording.dto';
 import { StopRecordingDto } from '../dto/stop-recording.dto';
 import { Recording } from '../entities/recording.entity';
 import { Public } from 'src/decorators/public.decorator';
@@ -899,5 +900,16 @@ export class RecordingController {
     }],
   ) {
     return this.recordingHighlightsService.addBulkRecordingHighlights(recordingId, source_asset_id, data);
+  }
+
+  @Post('find-and-claim')
+  @ApiOperation({ summary: 'Find a recording by match details and claim access via creator phone number' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Matched recordings returned', type: [Recording] })
+  async findAndClaimRecording(
+    @Body(ValidationPipe) dto: FindAndClaimRecordingDto,
+    @Req() req: Request,
+  ) {
+    const { user_id } = await this.commonService.extractDataFromToken(req);
+    return this.recordingService.findAndClaimRecording(dto, user_id);
   }
 }

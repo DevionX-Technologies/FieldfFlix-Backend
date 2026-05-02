@@ -69,9 +69,10 @@ export class CameraController {
   }
 
   /**
-   * Get all cameras with pagination.
+   * Get all cameras with pagination and optional turf filter.
    * @param page - The page number.
    * @param limit - The number of items per page.
+   * @param turfId - Optional Turf ID to filter cameras.
    * @returns A paginated list of camera entities.
    */
   @Get()
@@ -88,6 +89,12 @@ export class CameraController {
     description: 'Items per page',
     type: Number,
   })
+  @ApiQuery({
+    name: 'turfId',
+    required: false,
+    description: 'Filter by Turf ID',
+    type: String,
+  })
   @ApiResponse({
     status: 200,
     description: 'Returns a paginated list of cameras.',
@@ -97,8 +104,9 @@ export class CameraController {
   async findAll(
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit: number,
+    @Query('turfId') turfId?: string,
   ): Promise<{ data: Camera[]; total: number }> {
-    return this.cameraService.findAll({ page, limit });
+    return this.cameraService.findAll({ page, limit, turfId });
   }
 
   /**
