@@ -1,7 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { PaymentEntity, PaymentStatus } from './entities/payment.entity';
+import { Repository, In } from 'typeorm';
+import {
+  PaymentEntity,
+  PaymentStatus,
+  PaymentType,
+} from './entities/payment.entity';
 
 @Injectable()
 export class PaymentRestrictionService {
@@ -35,6 +39,10 @@ export class PaymentRestrictionService {
           user_id: userId,
           recording_id: recordingId,
           status: PaymentStatus.COMPLETED,
+          payment_type: In([
+            PaymentType.RECORDING_ACCESS,
+            PaymentType.HIGHLIGHT_ACCESS,
+          ]),
         },
       });
 

@@ -31,7 +31,12 @@
     "deploy": "serverless deploy",
     "deploy:lambda": "serverless deploy function --function muxM3u8Converter",
     "offline": "serverless offline",
-    "remove": "serverless remove"
+    "remove": "serverless remove",
+    "db:turf-sports:dry-run": "node scripts/apply-turf-sports-supported.mjs",
+    "db:turf-sports:apply": "node scripts/apply-turf-sports-supported.mjs --apply",
+    "db:verify-turfs": "node scripts/verify-all-turf-sports.mjs",
+    "db:check-turf-arenas": "node scripts/check-turf-arenas.mjs",
+    "db:check-courts": "node scripts/check-courts-vs-spreadsheet.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-lambda": "^3.901.0",

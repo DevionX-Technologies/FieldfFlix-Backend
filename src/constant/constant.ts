@@ -4,6 +4,16 @@ export const DURATION_TO_BACKTRACK_SECONDS = 30;
 export const MUX_API_BASE_URL = 'https://api.mux.com';
 export const HOURLY_RATE = 240;
 
+/** GST-inclusive total = Math.round(base * (1 + GST_RATE_APP)). Kept aligned with mobile `sportPlanPricing.ts`. */
+export const RECORDING_UNLOCK_GST_RATE = 0.18;
+
+/** Pre-tax base (INR) for one-time unlock of a single recording's full playback. */
+export const RECORDING_UNLOCK_BASE_INR = {
+  cricket: 0,
+  pickleball: 200,
+  padel: 250,
+} as const;
+
 export const CLIP_PROCESSING = {
   MAX_CONCURRENCY: 5,
   INTER_CLIP_DELAY_SECONDS: 2,

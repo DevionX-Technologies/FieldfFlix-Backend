@@ -133,36 +133,8 @@ export class PaymentController {
   }
 
   /**
-   * Get payment details by ID
-   */
-  @Get(':paymentId')
-  @ApiOperation({
-    summary: 'Get payment details',
-    description: 'Get details of a specific payment',
-  })
-  @ApiParam({
-    name: 'paymentId',
-    description: 'Payment ID',
-    example: '123e4567-e89b-12d3-a456-426614174000',
-  })
-  @ApiResponse({
-    status: 200,
-    description: 'Payment details retrieved successfully',
-    type: PaymentEntity,
-  })
-  @ApiResponse({
-    status: 404,
-    description: 'Payment not found',
-  })
-  async getPaymentById(
-    @Request() req: any,
-    @Param('paymentId') paymentId: string,
-  ): Promise<PaymentEntity> {
-    return this.paymentService.getPaymentById(paymentId, req.user.user_id);
-  }
-
-  /**
-   * Check if user has paid for specific content
+   * Check if user has paid for specific recording playback (recording-scoped purchases only).
+   * Declared before `:paymentId` so `check-access` is not captured as an id.
    */
   @Get('check-access/:recordingId')
   @ApiOperation({
@@ -200,6 +172,35 @@ export class PaymentController {
         ? 'User has access to this recording'
         : 'User needs to pay to access this recording',
     };
+  }
+
+  /**
+   * Get payment details by ID
+   */
+  @Get(':paymentId')
+  @ApiOperation({
+    summary: 'Get payment details',
+    description: 'Get details of a specific payment',
+  })
+  @ApiParam({
+    name: 'paymentId',
+    description: 'Payment ID',
+    example: '123e4567-e89b-12d3-a456-426614174000',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Payment details retrieved successfully',
+    type: PaymentEntity,
+  })
+  @ApiResponse({
+    status: 404,
+    description: 'Payment not found',
+  })
+  async getPaymentById(
+    @Request() req: any,
+    @Param('paymentId') paymentId: string,
+  ): Promise<PaymentEntity> {
+    return this.paymentService.getPaymentById(paymentId, req.user.user_id);
   }
 
   /**

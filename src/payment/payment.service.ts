@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In } from 'typeorm';
 import {
   PaymentEntity,
   PaymentStatus,
@@ -24,9 +24,12 @@ import { Recording } from '../recording/entities/recording.entity';
 import { Request } from 'express';
 import { randomUUID } from 'crypto';
 import { CommonService } from 'src/common/service/common.service';
-import { MuxService } from '../mux/mux.service';
-import { HOURLY_RATE } from 'src/constant/constant';
-import { calculatePaymentAmountFromDuration } from 'src/utils/utils';
+import {
+  HOURLY_RATE,
+  RECORDING_UNLOCK_BASE_INR,
+  RECORDING_UNLOCK_GST_RATE,
+} from 'src/constant/constant';
+import { ESportsSupported } from 'src/turfs/enum/turfs.enum';
 /**
  * Payment service for handling payment operations
  */
@@ -43,8 +46,52 @@ export class PaymentService {
     private readonly recordingRepository: Repository<Recording>,
     private readonly razorpayService: RazorpayService,
     private readonly commonService: CommonService,
-    private readonly muxService: MuxService,
   ) {}
+
+  /**
+   * One recording unlock price from session metadata (preferred) or a single turf sport.
+   * Matches mobile Highlights pricing tiers.
+   */
+  private unlockTierAndAmounts(recording: Recording): {
+    tier: keyof typeof RECORDING_UNLOCK_BASE_INR;
+    base: number;
+    total: number;
+  } {
+    let tier: keyof typeof RECORDING_UNLOCK_BASE_INR = 'pickleball';
+    const meta = recording.metadata;
+    const sessionSport =
+      meta && typeof meta === 'object' && 'fieldflix_session_sport' in meta
+        ? (meta as { fieldflix_session_sport?: string }).fieldflix_session_sport
+        : null;
+    if (
+      sessionSport === 'cricket' ||
+      sessionSport === 'pickleball' ||
+      sessionSport === 'padel'
+    ) {
+      tier = sessionSport as keyof typeof RECORDING_UNLOCK_BASE_INR;
+    } else {
+      const sp = recording.turf?.sports_supported ?? [];
+      const hasCricket = sp.includes(ESportsSupported.CRICKET);
+      const hasPickle = sp.some(
+        (x) =>
+          x === ESportsSupported.PICKLEBALL || x === ESportsSupported.PICKLE,
+      );
+      const hasPaddle = sp.includes(ESportsSupported.PADDLE);
+      const n = Number(hasCricket) + Number(hasPickle) + Number(hasPaddle);
+      if (n === 1) {
+        if (hasCricket) tier = 'cricket';
+        else if (hasPaddle) tier = 'padel';
+        else if (hasPickle) tier = 'pickleball';
+      }
+    }
+
+    const base = RECORDING_UNLOCK_BASE_INR[tier];
+    const total =
+      base <= 0
+        ? 0
+        : Math.round(base * (1 + RECORDING_UNLOCK_GST_RATE));
+    return { tier, base, total };
+  }
 
   async createPaymentOrderForRecording(
     req: Request,
@@ -65,9 +112,10 @@ export class PaymentService {
         throw new NotFoundException('User not found');
       }
 
-      // Validate recording exists
+      // Validate recording exists (turf resolves unlock tier).
       const recording = await this.recordingRepository.findOne({
         where: { id: recordingId },
+        relations: ['turf'],
       });
       if (!recording) {
         throw new NotFoundException('Recording not found');
@@ -100,46 +148,53 @@ export class PaymentService {
           };
         }
       }
-      // Get video duration from Mux API using asset ID
-      let durationInSeconds = 0;
-      if (recording.mux_asset_id) {
-        try {
-          const assetDetails = await this.muxService.getAssetDetails(
-            recording.mux_asset_id,
-          );
-          durationInSeconds = assetDetails.duration || 0;
-          this.logger.log(
-            `Retrieved duration from Mux: ${durationInSeconds} seconds for recording: ${recordingId}`,
-          );
-        } catch (error) {
-          this.logger.warn(
-            `Failed to get duration from Mux for recording: ${recordingId}`,
-            error,
-          );
-          // Fallback to hourly rate if Mux duration is not available
-          durationInSeconds = 0;
-        }
+
+      const { tier, base, total } = this.unlockTierAndAmounts(recording);
+      const label =
+        tier === 'pickleball'
+          ? 'Pickleball'
+          : tier === 'padel'
+            ? 'Padel'
+            : 'Cricket';
+
+      if (total <= 0) {
+        const payment = this.paymentRepository.create({
+          user_id: tokenData.user_id,
+          recording_id: recordingId,
+          amount: 0,
+          base_amount: 0,
+          currency: 'INR',
+          status: PaymentStatus.COMPLETED,
+          payment_type: PaymentType.RECORDING_ACCESS,
+          description: `${label} recording unlock (free)`,
+          razorpay_order_id: `ff_rcfree_${randomUUID()}`.slice(0, 100),
+          razorpay_payment_id: null,
+          paid_at: new Date(),
+          expires_at: null,
+        });
+        const saved = await this.paymentRepository.save(payment);
+        return {
+          id: saved.id,
+          razorpay_order_id: saved.razorpay_order_id,
+          amount: Number(saved.amount),
+          currency: saved.currency,
+          base_amount: Number(saved.base_amount),
+          status: saved.status,
+          payment_type: saved.payment_type,
+          created_at: saved.created_at,
+          expires_at: saved.expires_at ?? undefined,
+        };
       }
 
-      // Calculate payment amount based on duration
-      const paymentAmount =
-        durationInSeconds > 0
-          ? calculatePaymentAmountFromDuration(durationInSeconds)
-          : HOURLY_RATE;
-
       const createPaymentDto: CreatePaymentOrderDto = {
-        amount: paymentAmount,
+        amount: total,
+        base_amount: base,
         payment_type: PaymentType.RECORDING_ACCESS,
         recording_id: recordingId,
-        description: `Payment for ${durationInSeconds > 0 ? Math.ceil(durationInSeconds / 3600) : 1} hour(s) of recording access`,
+        description: `${label} full recording unlock`,
       };
 
-      const result = await this.createPaymentOrder(
-        tokenData.user_id,
-        createPaymentDto,
-      );
-
-      return result;
+      return await this.createPaymentOrder(tokenData.user_id, createPaymentDto);
     } catch (error) {
       this.logger.error('Failed to create payment order for recording', error);
       throw error;
@@ -399,6 +454,10 @@ export class PaymentService {
           user_id: userId,
           recording_id: recordingId,
           status: PaymentStatus.COMPLETED,
+          payment_type: In([
+            PaymentType.RECORDING_ACCESS,
+            PaymentType.HIGHLIGHT_ACCESS,
+          ]),
         },
       });
 

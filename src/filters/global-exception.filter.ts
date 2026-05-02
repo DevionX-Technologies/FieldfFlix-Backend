@@ -25,6 +25,9 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     let errorName: string | undefined;
     let stack: string | undefined;
 
+    /** Extra keys from `HttpException` payloads (e.g. 409 start conflict) for clients. */
+    const extraExceptionFields: Record<string, string> = {};
+
     if (exception instanceof HttpException) {
       httpStatus = exception.getStatus();
       const exceptionResponse = exception.getResponse();
@@ -34,9 +37,19 @@ export class GlobalExceptionFilter implements ExceptionFilter {
         typeof exceptionResponse === 'object' &&
         exceptionResponse !== null
       ) {
+        const er = exceptionResponse as Record<string, unknown>;
         message =
-          (exceptionResponse as any).message || 'HttpException occurred';
-        errorName = (exceptionResponse as any).error || exception.name;
+          (typeof er.message === 'string'
+            ? er.message
+            : Array.isArray(er.message)
+              ? er.message.join(', ')
+              : 'HttpException occurred') || 'HttpException occurred';
+        errorName = (er.error as string) || exception.name;
+        for (const key of ['existingRecordingId', 'cameraId'] as const) {
+          if (typeof er[key] === 'string' && er[key].length > 0) {
+            extraExceptionFields[key] = er[key] as string;
+          }
+        }
       } else {
         message = 'HttpException occurred';
       }
@@ -59,10 +72,11 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       error: errorName,
       path: request.url,
       timestamp: new Date().toISOString(),
+      ...extraExceptionFields,
     };
 
     if (process.env.ENVIRONMENT === 'development' && stack) {
-      (responseBody as any).stack = stack;
+      (responseBody as Record<string, unknown>).stack = stack;
     }
 
     this.logger.error(
