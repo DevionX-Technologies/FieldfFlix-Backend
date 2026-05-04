@@ -40,7 +40,8 @@
     "qr:index": "node scripts/index-qr-codes.mjs",
     "qr:index:no-audit": "node scripts/index-qr-codes.mjs --no-audit",
     "db:fix-cricket:dry-run": "node scripts/fix-cricket-recordings-sport.mjs",
-    "db:fix-cricket:apply": "node scripts/fix-cricket-recordings-sport.mjs --apply"
+    "db:fix-cricket:apply": "node scripts/fix-cricket-recordings-sport.mjs --apply",
+    "db:audit-cricket": "node scripts/audit-cricket-misattributed.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-lambda": "^3.901.0",

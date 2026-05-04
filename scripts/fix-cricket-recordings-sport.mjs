@@ -59,15 +59,28 @@ const CRICKET_TURF_PATTERNS = customPattern
   : ['%All India Balkanji Bari%'];
 
 /**
- * Optional camera-level filter. If a turf's name matches a key here, we only
- * mark recordings whose `camera.name` contains a digit listed in the value.
- * Set to `null` (or remove the entry) to mark every recording on that turf.
+ * Cricket cameras — discovered via `node scripts/index-qr-codes.mjs`. Each ID
+ * here is a camera that was a cricket court at the matching turf pattern but
+ * may have had recordings attributed to the wrong (Pickleball) turf row.
  *
- * Spreadsheet: at All India Balkanji Bari, Court 1 is cricket — others are
- * pickleball. Tweak as needed.
+ * Per the current QR set:
+ *   Balkanji court 4 (camera f31e) is the only cricket-mapped camera.
+ *   Its QR points to turf `…b264` (Cricket only). Recordings on this camera
+ *   that ended up on a Pickleball Balkanji turf row (`…b263`) are misattributed
+ *   and should be flipped to cricket.
+ */
+const CRICKET_CAMERA_IDS_BY_PATTERN = {
+  '%All India Balkanji Bari%': [
+    '27ce1af1-721a-421c-9223-3ddeda95f31e', // Balkanji court 4 (cricket)
+  ],
+};
+
+/**
+ * Legacy court-number filter, kept as a fallback for older data shapes where
+ * cameraId isn't reliable. The cameraId list above takes precedence when set.
  */
 const CRICKET_COURT_NUMBERS_BY_PATTERN = {
-  '%All India Balkanji Bari%': [1],
+  '%All India Balkanji Bari%': [4],
 };
 
 const { Client } = pg;
@@ -111,9 +124,10 @@ try {
     };
 
     for (const turf of turfsRes.rows) {
+      const cameraFilter = CRICKET_CAMERA_IDS_BY_PATTERN[pattern] ?? null;
       const courtFilter = CRICKET_COURT_NUMBERS_BY_PATTERN[pattern] ?? null;
 
-      // Recordings on this turf, optionally narrowed by camera court number.
+      // Recordings on this turf, narrowed by cameraId (preferred) or court number.
       const recParams = [turf.id];
       let recSql = `
         SELECT r.id, r.metadata, r."cameraId", c.name AS camera_name
@@ -121,9 +135,16 @@ try {
         LEFT JOIN cameras c ON c.id = r."cameraId"
         WHERE r."turfId" = $1
       `;
-      if (Array.isArray(courtFilter) && courtFilter.length > 0) {
+      if (Array.isArray(cameraFilter) && cameraFilter.length > 0) {
+        // Preferred: filter by exact cameraId list.
+        recSql += ` AND r."cameraId" = ANY($2::uuid[])`;
+        recParams.push(cameraFilter);
+      } else if (Array.isArray(courtFilter) && courtFilter.length > 0) {
+        // Fallback: legacy court-number-in-name regex.
         const orParts = courtFilter
-          .map((_, i) => `c.name ~ ('(^|[^0-9])' || $${i + 2} || '([^0-9]|$)')`)
+          .map(
+            (_, i) => `c.name ~ ('(^|[^0-9])' || $${i + 2} || '([^0-9]|$)')`,
+          )
           .join(' OR ');
         recSql += ` AND (${orParts})`;
         recParams.push(...courtFilter.map(String));
@@ -135,7 +156,8 @@ try {
         turfId: turf.id,
         turfName: turf.name,
         sports_supported: turf.sports_supported,
-        courtFilter,
+        cameraFilter,
+        courtFilter: cameraFilter ? null : courtFilter,
         recordingsTotal: recordingsRes.rows.length,
         recordingsAlreadyCricket: 0,
         recordingsToFix: 0,
