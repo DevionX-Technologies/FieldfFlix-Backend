@@ -50,6 +50,14 @@ dotenv.config({ path: path.join(__dirname, '..', '.env') });
 const args = process.argv.slice(2);
 const APPLY = args.includes('--apply');
 const INCLUDE_COMPLETED = args.includes('--include-completed');
+/** When set, ignore the camera/court filters and stamp EVERY recording on
+ *  every matched turf as cricket. Use after `audit-balkanji-all-recordings.mjs`
+ *  has confirmed that all those Pickleball-turf recordings should actually
+ *  have been free cricket games. */
+const ALL_RECORDINGS = args.includes('--all-recordings-on-turf');
+/** When set, also stamp recordings whose turf is the **Pickleball-only** row
+ *  for the matched venue (the migration target for old cricket recordings). */
+const INCLUDE_PICKLEBALL_TURF = args.includes('--include-pickleball-turf');
 const customPatternIdx = args.indexOf('--pattern');
 const customPattern = customPatternIdx >= 0 ? args[customPatternIdx + 1] : null;
 
@@ -127,7 +135,28 @@ try {
       const cameraFilter = CRICKET_CAMERA_IDS_BY_PATTERN[pattern] ?? null;
       const courtFilter = CRICKET_COURT_NUMBERS_BY_PATTERN[pattern] ?? null;
 
-      // Recordings on this turf, narrowed by cameraId (preferred) or court number.
+      // If --include-pickleball-turf is set, only target turfs that are
+      // currently Pickleball-only (the migration target for old cricket data).
+      // Otherwise default behavior includes any turf matching the name pattern.
+      if (INCLUDE_PICKLEBALL_TURF) {
+        const sportsArr = Array.isArray(turf.sports_supported)
+          ? turf.sports_supported.map(String)
+          : String(turf.sports_supported ?? '')
+              .replace(/^[{(]/, '')
+              .replace(/[)}]$/, '')
+              .split(',')
+              .map((x) => x.replace(/"/g, '').trim())
+              .filter(Boolean);
+        const isPickleOnly =
+          sportsArr.length === 1 &&
+          (sportsArr[0] === 'Pickleball' || sportsArr[0] === 'Pickle');
+        if (!isPickleOnly) continue;
+      }
+
+      // Recordings on this turf. Filter precedence:
+      //   --all-recordings-on-turf  → no narrowing (every recording on the turf)
+      //   else cameraFilter         → exact cameraId list
+      //   else courtFilter          → legacy court-number-in-name regex
       const recParams = [turf.id];
       let recSql = `
         SELECT r.id, r.metadata, r."cameraId", c.name AS camera_name
@@ -135,12 +164,12 @@ try {
         LEFT JOIN cameras c ON c.id = r."cameraId"
         WHERE r."turfId" = $1
       `;
-      if (Array.isArray(cameraFilter) && cameraFilter.length > 0) {
-        // Preferred: filter by exact cameraId list.
+      if (ALL_RECORDINGS) {
+        // No additional filter — all recordings on this turf.
+      } else if (Array.isArray(cameraFilter) && cameraFilter.length > 0) {
         recSql += ` AND r."cameraId" = ANY($2::uuid[])`;
         recParams.push(cameraFilter);
       } else if (Array.isArray(courtFilter) && courtFilter.length > 0) {
-        // Fallback: legacy court-number-in-name regex.
         const orParts = courtFilter
           .map(
             (_, i) => `c.name ~ ('(^|[^0-9])' || $${i + 2} || '([^0-9]|$)')`,

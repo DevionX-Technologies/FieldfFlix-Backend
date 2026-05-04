@@ -63,12 +63,27 @@ const recRes = await client.query(
   [CRICKET_CAMERA_IDS],
 );
 
+/** Postgres returns enum-array columns either as JS arrays or as the textual
+ *  array literal `"{Cricket,Pickleball}"`. Normalise both into a JS array. */
+function coerceSportsSupported(raw) {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) return raw.map(String).filter(Boolean);
+  const s = String(raw).trim();
+  if (s.startsWith('{') || s.startsWith('(')) {
+    return s
+      .replace(/^[{(]/, '')
+      .replace(/[)}]$/, '')
+      .split(',')
+      .map((x) => x.replace(/"/g, '').trim())
+      .filter(Boolean);
+  }
+  return [s];
+}
+
 const rows = recRes.rows.map((r) => {
   const meta =
     r.metadata && typeof r.metadata === 'object' ? r.metadata : {};
-  const sportsArr = Array.isArray(r.sports_supported)
-    ? r.sports_supported.map(String)
-    : [];
+  const sportsArr = coerceSportsSupported(r.sports_supported);
   const turfIsCricketOnly =
     sportsArr.length === 1 && sportsArr[0] === 'Cricket';
   const sessionSport = meta.fieldflix_session_sport ?? null;
