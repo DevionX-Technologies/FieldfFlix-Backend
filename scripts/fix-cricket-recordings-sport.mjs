@@ -60,6 +60,15 @@ const ALL_RECORDINGS = args.includes('--all-recordings-on-turf');
 const INCLUDE_PICKLEBALL_TURF = args.includes('--include-pickleball-turf');
 const customPatternIdx = args.indexOf('--pattern');
 const customPattern = customPatternIdx >= 0 ? args[customPatternIdx + 1] : null;
+/** When set (YYYY-MM-DD), only touch recordings with `startTime` < that date.
+ *  Lets us cap the fix to historical data so future recordings get whatever
+ *  resolution comes from current turf+QR mappings, not this back-fill. */
+const beforeIdx = args.indexOf('--before');
+const beforeDate = beforeIdx >= 0 ? args[beforeIdx + 1] : null;
+/** When set (YYYY-MM-DD), only touch recordings with `startTime` >= that date.
+ *  Combine with `--before` to define a closed range. */
+const afterIdx = args.indexOf('--after');
+const afterDate = afterIdx >= 0 ? args[afterIdx + 1] : null;
 
 /** ILIKE patterns for turf names that have at least one cricket court. */
 const CRICKET_TURF_PATTERNS = customPattern
@@ -108,6 +117,11 @@ const summary = {
   mode: APPLY ? 'apply' : 'dry-run',
   startedAt,
   patterns: CRICKET_TURF_PATTERNS,
+  afterDate,
+  beforeDate,
+  allRecordingsOnTurf: ALL_RECORDINGS,
+  includePickleballTurf: INCLUDE_PICKLEBALL_TURF,
+  includeCompleted: INCLUDE_COMPLETED,
   perPattern: [],
   totalRecordingsTouched: 0,
   totalPaymentsCancelled: 0,
@@ -165,18 +179,27 @@ try {
         WHERE r."turfId" = $1
       `;
       if (ALL_RECORDINGS) {
-        // No additional filter — all recordings on this turf.
+        // No additional camera/court filter — all recordings on this turf.
       } else if (Array.isArray(cameraFilter) && cameraFilter.length > 0) {
-        recSql += ` AND r."cameraId" = ANY($2::uuid[])`;
+        recSql += ` AND r."cameraId" = ANY($${recParams.length + 1}::uuid[])`;
         recParams.push(cameraFilter);
       } else if (Array.isArray(courtFilter) && courtFilter.length > 0) {
         const orParts = courtFilter
           .map(
-            (_, i) => `c.name ~ ('(^|[^0-9])' || $${i + 2} || '([^0-9]|$)')`,
+            (_, i) =>
+              `c.name ~ ('(^|[^0-9])' || $${recParams.length + 1 + i} || '([^0-9]|$)')`,
           )
           .join(' OR ');
         recSql += ` AND (${orParts})`;
         recParams.push(...courtFilter.map(String));
+      }
+      if (afterDate) {
+        recSql += ` AND r."startTime" >= $${recParams.length + 1}::timestamptz`;
+        recParams.push(afterDate);
+      }
+      if (beforeDate) {
+        recSql += ` AND r."startTime" < $${recParams.length + 1}::timestamptz`;
+        recParams.push(beforeDate);
       }
 
       const recordingsRes = await client.query(recSql, recParams);
