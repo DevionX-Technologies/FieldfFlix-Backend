@@ -14,6 +14,10 @@ export type SavedHighlightSummaryDto = {
   muxPublicPlaybackUrl: string | null;
   thumbnailUrl: string | null;
   status: string;
+  /** Mirrors the `likes_count` column on the highlight so the saved-highlights
+   *  screen can render the heart-pill count without having to refetch every
+   *  individual highlight. */
+  likesCount: number;
 };
 
 /** Persists like / save toggles per user per recording highlight clip. */
@@ -187,6 +191,7 @@ export class RecordingHighlightEngagementService {
           ? `https://image.mux.com/${h.playback_id}/thumbnail.jpg?time=2`
           : null,
         status: h.status ?? 'unknown',
+        likesCount: Number(h.likesCount ?? 0),
       });
     }
     return out;

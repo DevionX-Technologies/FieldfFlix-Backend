@@ -43,7 +43,8 @@
     "db:fix-cricket:apply": "node scripts/fix-cricket-recordings-sport.mjs --apply",
     "db:audit-cricket": "node scripts/audit-cricket-misattributed.mjs",
     "db:audit-balkanji": "node scripts/audit-balkanji-all-recordings.mjs",
-    "db:list-paid": "node scripts/list-paid-recordings.mjs"
+    "db:list-paid": "node scripts/list-paid-recordings.mjs",
+    "db:list-cameras": "node scripts/list-cameras-at-venue.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-lambda": "^3.901.0",
