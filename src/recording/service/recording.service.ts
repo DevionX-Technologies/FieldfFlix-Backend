@@ -1581,6 +1581,29 @@ export class RecordingService {
     };
   }
 
+  /** Count highlight moments from venue button presses (includes pending / processing). */
+  async countButtonHighlightMomentsForRecording(
+    recordingId: string,
+    userId: string,
+  ): Promise<{ count: number }> {
+    const recording = await this.recordingRepository.findOne({
+      where: { id: recordingId },
+      select: { id: true, userId: true },
+    });
+    if (!recording) {
+      throw new NotFoundException(`Recording with ID ${recordingId} not found.`);
+    }
+    if (recording.userId !== userId) {
+      throw new ForbiddenException(
+        'You do not have access to this recording.',
+      );
+    }
+    const count = await this.recordingHighlightsRepository.count({
+      where: { recordingId },
+    });
+    return { count };
+  }
+
   /**
    * Returns ready highlights for a single recording, shaped for the mobile Highlights screen.
    */

@@ -272,6 +272,24 @@ export class RecordingController {
     return this.recordingService.getRecordingStatus(recordingId);
   }
 
+  /** Count of venue highlight-button moments recorded for this session (includes clips still processing). */
+  @Get(':id/button-highlight-count')
+  @ApiOperation({ summary: 'Count highlight-button moments for a recording' })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Count returned' })
+  async countButtonHighlightMoments(
+    @Param('id') recordingId: string,
+    @Req() req: Request,
+  ) {
+    const { user_id } = await this.commonService.extractDataFromToken(req);
+    if (!user_id) {
+      throw new UnauthorizedException('User ID not found in token');
+    }
+    return this.recordingService.countButtonHighlightMomentsForRecording(
+      recordingId,
+      user_id,
+    );
+  }
+
   /**
    * Retrieves a recording by its ID.
    *
