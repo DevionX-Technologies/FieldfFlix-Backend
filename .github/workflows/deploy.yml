@@ -16,4 +16,4 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            /${{ secrets.VPS_USER }}/.local/bin/deploy-fieldflix-backend.sh
+            /home/${{ secrets.VPS_USER }}/.local/bin/deploy-fieldflix-backend.sh
