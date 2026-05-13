@@ -88,6 +88,28 @@ export class PaymentRestrictionService {
     }
   }
 
+  /**
+   * True when the user has completed a per-recording unlock (full match or
+   * highlight access). Used to gate export/share flows that must match in-app paywall.
+   */
+  async hasCompletedRecordingOrHighlightAccess(
+    userId: string,
+    recordingId: string,
+  ): Promise<boolean> {
+    const payment = await this.paymentRepository.findOne({
+      where: {
+        user_id: userId,
+        recording_id: recordingId,
+        status: PaymentStatus.COMPLETED,
+        payment_type: In([
+          PaymentType.RECORDING_ACCESS,
+          PaymentType.HIGHLIGHT_ACCESS,
+        ]),
+      },
+    });
+    return !!payment;
+  }
+
   calculatePaymentAmount(durationInSeconds: number): number {
     const hours = durationInSeconds / 3600;
     return Math.ceil(hours * this.HOURLY_RATE);

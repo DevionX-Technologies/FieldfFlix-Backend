@@ -40,6 +40,7 @@ import {
 import { HIGHLIGHT_STATUS, HOURLY_RATE } from 'src/constant/constant';
 import { SharedRecordingResponseDto } from '../dto/shared-recording-response.dto';
 import { RecordingHighlightEngagementService } from './recording-highlight-engagement.service';
+import { PaymentRestrictionService } from 'src/payment/payment-restriction.service';
 
 /**
  * Service for managing recordings.
@@ -82,6 +83,7 @@ export class RecordingService {
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly recordingHighlightEngagementService: RecordingHighlightEngagementService,
+    private readonly paymentRestrictionService: PaymentRestrictionService,
   ) {
     // Initialize Lambda client
     this.lambdaClient = new LambdaClient({
@@ -1729,6 +1731,20 @@ export class RecordingService {
       if (!highlight) {
         throw new NotFoundException(
           `Highlight with ID ${highlightId} not found`,
+        );
+      }
+
+      const recordingId = highlight.recordingId;
+      if (!recordingId) {
+        throw new BadRequestException(
+          'Highlight is missing recording association',
+        );
+      }
+      const canShare = await this.paymentRestrictionService
+        .hasCompletedRecordingOrHighlightAccess(userId, recordingId);
+      if (!canShare) {
+        throw new ForbiddenException(
+          'Unlock this recording to export and share highlights.',
         );
       }
 

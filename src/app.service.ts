@@ -3,6 +3,6 @@ import { Injectable } from '@nestjs/common';
 @Injectable()
 export class AppService {
   getHello(): string {
-    return 'fieldflicks-backend-deploy-2026-04-28-1';
+    return 'fieldflicks-backend-alive-2026-05-13';
   }
 }
