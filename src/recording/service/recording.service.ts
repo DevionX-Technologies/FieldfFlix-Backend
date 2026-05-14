@@ -1814,8 +1814,16 @@ export class RecordingService {
         });
       }
 
+      /** Force export strategy here while testing (ignores env). Set to `null` before shipping. */
+      const HIGHLIGHT_MP4_EXPORT_STRATEGY_OVERRIDE:
+        | 'mux_static'
+        | 'mux_then_lambda'
+        | 'lambda'
+        | null = 'mux_static';
+
       const mp4ExportStrategy =
-        process.env.HIGHLIGHT_MP4_EXPORT_STRATEGY || 'lambda';
+        HIGHLIGHT_MP4_EXPORT_STRATEGY_OVERRIDE ??
+        (process.env.HIGHLIGHT_MP4_EXPORT_STRATEGY || 'mux_then_lambda');
       if (
         mp4ExportStrategy === 'mux_static' ||
         mp4ExportStrategy === 'mux_then_lambda'
