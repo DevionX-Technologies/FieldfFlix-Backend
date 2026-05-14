@@ -37,7 +37,17 @@ import {
   calculatePaymentAmountFromDuration,
   formatDurationToHHMMSS,
 } from 'src/utils/utils';
-import { HIGHLIGHT_STATUS, HOURLY_RATE } from 'src/constant/constant';
+import {
+  HIGHLIGHT_STATUS,
+  HOURLY_RATE,
+  MUX_API_BASE_URL,
+} from 'src/constant/constant';
+import axios from 'axios';
+import {
+  muxIsStaticRenditionAlreadyDefinedResponse,
+  muxStaticRenditionFileRows,
+  muxStaticRenditionsBucketStatus,
+} from 'src/utils/mux-static-renditions';
 import { SharedRecordingResponseDto } from '../dto/shared-recording-response.dto';
 import { RecordingHighlightEngagementService } from './recording-highlight-engagement.service';
 import { PaymentRestrictionService } from 'src/payment/payment-restriction.service';
@@ -85,9 +95,21 @@ export class RecordingService {
     private readonly recordingHighlightEngagementService: RecordingHighlightEngagementService,
     private readonly paymentRestrictionService: PaymentRestrictionService,
   ) {
-    // Initialize Lambda client
+    // Match S3 client: use explicit keys when present (local/.env), else default chain (IAM role).
+    const region = process.env.AWS_REGION || 'ap-south-1';
+    const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
+    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+    const sessionToken = process.env.AWS_SESSION_TOKEN;
     this.lambdaClient = new LambdaClient({
-      region: process.env.AWS_REGION || 'ap-south-1',
+      region,
+      ...(accessKeyId &&
+        secretAccessKey && {
+          credentials: {
+            accessKeyId,
+            secretAccessKey,
+            ...(sessionToken ? { sessionToken } : {}),
+          },
+        }),
     });
   }
 
@@ -1740,9 +1762,20 @@ export class RecordingService {
           'Highlight is missing recording association',
         );
       }
-      const canShare = await this.paymentRestrictionService
-        .hasCompletedRecordingOrHighlightAccess(userId, recordingId);
-      if (!canShare) {
+      const entitlementsBypassed =
+        process.env.HIGHLIGHT_EXPORT_BACKFILL_SKIP_ENTITLEMENT === 'true';
+      if (entitlementsBypassed) {
+        this.logger.warn(
+          `HIGHLIGHT_EXPORT_BACKFILL_SKIP_ENTITLEMENT is set — skipping unlock check for highlight ${highlightId}`,
+        );
+      }
+      if (
+        !entitlementsBypassed &&
+        !(await this.paymentRestrictionService.hasCompletedRecordingOrHighlightAccess(
+          userId,
+          recordingId,
+        ))
+      ) {
         throw new ForbiddenException(
           'Unlock this recording to export and share highlights.',
         );
@@ -1759,14 +1792,51 @@ export class RecordingService {
           highlight.s3path,
         );
 
-        return {
+        if (!this.isProgressiveMp4ExportUrl(signedUrl)) {
+          this.logger.warn(
+            `S3 signed URL for ${highlightId} does not look like a progressive MP4; re-run export`,
+          );
+          return {
+            success: false,
+            highlightId,
+            message:
+              'Stored export URL is not valid for sharing. Try again to re-run conversion, or run a backfill script.',
+          };
+        }
+
+        return this.coerceHighlightShareProcessResult(highlightId, {
           success: true,
           highlightId: highlightId,
           s3Path: highlight.s3path,
           bucketName: highlight.bucketName,
           signedUrl: signedUrl,
           message: 'Highlight already processed, signed URL generated',
-        };
+        });
+      }
+
+      const mp4ExportStrategy =
+        process.env.HIGHLIGHT_MP4_EXPORT_STRATEGY || 'lambda';
+      if (
+        mp4ExportStrategy === 'mux_static' ||
+        mp4ExportStrategy === 'mux_then_lambda'
+      ) {
+        const muxStatic = await this.tryMuxStaticMp4SignedUrl(highlight);
+        if (muxStatic.kind === 'err') {
+          if (mp4ExportStrategy === 'mux_static') {
+            return {
+              success: false,
+              highlightId,
+              message: muxStatic.message,
+            };
+          }
+        } else {
+          return this.coerceHighlightShareProcessResult(highlightId, {
+            success: true,
+            highlightId,
+            signedUrl: muxStatic.signedUrl,
+            message: 'Highlight export URL (Mux static MP4)',
+          });
+        }
       }
 
       // Check if user is authorized to process this highlight
@@ -1826,54 +1896,96 @@ export class RecordingService {
       });
 
       const lambdaResponse = await this.lambdaClient.send(invokeCommand);
+      const rawBody = lambdaResponse.Payload
+        ? new TextDecoder().decode(lambdaResponse.Payload)
+        : '{}';
 
-      // Parse Lambda response
-      const responsePayload = JSON.parse(
-        new TextDecoder().decode(lambdaResponse.Payload),
-      );
+      let responsePayload: {
+        success?: boolean;
+        message?: string;
+        error?: string;
+        data?: {
+          signedUrl?: string;
+          s3Path?: string;
+          bucketName?: string;
+        };
+      };
+      try {
+        responsePayload = JSON.parse(rawBody);
+      } catch (parseErr) {
+        this.logger.error(
+          `Invalid Lambda payload for ${highlightId}: ${rawBody?.slice(0, 500)}`,
+        );
+        return {
+          success: false,
+          highlightId,
+          message:
+            'Video converter returned an invalid response. Check Lambda logs and MUX_CONVERTER_LAMBDA_FUNCTION_NAME.',
+        };
+      }
+
+      if (lambdaResponse.FunctionError) {
+        const errMsg =
+          typeof (responsePayload as { errorMessage?: string }).errorMessage ===
+          'string'
+            ? (responsePayload as { errorMessage: string }).errorMessage
+            : responsePayload?.message ||
+              responsePayload?.error ||
+              'Lambda raised an error';
+        this.logger.error(
+          `Lambda FunctionError for ${highlightId}: ${lambdaResponse.FunctionError}`,
+          errMsg,
+        );
+        return {
+          success: false,
+          highlightId,
+          message: `Video converter error: ${errMsg}`,
+        };
+      }
 
       this.logger.log(`Lambda response: ${JSON.stringify(responsePayload)}`);
 
-      if (responsePayload.success) {
-        // Update highlight with processed information
+      if (responsePayload.success && responsePayload.data) {
+        const signedUrl = responsePayload.data.signedUrl;
+        if (!this.isProgressiveMp4ExportUrl(signedUrl)) {
+          this.logger.warn(
+            `Lambda returned success but signedUrl is not an MP4 export URL for ${highlightId}`,
+          );
+          return {
+            success: false,
+            highlightId,
+            message:
+              'Video converter did not return a downloadable MP4. Check the mux-m3u8-converter Lambda and S3 upload.',
+          };
+        }
+
         await this.recordingHighlightsRepository.update(highlightId, {
           bucketName: responsePayload.data.bucketName,
           s3path: responsePayload.data.s3Path,
         });
 
-        return {
+        return this.coerceHighlightShareProcessResult(highlightId, {
           success: true,
           highlightId: highlightId,
           s3Path: responsePayload.data.s3Path,
           bucketName: responsePayload.data.bucketName,
-          signedUrl: responsePayload.data.signedUrl,
+          signedUrl,
           message: 'Highlight processed successfully',
-        };
-      } else {
-        // Update highlight with error status
-        await this.recordingHighlightsRepository.update(highlightId, {
-          status: 'failed',
-          failed_message: responsePayload.message || 'Lambda processing failed',
         });
-
-        return {
-          success: false,
-          highlightId: highlightId,
-          message: responsePayload.message || 'Failed to process highlight',
-        };
       }
+
+      const failureMsg =
+        responsePayload.message ||
+        responsePayload.error ||
+        'Failed to convert highlight to MP4';
+      this.logger.warn(`Lambda MP4 export failed for ${highlightId}: ${failureMsg}`);
+      return {
+        success: false,
+        highlightId,
+        message: failureMsg,
+      };
     } catch (error) {
       this.logger.error(`Error processing highlight ${highlightId}:`, error);
-
-      // Update highlight with error status
-      try {
-        await this.recordingHighlightsRepository.update(highlightId, {
-          status: 'failed',
-          failed_message: error.message || 'Unknown error occurred',
-        });
-      } catch (updateError) {
-        this.logger.error(`Failed to update highlight status:`, updateError);
-      }
 
       if (
         error instanceof NotFoundException ||
@@ -1883,28 +1995,342 @@ export class RecordingService {
         throw error;
       }
 
-      const fallbackHighlight = await this.recordingHighlightsRepository.findOne({
-        where: { id: highlightId },
-      });
-      const fallbackSignedUrl =
-        fallbackHighlight?.mux_public_playback_url ||
-        (fallbackHighlight?.playback_id
-          ? `https://stream.mux.com/${fallbackHighlight.playback_id}.m3u8`
-          : undefined);
-      if (fallbackSignedUrl) {
+      const msg = error?.message || 'Unknown error occurred';
+      return {
+        success: false,
+        highlightId,
+        message: `MP4 export failed: ${msg}. Watching in the app still works ("Ready" is playback, not the share file). Verify AWS Lambda, IAM, S3 bucket, and MUX_CONVERTER_LAMBDA_FUNCTION_NAME.`,
+      };
+    }
+  }
+
+  /**
+   * `/highlight/:id/process` must only return success when `signedUrl` is a single-file
+   * progressive download. Some code paths (or older deployments) incorrectly return HLS
+   * (.m3u8) with success=true; clients cannot share that as one MP4 file.
+   */
+  private coerceHighlightShareProcessResult(
+    highlightId: string,
+    result: {
+      success: boolean;
+      highlightId: string;
+      s3Path?: string;
+      bucketName?: string;
+      signedUrl?: string;
+      message: string;
+    },
+  ): {
+    success: boolean;
+    highlightId: string;
+    s3Path?: string;
+    bucketName?: string;
+    signedUrl?: string;
+    message: string;
+  } {
+    if (
+      result.success &&
+      result.signedUrl &&
+      !this.isProgressiveMp4ExportUrl(result.signedUrl)
+    ) {
+      this.logger.warn(
+        `Rejecting highlight process result: success=true but signedUrl is not an MP4 export (highlightId=${highlightId} url=${result.signedUrl.slice(0, 120)})`,
+      );
+      return {
+        success: false,
+        highlightId,
+        message:
+          'A downloadable MP4 for this highlight is not ready yet (the server returned a playback-only stream). You can still watch the clip in the app. Try sharing again in a few minutes, or contact support with your highlight id.',
+      };
+    }
+    return result;
+  }
+
+  /** URLs suitable for FileSystem.downloadAsync as a single file — not Mux HLS. */
+  private isProgressiveMp4ExportUrl(url: string | undefined): boolean {
+    if (!url || typeof url !== 'string') return false;
+    const u = url.toLowerCase();
+    if (u.includes('.m3u8')) return false;
+    // Mux static renditions are progressive MP4 at stream.mux.com/{playbackId}/highest.mp4
+    if (u.includes('stream.mux.com') && !u.includes('.mp4')) return false;
+    if (!u.includes('.mp4')) return false;
+    return true;
+  }
+
+  /**
+   * Ask Mux to generate `highest` static MP4 for an existing clip asset (same creds as API).
+   * Used so legacy highlights work without Lambda/S3 or manual dashboard steps.
+   */
+  private async requestMuxHighestStaticRendition(
+    assetId: string,
+    muxTokenId: string,
+    muxTokenSecret: string,
+  ): Promise<{ ok: true } | { ok: false; message: string }> {
+    try {
+      const res = await axios.post(
+        `${MUX_API_BASE_URL}/video/v1/assets/${encodeURIComponent(assetId)}/static-renditions`,
+        { resolution: 'highest' },
+        {
+          auth: { username: muxTokenId, password: muxTokenSecret },
+          validateStatus: (s) =>
+            (s >= 200 && s < 300) || s === 409 || s === 422 || s === 400,
+        },
+      );
+      if (
+        res.status === 400 &&
+        muxIsStaticRenditionAlreadyDefinedResponse(res.data)
+      ) {
+        return { ok: true };
+      }
+      if (res.status === 400) {
+        this.logger.warn(
+          `Mux static-rendition POST bad request (400) for asset ${assetId}`,
+          res.data,
+        );
         return {
-          success: true,
-          highlightId,
-          signedUrl: fallbackSignedUrl,
+          ok: false,
           message:
-            'Highlight processing failed; returned direct playback URL fallback',
+            'Mux did not accept this static MP4 request. The asset may already have a conflicting rendition.',
+        };
+      }
+      if (res.status === 422) {
+        const snippet =
+          typeof res.data === 'string'
+            ? res.data.slice(0, 300)
+            : JSON.stringify(res.data ?? '').slice(0, 300);
+        this.logger.warn(
+          `Mux static-rendition POST rejected (422) for asset ${assetId}: ${snippet}`,
+        );
+        return {
+          ok: false,
+          message:
+            'Mux rejected static MP4 for this asset (often legacy mp4_support or asset type). Check Mux dashboard or docs.',
+        };
+      }
+      if ((res.status >= 200 && res.status < 300) || res.status === 409) {
+        return { ok: true };
+      }
+      this.logger.warn(
+        `Mux static-rendition POST unexpected status ${res.status} for asset ${assetId}`,
+        res.data,
+      );
+      return {
+        ok: false,
+        message:
+          'Mux did not accept static MP4 generation for this clip. It may be unsupported or still processing.',
+      };
+    } catch (err: unknown) {
+      const ax = err as {
+        response?: { status?: number; data?: unknown };
+      };
+      const status = ax.response?.status;
+      if (status === 400 && muxIsStaticRenditionAlreadyDefinedResponse(ax.response?.data)) {
+        return { ok: true };
+      }
+      if (status === 422) {
+        this.logger.warn(
+          `Mux static-rendition POST rejected (422) for asset ${assetId}`,
+          ax.response?.data,
+        );
+        return {
+          ok: false,
+          message:
+            'Mux rejected static MP4 for this asset (often legacy mp4_support or asset type).',
+        };
+      }
+      if (status === 409) {
+        return { ok: true };
+      }
+      this.logger.warn(
+        `Mux static-rendition POST failed for asset ${assetId}`,
+        err,
+      );
+      return {
+        ok: false,
+        message: 'Could not start MP4 generation on Mux. Try again later.',
+      };
+    }
+  }
+
+  /**
+   * Build a downloadable Mux static-rendition MP4 URL using only Mux API credentials
+   * (no Lambda/S3). Creates `highest` static renditions on demand for existing assets.
+   */
+  private async tryMuxStaticMp4SignedUrl(highlight: RecordingHighlights): Promise<
+    | { kind: 'ok'; signedUrl: string }
+    | { kind: 'err'; message: string }
+  > {
+    const assetId = highlight.asset_id?.trim();
+    const playbackId = highlight.playback_id?.trim();
+    if (!assetId || !playbackId) {
+      return {
+        kind: 'err',
+        message:
+          'Clip metadata is missing. Share/export as MP4 needs a processed highlight clip from Mux.',
+      };
+    }
+
+    const muxTokenId = process.env.MUX_TOKEN_ID;
+    const muxTokenSecret = process.env.MUX_TOKEN_SECRET;
+    if (!muxTokenId || !muxTokenSecret) {
+      return { kind: 'err', message: 'Mux credentials not configured.' };
+    }
+
+    const autoRequest =
+      process.env.HIGHLIGHT_MUX_AUTO_REQUEST_STATIC_MP4 !== 'false';
+
+    const readAsset = async (): Promise<Record<string, unknown> | null> => {
+      try {
+        const response = await axios.get(
+          `${MUX_API_BASE_URL}/video/v1/assets/${encodeURIComponent(assetId)}`,
+          { auth: { username: muxTokenId, password: muxTokenSecret } },
+        );
+        return response.data?.data ?? null;
+      } catch (err) {
+        this.logger.warn(
+          `Mux asset fetch failed for highlight ${highlight.id} asset ${assetId}`,
+          err,
+        );
+        return null;
+      }
+    };
+
+    let asset = await readAsset();
+    if (!asset) {
+      return { kind: 'err', message: 'Could not load this clip from Mux.' };
+    }
+
+    const resolveFromRenditions = (
+      raw: unknown,
+    ):
+      | { stage: 'ready'; name: string }
+      | { stage: 'preparing' }
+      | { stage: 'need_request' }
+      | { stage: 'dead'; message: string } => {
+      const list = muxStaticRenditionFileRows(raw);
+      const bucket = muxStaticRenditionsBucketStatus(raw);
+      const mp4Rows = list.filter(
+        (r) =>
+          r &&
+          typeof r === 'object' &&
+          String((r as { ext?: string }).ext || '') === 'mp4',
+      ) as Array<Record<string, unknown>>;
+
+      if (mp4Rows.length === 0) {
+        if (bucket === 'preparing') {
+          return { stage: 'preparing' };
+        }
+        if (bucket === 'errored') {
+          return {
+            stage: 'dead',
+            message:
+              'Mux could not generate an MP4 for this clip. Try sharing from a newer highlight.',
+          };
+        }
+        return { stage: 'need_request' };
+      }
+
+      const ready = mp4Rows.find(
+        (r) => String(r['status'] || '') === 'ready',
+      ) as { name?: string } | undefined;
+      if (ready?.name) {
+        return { stage: 'ready', name: ready.name };
+      }
+
+      if (
+        mp4Rows.some((r) =>
+          ['preparing', 'waiting'].includes(String(r['status'] || '')),
+        )
+      ) {
+        return { stage: 'preparing' };
+      }
+
+      const errored = mp4Rows.every(
+        (r) => String(r['status'] || '') === 'errored',
+      );
+      if (errored) {
+        return {
+          stage: 'dead',
+          message:
+            'Mux could not generate an MP4 for this clip. Try sharing from a newer highlight.',
         };
       }
 
-      throw new InternalServerErrorException(
-        `Failed to process highlight: ${error.message}`,
-      );
+      return { stage: 'need_request' };
+    };
+
+    let decision = resolveFromRenditions(asset['static_renditions']);
+
+    if (decision.stage === 'dead') {
+      return { kind: 'err', message: decision.message };
     }
+
+    if (decision.stage === 'preparing') {
+      return {
+        kind: 'err',
+        message:
+          'MP4 file is still being prepared on Mux. Try again in a few minutes.',
+      };
+    }
+
+    if (decision.stage === 'need_request') {
+      if (!autoRequest) {
+        return {
+          kind: 'err',
+          message:
+            'MP4 download is not enabled for this clip yet. Set HIGHLIGHT_MUX_AUTO_REQUEST_STATIC_MP4=true (default) or add static renditions in Mux.',
+        };
+      }
+      const req = await this.requestMuxHighestStaticRendition(
+        assetId,
+        muxTokenId,
+        muxTokenSecret,
+      );
+      if (req.ok === false) {
+        return { kind: 'err', message: req.message };
+      }
+      asset = await readAsset();
+      if (!asset) {
+        return { kind: 'err', message: 'Could not load this clip from Mux.' };
+      }
+      decision = resolveFromRenditions(asset['static_renditions']);
+      if (decision.stage === 'ready' && decision.name) {
+        /* fall through to URL build below */
+      } else if (decision.stage === 'preparing') {
+        return {
+          kind: 'err',
+          message:
+            'MP4 generation has started on Mux. Try sharing again in a few minutes.',
+        };
+      } else if (decision.stage === 'dead') {
+        return { kind: 'err', message: decision.message };
+      } else {
+        return {
+          kind: 'err',
+          message:
+            'MP4 generation has started on Mux. Try sharing again in a few minutes.',
+        };
+      }
+    }
+
+    if (decision.stage !== 'ready' || !decision.name) {
+      return {
+        kind: 'err',
+        message:
+          'No ready MP4 rendition is available for this clip yet. Try again shortly.',
+      };
+    }
+
+    let url = `https://stream.mux.com/${playbackId}/${decision.name}`;
+    const signed = await this.muxService.signPlaybackToken(playbackId);
+    if (signed?.token) {
+      url = `${url}?token=${encodeURIComponent(signed.token)}`;
+    }
+
+    if (!this.isProgressiveMp4ExportUrl(url)) {
+      return { kind: 'err', message: 'Could not build a valid MP4 export URL.' };
+    }
+
+    return { kind: 'ok', signedUrl: url };
   }
 
   /**

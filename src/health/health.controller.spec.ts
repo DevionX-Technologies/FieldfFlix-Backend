@@ -30,7 +30,11 @@ describe('HealthController', () => {
   describe('check', () => {
     it('should return health status', async () => {
       // Arrange
-      const expectedResult = { status: 'ok' };
+      const expectedResult = {
+        status: 'ok',
+        service: 'FieldFlicks',
+        probe: 'fieldflicks-health-probe-2026-05-14',
+      };
 
       // Act
       const result = await healthController.check();

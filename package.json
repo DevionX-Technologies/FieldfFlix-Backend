@@ -44,7 +44,10 @@
     "db:audit-cricket": "node scripts/audit-cricket-misattributed.mjs",
     "db:audit-balkanji": "node scripts/audit-balkanji-all-recordings.mjs",
     "db:list-paid": "node scripts/list-paid-recordings.mjs",
-    "db:list-cameras": "node scripts/list-cameras-at-venue.mjs"
+    "db:list-cameras": "node scripts/list-cameras-at-venue.mjs",
+    "backfill:highlight-mp4": "npx ts-node -r tsconfig-paths/register scripts/backfill-highlight-mp4.ts",
+    "audit:highlight-mux-mp4": "npx ts-node -r tsconfig-paths/register scripts/audit-highlight-mux-static-mp4.ts",
+    "backfill:highlight-mux-static-mp4": "npx ts-node -r tsconfig-paths/register scripts/backfill-highlight-mux-static-mp4.ts"
   },
   "dependencies": {
     "@aws-sdk/client-lambda": "^3.901.0",

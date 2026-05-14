@@ -9,6 +9,11 @@ export class HealthController {
   @Public()
   @Get()
   async check() {
-    return this.healthService.check(); // Use the health service to check health status
+    const result = await this.healthService.check();
+    return {
+      ...result,
+      service: 'FieldFlicks',
+      probe: 'fieldflicks-health-probe-2026-05-14',
+    };
   }
 }

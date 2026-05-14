@@ -271,6 +271,8 @@ export class ClipProcessingProcessor {
               process.env.MUX_SIGNING_KEY_ID ? 'signed' : 'public',
             ],
             video_quality: 'basic',
+            // Progressive MP4 for share/download without Lambda/S3 (extra Mux storage + delivery; see HIGHLIGHT_MP4_EXPORT_STRATEGY).
+            static_renditions: [{ resolution: 'highest' }],
           },
         });
 
@@ -279,8 +281,12 @@ export class ClipProcessingProcessor {
         }
 
         const clipAssetId = response.data.data.id;
-        const playbackId = Array.isArray(response.data.data.playback_ids)
-          ? response.data.data.playback_ids.find((p: any) => p?.policy === 'public')?.id
+        const playbackIds = response.data.data.playback_ids;
+        const playbackId = Array.isArray(playbackIds)
+          ? playbackIds.find(
+              (p: any) =>
+                p?.policy === 'public' || p?.policy === 'signed',
+            )?.id ?? playbackIds[0]?.id
           : null;
 
         // Update highlight to clip_created
@@ -433,7 +439,9 @@ export class ClipProcessingProcessor {
 
       const asset = response.data.data;
       const playbackId = Array.isArray(asset.playback_ids)
-        ? asset.playback_ids.find((p: any) => p?.policy === 'public')?.id
+        ? asset.playback_ids.find(
+            (p: any) => p?.policy === 'public' || p?.policy === 'signed',
+          )?.id ?? asset.playback_ids[0]?.id
         : null;
 
       if (asset.status === 'ready') {

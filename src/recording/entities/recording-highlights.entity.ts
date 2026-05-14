@@ -56,6 +56,15 @@ export class RecordingHighlights {
   @Column({ type: 'jsonb', nullable: true })
   metadata?: {
     errorRetryCount?: number;
+    /** Mux static MP4 export tracking (backfill / ops). */
+    muxStaticMp4?: {
+      status?: string;
+      name?: string;
+      muxAssetId?: string;
+      playbackId?: string;
+      updatedAt?: string;
+      note?: string;
+    };
     rateLimitRetryCount?: number;
     retryHistory?: Array<{
       attempt: number;

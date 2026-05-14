@@ -16,7 +16,9 @@ describe('AppController', () => {
 
   describe('root', () => {
     it('should return fieldflicks root health string', () => {
-      expect(appController.getHello()).toBe('fieldflicks-backend-alive-2026-05-13');
+      expect(appController.getHello()).toBe(
+        'FieldFlicks backend is up, healthy, and accepting requests.',
+      );
     });
   });
 });
