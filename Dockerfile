@@ -26,4 +26,4 @@ RUN npm run build
 EXPOSE 8000
 
 # Define the command to run the application
-CMD ["npm", "run", "start:prod"]
+CMD ["npm", "run", "start:prodecs"]

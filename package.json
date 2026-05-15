@@ -13,6 +13,7 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node --env-file .env.production dist/src/main",
+    "start:prodecs": "node dist/src/main",
     "lint:check": "eslint . --ext .ts --ignore-path .gitignore",
     "lint:fix": "eslint . --ext .ts --fix --ignore-path .gitignore",
     "test": "jest",
