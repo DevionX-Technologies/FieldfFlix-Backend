@@ -25,8 +25,8 @@ const EXPECTED = [
     key: 'balkanji',
     pattern: '%balkanji%',
     location: 'Santacruz West',
-    courts: 4,
-    sport: 'Pickleball + Cricket (court 1 cricket per sheet)',
+    courts: 3,
+    sport: 'Pickleball courts 1–3 (cricket venue is separate Santacruz row in ops sheet)',
   },
   {
     key: 'padel_arena',
@@ -54,7 +54,7 @@ const EXPECTED = [
     pattern: '%botanical%',
     location: 'Andheri West',
     courts: 4,
-    sport: 'Pickleball (court 3 not live — camera/ops)',
+    sport: 'Pickleball; venue labels courts 3–6 (four live rows)',
   },
 ];
 

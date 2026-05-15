@@ -1,0 +1,85 @@
+{
+  "note": "Stub turfs to align court counts with ops sheet. is_active=false so listing API (active-only) is unchanged until you enable rows and attach cameras.",
+  "inserts": [
+    {
+      "id": "a96da7cb-bca6-41c0-bec8-e5dc4c1f1bbf",
+      "name": "TSG Sports Arena | Eskay Resort · Court 3",
+      "sport": "Pickleball",
+      "location": "Borivali West, Mumbai",
+      "city": "Mumbai",
+      "state": "Maharashtra",
+      "country": "India",
+      "is_active": false
+    },
+    {
+      "id": "47919f7d-eb04-4881-88b0-8f27f9dfb707",
+      "name": "TSG Sports Arena | Eskay Resort · Court 4",
+      "sport": "Pickleball",
+      "location": "Borivali West, Mumbai",
+      "city": "Mumbai",
+      "state": "Maharashtra",
+      "country": "India",
+      "is_active": false
+    },
+    {
+      "id": "2d4658c0-a0f6-4879-8da1-25333cb90ca4",
+      "name": "TSG Padel Arena · Court 2",
+      "sport": "Paddle",
+      "location": "Goregaon East, Mumbai",
+      "city": "Mumbai",
+      "state": "Maharashtra",
+      "country": "India",
+      "is_active": false
+    },
+    {
+      "id": "25858a13-f247-4237-ba9b-e63b4db0e960",
+      "name": "Pickleflow Social · Court 2",
+      "sport": "Pickleball",
+      "location": "Noida",
+      "city": "Noida",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "is_active": false
+    },
+    {
+      "id": "428edf37-62e7-411e-8537-89b3011fa531",
+      "name": "Pickleflow Social · Court 3",
+      "sport": "Pickleball",
+      "location": "Noida",
+      "city": "Noida",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "is_active": false
+    },
+    {
+      "id": "ad7a307f-a92d-486f-88f7-41c74192680e",
+      "name": "TSG Pickleball and Sports Arena | Botanical Gardens · Court 3",
+      "sport": "Pickleball",
+      "location": "Andheri West, Mumbai",
+      "city": "Mumbai",
+      "state": "Maharashtra",
+      "country": "India",
+      "is_active": false
+    },
+    {
+      "id": "b1d30b9f-2a5c-4a47-a0a4-b61232494625",
+      "name": "TSG Pickleball and Sports Arena | Botanical Gardens · Court 4",
+      "sport": "Pickleball",
+      "location": "Andheri West, Mumbai",
+      "city": "Mumbai",
+      "state": "Maharashtra",
+      "country": "India",
+      "is_active": false
+    },
+    {
+      "id": "d6db1488-5e3f-45aa-89e6-5dc49ed4a5a6",
+      "name": "TSG Pickleball and Sports Arena | Botanical Gardens · Court 5",
+      "sport": "Pickleball",
+      "location": "Andheri West, Mumbai",
+      "city": "Mumbai",
+      "state": "Maharashtra",
+      "country": "India",
+      "is_active": false
+    }
+  ]
+}
