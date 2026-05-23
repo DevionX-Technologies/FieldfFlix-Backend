@@ -79,7 +79,10 @@ function summarizeMp4Renditions(staticRenditions: unknown): RenditionSummary {
     };
   }
   const mp4 = rows.filter(
-    (r) => r && typeof r === 'object' && String((r as { ext?: string }).ext) === 'mp4',
+    (r) =>
+      r &&
+      typeof r === 'object' &&
+      String((r as { ext?: string }).ext) === 'mp4',
   ) as Array<{ status?: string; name?: string }>;
 
   if (mp4.length === 0) {
@@ -96,9 +99,7 @@ function summarizeMp4Renditions(staticRenditions: unknown): RenditionSummary {
   }
 
   if (
-    mp4.some((r) =>
-      ['preparing', 'waiting'].includes(String(r.status || '')),
-    )
+    mp4.some((r) => ['preparing', 'waiting'].includes(String(r.status || '')))
   ) {
     const p = mp4.find((r) =>
       ['preparing', 'waiting'].includes(String(r.status || '')),
@@ -230,7 +231,10 @@ async function postStaticRenditionHighest(
     if (st === 409) {
       return { ok: true, action: 'posted' };
     }
-    if (st === 400 && muxIsStaticRenditionAlreadyDefinedResponse(ax.response?.data)) {
+    if (
+      st === 400 &&
+      muxIsStaticRenditionAlreadyDefinedResponse(ax.response?.data)
+    ) {
       return { ok: true, action: 'posted' };
     }
     if (st != null) {
@@ -303,10 +307,7 @@ async function main() {
   const dryRun = process.argv.includes('--dry-run');
   const wait = process.argv.includes('--wait');
   const includeAll = process.argv.includes('--all');
-  const delayMs = Math.max(
-    0,
-    parseInt(arg('--delay-ms') ?? '150', 10) || 150,
-  );
+  const delayMs = Math.max(0, parseInt(arg('--delay-ms') ?? '150', 10) || 150);
   const pollSec = Math.max(3, parseInt(arg('--poll-sec') ?? '10', 10) || 10);
   const maxWaitSec = Math.max(
     30,
@@ -429,10 +430,7 @@ async function main() {
         continue;
       }
 
-      if (
-        summary.mp4Status === 'skipped' ||
-        summary.mp4Status === 'errored'
-      ) {
+      if (summary.mp4Status === 'skipped' || summary.mp4Status === 'errored') {
         console.log(
           `${summary.mp4Status.toUpperCase()}\t${row.highlight_id}\t${summary.mp4Detail}`,
         );
@@ -508,7 +506,10 @@ async function main() {
       }
 
       const shouldPoll =
-        wait && !dryRun && !!row.playback_id && summary.mp4Status === 'preparing';
+        wait &&
+        !dryRun &&
+        !!row.playback_id &&
+        summary.mp4Status === 'preparing';
 
       if (shouldPoll) {
         const deadline = Date.now() + maxWaitSec * 1000;

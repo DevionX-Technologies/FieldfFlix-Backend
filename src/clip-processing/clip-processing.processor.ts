@@ -24,11 +24,11 @@ import {
 export class ClipProcessingProcessor {
   private readonly logger = new Logger(ClipProcessingProcessor.name);
 
-  constructor(
-    @InjectDataSource() private readonly dataSource: DataSource,
-  ) {}
+  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
-  async processRecording(recordingId: string): Promise<RecordingProcessingResult> {
+  async processRecording(
+    recordingId: string,
+  ): Promise<RecordingProcessingResult> {
     const startTime = Date.now();
     const results: HighlightProcessingResult[] = [];
     let processed = 0;
@@ -41,9 +41,14 @@ export class ClipProcessingProcessor {
 
     try {
       // 1. Acquire advisory lock
-      const lockAcquired = await this.tryAcquireAdvisoryLock(queryRunner, recordingId);
+      const lockAcquired = await this.tryAcquireAdvisoryLock(
+        queryRunner,
+        recordingId,
+      );
       if (!lockAcquired) {
-        this.logger.log(`Advisory lock not acquired for recording ${recordingId}, skipping`);
+        this.logger.log(
+          `Advisory lock not acquired for recording ${recordingId}, skipping`,
+        );
         return {
           recordingId,
           status: 'locked',
@@ -58,10 +63,15 @@ export class ClipProcessingProcessor {
 
       try {
         // 2. Query all actionable highlights
-        const highlights = await this.getActionableHighlights(queryRunner, recordingId);
+        const highlights = await this.getActionableHighlights(
+          queryRunner,
+          recordingId,
+        );
 
         if (highlights.length === 0) {
-          this.logger.log(`No actionable highlights for recording ${recordingId}`);
+          this.logger.log(
+            `No actionable highlights for recording ${recordingId}`,
+          );
           return {
             recordingId,
             status: 'no_highlights',
@@ -81,7 +91,9 @@ export class ClipProcessingProcessor {
         );
 
         if (!recording[0]?.muxAssetId) {
-          this.logger.warn(`Recording ${recordingId} has no mux_asset_id, skipping all highlights`);
+          this.logger.warn(
+            `Recording ${recordingId} has no mux_asset_id, skipping all highlights`,
+          );
           return {
             recordingId,
             status: 'failed',
@@ -103,7 +115,11 @@ export class ClipProcessingProcessor {
         // 4. Process each highlight sequentially
         for (let i = 0; i < highlights.length; i++) {
           const highlight = highlights[i];
-          const result = await this.processHighlight(queryRunner, highlight, muxAssetId);
+          const result = await this.processHighlight(
+            queryRunner,
+            highlight,
+            muxAssetId,
+          );
           results.push(result);
 
           switch (result.action) {
@@ -127,7 +143,8 @@ export class ClipProcessingProcessor {
           }
         }
 
-        const status = failed === 0 && permanentlyFailed === 0 ? 'completed' : 'partial';
+        const status =
+          failed === 0 && permanentlyFailed === 0 ? 'completed' : 'partial';
 
         this.logger.log(
           `Recording ${recordingId} processing ${status}: ${processed} processed, ${failed} failed, ${skipped} skipped, ${permanentlyFailed} permanently failed`,
@@ -224,9 +241,13 @@ export class ClipProcessingProcessor {
     muxAssetId: string,
     relativeTimestamp: string,
   ): Promise<HighlightProcessingResult> {
-    const highlightTimeInSeconds = parseRelativeTimestampToSeconds(relativeTimestamp);
+    const highlightTimeInSeconds =
+      parseRelativeTimestampToSeconds(relativeTimestamp);
     const endTime = highlightTimeInSeconds;
-    const startTime = Math.max(0, highlightTimeInSeconds - DURATION_TO_BACKTRACK_SECONDS);
+    const startTime = Math.max(
+      0,
+      highlightTimeInSeconds - DURATION_TO_BACKTRACK_SECONDS,
+    );
 
     const muxTokenId = process.env.MUX_TOKEN_ID;
     const muxTokenSecret = process.env.MUX_TOKEN_SECRET;
@@ -251,7 +272,9 @@ export class ClipProcessingProcessor {
       try {
         this.logger.log(
           `Creating Mux clip for highlight ${highlightId}: ${startTime}s - ${endTime}s` +
-          (rateLimitAttempt > 0 ? ` (rate limit retry ${rateLimitAttempt})` : ''),
+            (rateLimitAttempt > 0
+              ? ` (rate limit retry ${rateLimitAttempt})`
+              : ''),
         );
 
         const response = await axios({
@@ -260,11 +283,13 @@ export class ClipProcessingProcessor {
           headers: { 'Content-Type': 'application/json' },
           auth: { username: muxTokenId, password: muxTokenSecret },
           data: {
-            input: [{
-              url: `mux://assets/${muxAssetId}`,
-              start_time: startTime,
-              end_time: endTime,
-            }],
+            input: [
+              {
+                url: `mux://assets/${muxAssetId}`,
+                start_time: startTime,
+                end_time: endTime,
+              },
+            ],
             // Match the source asset's policy: when signed playback is configured we mint
             // signed clips so they only play through the app via a backend-issued JWT.
             playback_policy: [
@@ -283,10 +308,9 @@ export class ClipProcessingProcessor {
         const clipAssetId = response.data.data.id;
         const playbackIds = response.data.data.playback_ids;
         const playbackId = Array.isArray(playbackIds)
-          ? playbackIds.find(
-              (p: any) =>
-                p?.policy === 'public' || p?.policy === 'signed',
-            )?.id ?? playbackIds[0]?.id
+          ? (playbackIds.find(
+              (p: any) => p?.policy === 'public' || p?.policy === 'signed',
+            )?.id ?? playbackIds[0]?.id)
           : null;
 
         // Update highlight to clip_created
@@ -302,10 +326,18 @@ export class ClipProcessingProcessor {
                lock_version = lock_version + 1,
                updated_at = NOW()
            WHERE id = $5`,
-          [HIGHLIGHT_STATUS.CLIP_CREATED, clipAssetId, playbackId, muxAssetId, highlightId],
+          [
+            HIGHLIGHT_STATUS.CLIP_CREATED,
+            clipAssetId,
+            playbackId,
+            muxAssetId,
+            highlightId,
+          ],
         );
 
-        this.logger.log(`Clip created: asset=${clipAssetId}, highlight=${highlightId}`);
+        this.logger.log(
+          `Clip created: asset=${clipAssetId}, highlight=${highlightId}`,
+        );
 
         return {
           highlightId,
@@ -332,12 +364,13 @@ export class ClipProcessingProcessor {
             };
           }
 
-          const sleepMs = calculateRateLimitDelay(
-            rateLimitAttempt,
-            errorInfo.retryAfter || null,
-            CLIP_PROCESSING.RATE_LIMIT_BASE_DELAY_SECONDS,
-            CLIP_PROCESSING.RATE_LIMIT_DELAY_CAP_SECONDS,
-          ) * 1000;
+          const sleepMs =
+            calculateRateLimitDelay(
+              rateLimitAttempt,
+              errorInfo.retryAfter || null,
+              CLIP_PROCESSING.RATE_LIMIT_BASE_DELAY_SECONDS,
+              CLIP_PROCESSING.RATE_LIMIT_DELAY_CAP_SECONDS,
+            ) * 1000;
 
           this.logger.warn(
             `Rate limited on highlight ${highlightId}, sleeping ${sleepMs / 1000}s (attempt ${rateLimitAttempt}/${CLIP_PROCESSING.MAX_RATE_LIMIT_RETRIES})`,
@@ -366,7 +399,10 @@ export class ClipProcessingProcessor {
     error: any,
   ): Promise<HighlightProcessingResult> {
     const errorInfo = classifyError(error);
-    const errorMessage = error?.response?.data?.error?.message || error?.message || 'Unknown error';
+    const errorMessage =
+      error?.response?.data?.error?.message ||
+      error?.message ||
+      'Unknown error';
 
     this.logger.error(
       `Error processing highlight ${highlightId}: ${errorMessage}`,
@@ -393,9 +429,13 @@ export class ClipProcessingProcessor {
           highlightId,
           `Auth error (${errorInfo.httpStatus}): ${errorMessage}`,
         );
-        this.logger.error(`AUTH ERROR — check Mux credentials. Stopping recording processing.`);
+        this.logger.error(
+          `AUTH ERROR — check Mux credentials. Stopping recording processing.`,
+        );
         // Throw to stop processing all remaining highlights (they'll all fail with same auth issue)
-        throw new Error(`Auth error (${errorInfo.httpStatus}): stopping recording processing`);
+        throw new Error(
+          `Auth error (${errorInfo.httpStatus}): stopping recording processing`,
+        );
 
       case 'server_error':
       case 'network_error':
@@ -439,9 +479,9 @@ export class ClipProcessingProcessor {
 
       const asset = response.data.data;
       const playbackId = Array.isArray(asset.playback_ids)
-        ? asset.playback_ids.find(
+        ? (asset.playback_ids.find(
             (p: any) => p?.policy === 'public' || p?.policy === 'signed',
-          )?.id ?? asset.playback_ids[0]?.id
+          )?.id ?? asset.playback_ids[0]?.id)
         : null;
 
       if (asset.status === 'ready') {
@@ -552,10 +592,9 @@ export class ClipProcessingProcessor {
     recordingId: string,
   ): Promise<void> {
     try {
-      await queryRunner.query(
-        `SELECT pg_advisory_unlock(hashtext($1))`,
-        [recordingId],
-      );
+      await queryRunner.query(`SELECT pg_advisory_unlock(hashtext($1))`, [
+        recordingId,
+      ]);
     } catch (error) {
       this.logger.warn(
         `Failed to release advisory lock for recording ${recordingId}: ${error?.message}`,
@@ -612,7 +651,9 @@ export class ClipProcessingProcessor {
       await this.reorderProcessingOrder(queryRunner, recordingId);
     }
 
-    this.logger.log(`Highlight ${highlightId} permanently failed (re-ordered): ${reason}`);
+    this.logger.log(
+      `Highlight ${highlightId} permanently failed (re-ordered): ${reason}`,
+    );
   }
 
   private async reorderProcessingOrder(
@@ -620,7 +661,8 @@ export class ClipProcessingProcessor {
     recordingId: string,
   ): Promise<void> {
     try {
-      await queryRunner.query(`
+      await queryRunner.query(
+        `
         WITH ordered AS (
           SELECT id, ROW_NUMBER() OVER (
             ORDER BY
@@ -645,9 +687,13 @@ export class ClipProcessingProcessor {
         FROM ordered o
         WHERE rh.id = o.id
           AND rh.processing_order != o.new_order
-      `, [recordingId]);
+      `,
+        [recordingId],
+      );
     } catch (error) {
-      this.logger.warn(`Failed to re-order processing_order for recording ${recordingId}: ${error?.message}`);
+      this.logger.warn(
+        `Failed to re-order processing_order for recording ${recordingId}: ${error?.message}`,
+      );
     }
   }
 
@@ -680,6 +726,8 @@ export class ClipProcessingProcessor {
       await this.reorderProcessingOrder(queryRunner, recordingId);
     }
 
-    this.logger.log(`Highlight ${highlightId} marked failed (processing_order cleared, re-ordered): ${reason}`);
+    this.logger.log(
+      `Highlight ${highlightId} marked failed (processing_order cleared, re-ordered): ${reason}`,
+    );
   }
 }

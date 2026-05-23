@@ -42,7 +42,7 @@ export class CameraService {
    */
   async findAll(params: PaginationParams): Promise<PaginationResult<Camera>> {
     const { page = 1, limit = 10, turfId } = params;
-    
+
     const whereCondition = turfId ? { turfId } : {};
 
     const [data, total] = await this.cameraRepository.findAndCount({

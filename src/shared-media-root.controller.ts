@@ -71,7 +71,9 @@ export class SharedMediaRootController {
     }
 
     if (!resolved) {
-      throw new NotFoundException('Shared media not found or token is invalid.');
+      throw new NotFoundException(
+        'Shared media not found or token is invalid.',
+      );
     }
 
     const payload = {
@@ -80,9 +82,7 @@ export class SharedMediaRootController {
     };
     return res
       .status(200)
-      .json(
-        successResponse('GET_/shared/media/:share_token', payload),
-      );
+      .json(successResponse('GET_/shared/media/:share_token', payload));
   }
 }
 

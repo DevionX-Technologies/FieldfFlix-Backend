@@ -11,7 +11,10 @@ import { User } from 'src/user/entities/user.entity';
 import { RecordingHighlights } from './recording-highlights.entity';
 
 @Entity('recording_highlight_engagements')
-@Unique('UQ_highlight_engagement_user_highlight', ['userId', 'recordingHighlightId'])
+@Unique('UQ_highlight_engagement_user_highlight', [
+  'userId',
+  'recordingHighlightId',
+])
 export class RecordingHighlightEngagement {
   @PrimaryGeneratedColumn('uuid')
   id: string;

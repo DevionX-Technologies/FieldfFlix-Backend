@@ -36,10 +36,9 @@ UPDATE turfs
 SET sports_supported = ARRAY['Paddle']::"ESportsSupported"[]
 WHERE name ILIKE '%PickPad%';
 
--- Balkanji Bari (multiple turf rows exist; spreadsheet had pickle + cricket courts)
-UPDATE turfs
-SET sports_supported = ARRAY['Pickleball', 'Cricket']::"ESportsSupported"[]
-WHERE name ILIKE '%All India Balkanji Bari%';
+-- Balkanji Bari: FieldFlix maps venue *name* to Pickleball-only in application code (`deriveFlickSportFromTurf`,
+-- turfs list API). Historical `turfs.sports_supported` values are left untouched unless you deliberately
+-- run a tailored UPDATE — do NOT paste a blanket Balkanji + Cricket refresh here anymore.
 
 UPDATE turfs
 SET sports_supported = ARRAY['Pickleball']::"ESportsSupported"[]

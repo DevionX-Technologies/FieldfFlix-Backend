@@ -27,7 +27,9 @@ export class AuthService {
 
   /** Sends a 6-digit OTP via Fast2SMS (DLT) and stores it for verification. */
   async sendOtp(mobile: string): Promise<{ message: string }> {
-    this.logger.log(`send-otp (Fast2SMS) — …${mobile.replace(/\D/g, '').slice(-4)}`);
+    this.logger.log(
+      `send-otp (Fast2SMS) — …${mobile.replace(/\D/g, '').slice(-4)}`,
+    );
     const code = String(Math.floor(100000 + Math.random() * 900000));
     await this.fast2Sms.sendDltOtp(mobile, code);
     this.phoneOtpStore.set(mobile, code);
@@ -43,7 +45,10 @@ export class AuthService {
   }
 
   /** Verifies the OTP, then issues the app JWT. */
-  async verifyOtp(mobile: string, otp: string): Promise<{
+  async verifyOtp(
+    mobile: string,
+    otp: string,
+  ): Promise<{
     token: string;
     isFirstTimeLogin: boolean;
     name: string;

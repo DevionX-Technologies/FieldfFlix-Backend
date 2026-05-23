@@ -39,7 +39,9 @@ export class AdminController {
    * Mux-ready recordings for the FlickShort admin picker (no manual UUID paste).
    */
   @Get('recordings-for-flickshorts')
-  async recordingsForFlickshorts(@Req() req: Request & { user: ILocalLoginPayload }) {
+  async recordingsForFlickshorts(
+    @Req() req: Request & { user: ILocalLoginPayload },
+  ) {
     await this.assertAdmin(req.user.user_id);
     return this.recordingService.listMuxReadyRecordingsForAdmin();
   }

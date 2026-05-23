@@ -11,10 +11,7 @@ import {
   formatLogMessage,
   validateEnvironmentVariables,
 } from 'src/lambda/retry-failed-highlights/utils/lambda.util';
-import {
-  CLIP_PROCESSING,
-  HIGHLIGHT_STATUS,
-} from 'src/constant/constant';
+import { CLIP_PROCESSING, HIGHLIGHT_STATUS } from 'src/constant/constant';
 
 /**
  * Sweep Lambda — runs every 10 minutes
@@ -80,7 +77,9 @@ export const main: Handler = async (
   }
 
   let dataSource: DataSource;
-  const sqsClient = new SQSClient({ region: process.env.AWS_REGION || 'ap-south-1' });
+  const sqsClient = new SQSClient({
+    region: process.env.AWS_REGION || 'ap-south-1',
+  });
 
   try {
     dataSource = new DataSource({
@@ -112,13 +111,16 @@ export const main: Handler = async (
     // ──────────────────────────────────────────────────────────────────────
     // 1. Stuck 'processing' highlights (updated_at > 5 min ago → processor crashed)
     // ──────────────────────────────────────────────────────────────────────
-    const stuckProcessing = await dataSource.query(`
+    const stuckProcessing = await dataSource.query(
+      `
       SELECT rh.id, rh.recording_id AS "recordingId"
       FROM recording_highlights rh
       WHERE rh.status = $1
         AND rh.updated_at < NOW() - INTERVAL '${CLIP_PROCESSING.STUCK_PROCESSING_THRESHOLD_MINUTES} minutes'
       ORDER BY rh.created_at ASC
-    `, [HIGHLIGHT_STATUS.PROCESSING]);
+    `,
+      [HIGHLIGHT_STATUS.PROCESSING],
+    );
 
     console.log(`Found ${stuckProcessing.length} stuck processing highlights`);
 
@@ -149,7 +151,8 @@ export const main: Handler = async (
     // ──────────────────────────────────────────────────────────────────────
     // 2. Pending highlights where recording is already ready (webhook missed)
     // ──────────────────────────────────────────────────────────────────────
-    const missedPending = await dataSource.query(`
+    const missedPending = await dataSource.query(
+      `
       SELECT rh.id, rh.recording_id AS "recordingId"
       FROM recording_highlights rh
       JOIN recordings r ON rh.recording_id = r.id
@@ -157,9 +160,13 @@ export const main: Handler = async (
         AND r.mux_asset_id IS NOT NULL
         AND r.status = 'ready'
       ORDER BY rh.processing_order ASC
-    `, [HIGHLIGHT_STATUS.PENDING]);
+    `,
+      [HIGHLIGHT_STATUS.PENDING],
+    );
 
-    console.log(`Found ${missedPending.length} pending highlights with ready recordings`);
+    console.log(
+      `Found ${missedPending.length} pending highlights with ready recordings`,
+    );
 
     for (const h of missedPending) {
       try {
@@ -188,15 +195,20 @@ export const main: Handler = async (
     // ──────────────────────────────────────────────────────────────────────
     // 3. Stuck 'rate_limited' highlights (updated_at > 10 min ago)
     // ──────────────────────────────────────────────────────────────────────
-    const stuckRateLimited = await dataSource.query(`
+    const stuckRateLimited = await dataSource.query(
+      `
       SELECT rh.id, rh.recording_id AS "recordingId"
       FROM recording_highlights rh
       WHERE rh.status = $1
         AND rh.updated_at < NOW() - INTERVAL '${CLIP_PROCESSING.STUCK_RATE_LIMITED_THRESHOLD_MINUTES} minutes'
       ORDER BY rh.created_at ASC
-    `, [HIGHLIGHT_STATUS.RATE_LIMITED]);
+    `,
+      [HIGHLIGHT_STATUS.RATE_LIMITED],
+    );
 
-    console.log(`Found ${stuckRateLimited.length} stuck rate_limited highlights`);
+    console.log(
+      `Found ${stuckRateLimited.length} stuck rate_limited highlights`,
+    );
 
     for (const h of stuckRateLimited) {
       try {
@@ -226,14 +238,19 @@ export const main: Handler = async (
     // 4. Failed / permanently_failed — clear processing_order & re-order
     //    No retry for these. Keep the record, just remove from the chain.
     // ──────────────────────────────────────────────────────────────────────
-    const failedOrPermFailed = await dataSource.query(`
+    const failedOrPermFailed = await dataSource.query(
+      `
       SELECT rh.id, rh.recording_id AS "recordingId", rh.status
       FROM recording_highlights rh
       WHERE rh.status IN ($1, $2)
         AND rh.processing_order IS NOT NULL
-    `, [HIGHLIGHT_STATUS.FAILED, HIGHLIGHT_STATUS.PERMANENTLY_FAILED]);
+    `,
+      [HIGHLIGHT_STATUS.FAILED, HIGHLIGHT_STATUS.PERMANENTLY_FAILED],
+    );
 
-    console.log(`Found ${failedOrPermFailed.length} failed/permanently_failed highlights to clear processing_order`);
+    console.log(
+      `Found ${failedOrPermFailed.length} failed/permanently_failed highlights to clear processing_order`,
+    );
 
     // Collect affected recording IDs for re-ordering
     const recordingsToReorder = new Set<string>();
@@ -264,7 +281,8 @@ export const main: Handler = async (
     // Re-order processing_order by relative_timestamp for affected recordings (close gaps)
     for (const recId of recordingsToReorder) {
       try {
-        await dataSource.query(`
+        await dataSource.query(
+          `
           WITH ordered AS (
             SELECT id, ROW_NUMBER() OVER (
               ORDER BY
@@ -289,10 +307,14 @@ export const main: Handler = async (
           FROM ordered o
           WHERE rh.id = o.id
             AND rh.processing_order != o.new_order
-        `, [recId]);
+        `,
+          [recId],
+        );
         console.log(`Re-ordered processing_order for recording ${recId}`);
       } catch (error) {
-        console.error(`Failed to re-order processing_order for recording ${recId}: ${error?.message}`);
+        console.error(
+          `Failed to re-order processing_order for recording ${recId}: ${error?.message}`,
+        );
       }
     }
 
@@ -314,7 +336,8 @@ export const main: Handler = async (
     // ──────────────────────────────────────────────────────────────────────
     // 7. Stuck 'queued' highlights (updated_at > 15 min ago → SQS message lost)
     // ──────────────────────────────────────────────────────────────────────
-    const stuckQueued = await dataSource.query(`
+    const stuckQueued = await dataSource.query(
+      `
       SELECT rh.id, rh.recording_id AS "recordingId"
       FROM recording_highlights rh
       JOIN recordings r ON rh.recording_id = r.id
@@ -322,7 +345,9 @@ export const main: Handler = async (
         AND rh.updated_at < NOW() - INTERVAL '15 minutes'
         AND r.mux_asset_id IS NOT NULL
       ORDER BY rh.processing_order ASC
-    `, [HIGHLIGHT_STATUS.QUEUED]);
+    `,
+      [HIGHLIGHT_STATUS.QUEUED],
+    );
 
     console.log(`Found ${stuckQueued.length} stuck queued highlights`);
 
@@ -353,7 +378,9 @@ export const main: Handler = async (
     // ──────────────────────────────────────────────────────────────────────
     // 8. Enqueue each DISTINCT recording ID ONCE to SQS
     // ──────────────────────────────────────────────────────────────────────
-    console.log(`Enqueuing ${recordingIdsToEnqueue.size} distinct recordings to SQS`);
+    console.log(
+      `Enqueuing ${recordingIdsToEnqueue.size} distinct recordings to SQS`,
+    );
 
     for (const recordingId of recordingIdsToEnqueue) {
       try {
@@ -432,5 +459,7 @@ async function enqueueRecordingToSQS(
   });
 
   const result = await sqsClient.send(command);
-  console.log(`Enqueued recording ${recordingId} to SQS, messageId=${result.MessageId}`);
+  console.log(
+    `Enqueued recording ${recordingId} to SQS, messageId=${result.MessageId}`,
+  );
 }

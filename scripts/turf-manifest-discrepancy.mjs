@@ -178,7 +178,7 @@ try {
      ORDER BY name`,
   );
 
-  /** Cricket turf row labeled as Balkanji (sheet assigns cricket to Santacruz West venue). */
+  // Rows named Balkanji that still carry Cricket in DB (historic). Product maps Balkanji → Pickleball in code/API.
   const cricketMislabel = await client.query(`
     SELECT id, name, city, location, sports_supported
     FROM turfs
@@ -230,7 +230,7 @@ try {
             location: row.location,
             sports_supported: row.sports_supported,
             note:
-              'Spreadsheet maps cricket to "TSG Sports Arena | Santacruz West"; verify cameras/recordings before renaming or merging.',
+              'Historic DB anomaly: Balkanji is Pickleball-only in FieldFlix app/API; spreadsheet maps Cricket to Santacruz West venue. Audit cameras/recordings before any DB tidy.',
           })),
           possibleDuplicateVenueTurfsSameName:
             duplicateSantacruzNames.rows.map((row) => ({

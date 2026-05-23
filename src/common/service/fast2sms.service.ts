@@ -22,14 +22,17 @@ export class Fast2SmsService {
    * `mobile` digits (e.g. 9198…). `otp` is substituted into the DLT template via `variables_values`.
    */
   async sendDltOtp(mobile: string, otp: string): Promise<void> {
-    if (!this.authorization?.trim() || !this.senderId?.trim() || !this.dltMessageId?.trim()) {
+    if (
+      !this.authorization?.trim() ||
+      !this.senderId?.trim() ||
+      !this.dltMessageId?.trim()
+    ) {
       this.logger.error('Fast2SMS is not configured (missing env)');
       throw new BadRequestException('SMS service is not configured');
     }
 
     const d = mobile.replace(/\D/g, '');
-    const numbers =
-      d.length === 10 ? d : d.length >= 10 ? d.slice(-10) : d;
+    const numbers = d.length === 10 ? d : d.length >= 10 ? d.slice(-10) : d;
     if (numbers.length < 10) {
       throw new BadRequestException('Invalid phone number for SMS');
     }
@@ -58,7 +61,7 @@ export class Fast2SmsService {
 
       const msg = Array.isArray(data?.message)
         ? data.message.join(', ')
-        : data?.message ?? 'SMS request rejected';
+        : (data?.message ?? 'SMS request rejected');
       this.logger.error(`Fast2SMS error: ${msg}`);
       throw new BadRequestException(msg);
     } catch (error) {

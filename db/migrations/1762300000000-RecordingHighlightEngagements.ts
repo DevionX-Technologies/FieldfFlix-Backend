@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class RecordingHighlightEngagements1762300000000
-  implements MigrationInterface
-{
+export class RecordingHighlightEngagements1762300000000 implements MigrationInterface {
   name = 'RecordingHighlightEngagements1762300000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
@@ -36,7 +34,9 @@ export class RecordingHighlightEngagements1762300000000
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`DROP INDEX IF EXISTS "IDX_rhe_user_saved"`);
     await queryRunner.query(`DROP INDEX IF EXISTS "IDX_rhe_highlight_id"`);
-    await queryRunner.query(`DROP TABLE IF EXISTS "recording_highlight_engagements"`);
+    await queryRunner.query(
+      `DROP TABLE IF EXISTS "recording_highlight_engagements"`,
+    );
     await queryRunner.query(
       `ALTER TABLE "recording_highlights" DROP COLUMN IF EXISTS "likes_count"`,
     );

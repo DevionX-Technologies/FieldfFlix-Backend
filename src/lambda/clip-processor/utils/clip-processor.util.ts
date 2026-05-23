@@ -63,7 +63,12 @@ export function calculateRateLimitDelay(
  * Classify an HTTP error for retry strategy
  */
 export function classifyError(error: any): {
-  type: 'rate_limit' | 'server_error' | 'network_error' | 'bad_input' | 'auth_error';
+  type:
+    | 'rate_limit'
+    | 'server_error'
+    | 'network_error'
+    | 'bad_input'
+    | 'auth_error';
   httpStatus?: number;
   retryAfter?: number;
 } {

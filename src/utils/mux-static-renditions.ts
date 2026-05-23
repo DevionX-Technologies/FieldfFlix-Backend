@@ -3,7 +3,9 @@
  * `{ status, files: [...] }`, not a top-level array. See Mux API "Assets".
  */
 
-export function muxStaticRenditionFileRows(staticRenditions: unknown): unknown[] {
+export function muxStaticRenditionFileRows(
+  staticRenditions: unknown,
+): unknown[] {
   if (Array.isArray(staticRenditions)) {
     return staticRenditions;
   }
@@ -40,14 +42,11 @@ export function muxIsStaticRenditionAlreadyDefinedResponse(
   if (!data || typeof data !== 'object') {
     return false;
   }
-  const messages = (data as { error?: { messages?: unknown } }).error
-    ?.messages;
+  const messages = (data as { error?: { messages?: unknown } }).error?.messages;
   if (!Array.isArray(messages)) {
     return false;
   }
   return messages.some(
-    (m) =>
-      typeof m === 'string' &&
-      /static rendition already defined/i.test(m),
+    (m) => typeof m === 'string' && /static rendition already defined/i.test(m),
   );
 }

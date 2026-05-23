@@ -69,9 +69,7 @@ export class AddClipProcessingColumns1760000000001 implements MigrationInterface
     `);
 
     // Drop indexes
-    await queryRunner.query(
-      `DROP INDEX IF EXISTS "IDX_rh_status_retry"`,
-    );
+    await queryRunner.query(`DROP INDEX IF EXISTS "IDX_rh_status_retry"`);
     await queryRunner.query(
       `DROP INDEX IF EXISTS "IDX_rh_recording_status_order"`,
     );

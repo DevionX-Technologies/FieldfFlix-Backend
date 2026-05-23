@@ -7,12 +7,18 @@ import {
 import { deriveFlickSportFromTurf } from 'src/common/turf-flick-sport.util';
 import { InjectRepository } from '@nestjs/typeorm';
 import { randomUUID } from 'crypto';
-import { AdminRoleService, FLICK_SHORT_MAX_SEC } from 'src/admin/admin-role.service';
+import {
+  AdminRoleService,
+  FLICK_SHORT_MAX_SEC,
+} from 'src/admin/admin-role.service';
 import { UserService } from 'src/user/user.service';
 import { Repository } from 'typeorm';
 import { Recording } from 'src/recording/entities/recording.entity';
 import { FlickShort, FlickShortComment } from './entities/flick-short.entity';
-import { CreateFlickShortDto, FlickShortCommentBodyDto } from './dto/flick-short.dto';
+import {
+  CreateFlickShortDto,
+  FlickShortCommentBodyDto,
+} from './dto/flick-short.dto';
 
 export type FlickShortPublicDto = {
   id: string;
@@ -38,7 +44,10 @@ export type FlickShortPublicDto = {
   createdAt: string;
 };
 
-function resolveClipWindow(dto: CreateFlickShortDto): { start: number; end: number } {
+function resolveClipWindow(dto: CreateFlickShortDto): {
+  start: number;
+  end: number;
+} {
   const start = dto.startSec ?? 0;
   const end = dto.endSec ?? start + FLICK_SHORT_MAX_SEC;
   if (end <= start) {
@@ -139,7 +148,10 @@ export class FlickShortsService {
     if (!rec.mux_playback_id) {
       throw new BadRequestException('Recording is not ready for streaming yet');
     }
-    const sport = deriveFlickSportFromTurf(rec.turf?.sports_supported);
+    const sport = deriveFlickSportFromTurf(
+      rec.turf?.sports_supported,
+      rec.turf?.name,
+    );
     const row = this.flickRepo.create({
       recordingId: rec.id,
       sport,
@@ -204,7 +216,10 @@ export class FlickShortsService {
     return this.toPublic(saved, userId);
   }
 
-  async addView(id: string, viewerUserId?: string | null): Promise<FlickShortPublicDto> {
+  async addView(
+    id: string,
+    viewerUserId?: string | null,
+  ): Promise<FlickShortPublicDto> {
     const row = await this.flickRepo.findOne({ where: { id } });
     if (!row) throw new NotFoundException();
     if (!row.approved) {

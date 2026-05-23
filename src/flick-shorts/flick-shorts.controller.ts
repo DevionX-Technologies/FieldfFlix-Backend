@@ -16,7 +16,11 @@ import { Public } from 'src/decorators/public.decorator';
 import { Request } from 'express';
 import { ILocalLoginPayload } from 'src/auth/strategy/jwt.strategy';
 import { FlickShortsService } from './flick-shorts.service';
-import { CreateFlickShortDto, FlickShortCommentBodyDto, SetApprovedBodyDto } from './dto/flick-short.dto';
+import {
+  CreateFlickShortDto,
+  FlickShortCommentBodyDto,
+  SetApprovedBodyDto,
+} from './dto/flick-short.dto';
 
 @Controller('flick-shorts')
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
@@ -51,7 +55,11 @@ export class FlickShortsController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: SetApprovedBodyDto,
   ) {
-    return this.service.setApproved(req.user.user_id, id, body.approved !== false);
+    return this.service.setApproved(
+      req.user.user_id,
+      id,
+      body.approved !== false,
+    );
   }
 
   @Delete(':id')

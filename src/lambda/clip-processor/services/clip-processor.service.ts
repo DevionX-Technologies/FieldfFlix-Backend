@@ -22,9 +22,7 @@ export class ClipProcessorService {
   private readonly sqsClient: SQSClient;
   private readonly queueUrl: string;
 
-  constructor(
-    private readonly dataSource: DataSource,
-  ) {
+  constructor(private readonly dataSource: DataSource) {
     this.sqsClient = new SQSClient({
       region: process.env.AWS_REGION || 'ap-south-1',
     });
@@ -34,10 +32,14 @@ export class ClipProcessorService {
   /**
    * Main entry point for processing a clip message from SQS
    */
-  async processMessage(message: ClipProcessorMessage): Promise<ClipProcessorResult> {
+  async processMessage(
+    message: ClipProcessorMessage,
+  ): Promise<ClipProcessorResult> {
     const { recordingId, highlightId, processingOrder } = message;
 
-    console.log(`Processing clip: highlight=${highlightId}, recording=${recordingId}, order=${processingOrder}`);
+    console.log(
+      `Processing clip: highlight=${highlightId}, recording=${recordingId}, order=${processingOrder}`,
+    );
 
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -51,7 +53,9 @@ export class ClipProcessorService {
       );
 
       if (hasPredecessors) {
-        console.log(`Highlight ${highlightId} has pending predecessors, re-queuing`);
+        console.log(
+          `Highlight ${highlightId} has pending predecessors, re-queuing`,
+        );
         await this.requeue(message, CLIP_PROCESSING.NOT_MY_TURN_DELAY_SECONDS);
         return {
           success: true,
@@ -63,15 +67,24 @@ export class ClipProcessorService {
       }
 
       // 2. Try to acquire PostgreSQL advisory lock for this recording
-      const lockAcquired = await this.tryAcquireAdvisoryLock(queryRunner, recordingId);
+      const lockAcquired = await this.tryAcquireAdvisoryLock(
+        queryRunner,
+        recordingId,
+      );
       if (!lockAcquired) {
-        console.log(`Advisory lock not acquired for recording ${recordingId}, re-queuing`);
-        await this.requeue(message, CLIP_PROCESSING.ADVISORY_LOCK_DELAY_SECONDS);
+        console.log(
+          `Advisory lock not acquired for recording ${recordingId}, re-queuing`,
+        );
+        await this.requeue(
+          message,
+          CLIP_PROCESSING.ADVISORY_LOCK_DELAY_SECONDS,
+        );
         return {
           success: true,
           highlightId,
           recordingId,
-          message: 'Re-queued: another clip for this recording is being processed',
+          message:
+            'Re-queued: another clip for this recording is being processed',
           action: 'requeued',
         };
       }
@@ -96,7 +109,9 @@ export class ClipProcessorService {
 
         // Skip if already in a terminal state
         if (TERMINAL_STATUSES.includes(highlight.status as any)) {
-          console.log(`Highlight ${highlightId} already in terminal state: ${highlight.status}`);
+          console.log(
+            `Highlight ${highlightId} already in terminal state: ${highlight.status}`,
+          );
           await queryRunner.commitTransaction();
           return {
             success: true,
@@ -108,9 +123,15 @@ export class ClipProcessorService {
         }
 
         // 4. Update status to processing with optimistic lock
-        const updated = await this.setStatusProcessing(queryRunner, highlightId, highlight.lock_version);
+        const updated = await this.setStatusProcessing(
+          queryRunner,
+          highlightId,
+          highlight.lock_version,
+        );
         if (!updated) {
-          console.log(`Optimistic lock failed for highlight ${highlightId}, skipping`);
+          console.log(
+            `Optimistic lock failed for highlight ${highlightId}, skipping`,
+          );
           await queryRunner.commitTransaction();
           return {
             success: false,
@@ -140,17 +161,27 @@ export class ClipProcessorService {
         await this.releaseAdvisoryLock(queryRunner, recordingId);
       }
     } catch (error) {
-      console.error(`Error processing highlight ${highlightId}:`, error?.message || error);
+      console.error(
+        `Error processing highlight ${highlightId}:`,
+        error?.message || error,
+      );
 
       // Handle the error based on classification
-      const errorResult = await this.handleProcessingError(error, message, queryRunner);
+      const errorResult = await this.handleProcessingError(
+        error,
+        message,
+        queryRunner,
+      );
 
       // ALWAYS enqueue next highlight even on failure — don't block the chain.
       // The failed one will be retried later by the sweep Lambda.
       try {
         await this.enqueueNextHighlight(recordingId, processingOrder);
       } catch (enqueueError) {
-        console.warn(`Failed to enqueue next highlight after error for ${highlightId}:`, enqueueError?.message);
+        console.warn(
+          `Failed to enqueue next highlight after error for ${highlightId}:`,
+          enqueueError?.message,
+        );
       }
 
       return errorResult;
@@ -210,19 +241,24 @@ export class ClipProcessorService {
     recordingId: string,
   ): Promise<void> {
     try {
-      await queryRunner.query(
-        `SELECT pg_advisory_unlock(hashtext($1))`,
-        [recordingId],
-      );
+      await queryRunner.query(`SELECT pg_advisory_unlock(hashtext($1))`, [
+        recordingId,
+      ]);
     } catch (error) {
-      console.warn(`Failed to release advisory lock for recording ${recordingId}:`, error?.message);
+      console.warn(
+        `Failed to release advisory lock for recording ${recordingId}:`,
+        error?.message,
+      );
     }
   }
 
   /**
    * Get a highlight with its associated recording data
    */
-  private async getHighlight(queryRunner: QueryRunner, highlightId: string): Promise<any> {
+  private async getHighlight(
+    queryRunner: QueryRunner,
+    highlightId: string,
+  ): Promise<any> {
     const result = await queryRunner.query(
       `SELECT
         rh.id,
@@ -274,7 +310,12 @@ export class ClipProcessorService {
     queryRunner: QueryRunner,
     highlight: any,
   ): Promise<ClipProcessorResult> {
-    const { id: highlightId, recordingId, muxAssetId, relativeTimestamp } = highlight;
+    const {
+      id: highlightId,
+      recordingId,
+      muxAssetId,
+      relativeTimestamp,
+    } = highlight;
 
     // If already has asset_id, check its status instead
     if (highlight.isClipCreated || highlight.assetId) {
@@ -282,7 +323,9 @@ export class ClipProcessorService {
     }
 
     if (!muxAssetId) {
-      console.error(`Recording for highlight ${highlightId} has no Mux asset ID`);
+      console.error(
+        `Recording for highlight ${highlightId} has no Mux asset ID`,
+      );
       await this.markPermanentlyFailed(
         queryRunner,
         highlightId,
@@ -313,11 +356,17 @@ export class ClipProcessorService {
       };
     }
 
-    const highlightTimeInSeconds = parseRelativeTimestampToSeconds(relativeTimestamp);
+    const highlightTimeInSeconds =
+      parseRelativeTimestampToSeconds(relativeTimestamp);
     const endTime = highlightTimeInSeconds;
-    const startTime = Math.max(0, highlightTimeInSeconds - DURATION_TO_BACKTRACK_SECONDS);
+    const startTime = Math.max(
+      0,
+      highlightTimeInSeconds - DURATION_TO_BACKTRACK_SECONDS,
+    );
 
-    console.log(`Creating Mux clip for highlight ${highlightId}: ${startTime}s - ${endTime}s`);
+    console.log(
+      `Creating Mux clip for highlight ${highlightId}: ${startTime}s - ${endTime}s`,
+    );
 
     const muxTokenId = process.env.MUX_TOKEN_ID;
     const muxTokenSecret = process.env.MUX_TOKEN_SECRET;
@@ -328,11 +377,13 @@ export class ClipProcessorService {
       headers: { 'Content-Type': 'application/json' },
       auth: { username: muxTokenId, password: muxTokenSecret },
       data: {
-        input: [{
-          url: `mux://assets/${muxAssetId}`,
-          start_time: startTime,
-          end_time: endTime,
-        }],
+        input: [
+          {
+            url: `mux://assets/${muxAssetId}`,
+            start_time: startTime,
+            end_time: endTime,
+          },
+        ],
         playback_policy: ['public'],
         video_quality: 'basic',
       },
@@ -344,7 +395,8 @@ export class ClipProcessorService {
 
     const clipAssetId = response.data.data.id;
     const playbackId = Array.isArray(response.data.data.playback_ids)
-      ? response.data.data.playback_ids.find((p: any) => p?.policy === 'public')?.id
+      ? response.data.data.playback_ids.find((p: any) => p?.policy === 'public')
+          ?.id
       : null;
 
     // Update highlight to clip_created
@@ -369,7 +421,9 @@ export class ClipProcessorService {
       ],
     );
 
-    console.log(`Clip created successfully: asset=${clipAssetId}, highlight=${highlightId}`);
+    console.log(
+      `Clip created successfully: asset=${clipAssetId}, highlight=${highlightId}`,
+    );
 
     return {
       success: true,
@@ -461,17 +515,23 @@ export class ClipProcessorService {
     const { highlightId, recordingId } = message;
     const errorInfo = classifyError(error);
 
-    console.log(`Error classified as ${errorInfo.type} for highlight ${highlightId}`, {
-      httpStatus: errorInfo.httpStatus,
-      retryAfter: errorInfo.retryAfter,
-    });
+    console.log(
+      `Error classified as ${errorInfo.type} for highlight ${highlightId}`,
+      {
+        httpStatus: errorInfo.httpStatus,
+        retryAfter: errorInfo.retryAfter,
+      },
+    );
 
     // Fetch current highlight state
     let highlight: any;
     try {
       highlight = await this.getHighlight(queryRunner, highlightId);
     } catch (e) {
-      console.error(`Failed to fetch highlight ${highlightId} for error handling:`, e?.message);
+      console.error(
+        `Failed to fetch highlight ${highlightId} for error handling:`,
+        e?.message,
+      );
       return {
         success: false,
         highlightId,
@@ -582,7 +642,9 @@ export class ClipProcessorService {
           highlightId,
           `Auth error (${errorInfo.httpStatus}): ${error?.message}`,
         );
-        console.error(`AUTH ERROR for highlight ${highlightId} — check Mux credentials`);
+        console.error(
+          `AUTH ERROR for highlight ${highlightId} — check Mux credentials`,
+        );
         return {
           success: false,
           highlightId,
@@ -596,7 +658,10 @@ export class ClipProcessorService {
       case 'network_error':
       default: {
         // Don't retry non-rate-limit errors. Set processing_order = NULL and mark as failed.
-        const failedMessage = error?.response?.data?.error?.message || error?.message || 'Unknown error';
+        const failedMessage =
+          error?.response?.data?.error?.message ||
+          error?.message ||
+          'Unknown error';
 
         await queryRunner.query(
           `UPDATE recording_highlights
@@ -627,7 +692,9 @@ export class ClipProcessorService {
           ],
         );
 
-        console.log(`Highlight ${highlightId} marked as failed, processing_order set to NULL`);
+        console.log(
+          `Highlight ${highlightId} marked as failed, processing_order set to NULL`,
+        );
 
         // Re-order remaining highlights to close gaps
         await this.reorderProcessingOrder(queryRunner, recordingId);
@@ -681,7 +748,9 @@ export class ClipProcessorService {
       await this.reorderProcessingOrder(queryRunner, recordingId);
     }
 
-    console.log(`Highlight ${highlightId} permanently_failed, processing_order cleared & re-ordered: ${reason}`);
+    console.log(
+      `Highlight ${highlightId} permanently_failed, processing_order cleared & re-ordered: ${reason}`,
+    );
   }
 
   /**
@@ -692,7 +761,8 @@ export class ClipProcessorService {
     recordingId: string,
   ): Promise<void> {
     try {
-      await queryRunner.query(`
+      await queryRunner.query(
+        `
         WITH ordered AS (
           SELECT id, ROW_NUMBER() OVER (
             ORDER BY
@@ -717,9 +787,13 @@ export class ClipProcessorService {
         FROM ordered o
         WHERE rh.id = o.id
           AND rh.processing_order != o.new_order
-      `, [recordingId]);
+      `,
+        [recordingId],
+      );
     } catch (error) {
-      console.warn(`Failed to re-order processing_order for recording ${recordingId}: ${error?.message}`);
+      console.warn(
+        `Failed to re-order processing_order for recording ${recordingId}: ${error?.message}`,
+      );
     }
   }
 
@@ -740,7 +814,9 @@ export class ClipProcessorService {
     });
 
     const result = await this.sqsClient.send(command);
-    console.log(`Re-queued highlight ${message.highlightId} with ${delaySeconds}s delay, messageId=${result.MessageId}`);
+    console.log(
+      `Re-queued highlight ${message.highlightId} with ${delaySeconds}s delay, messageId=${result.MessageId}`,
+    );
   }
 
   /**
@@ -762,16 +838,14 @@ export class ClipProcessorService {
            AND status = $3
          ORDER BY processing_order ASC
          LIMIT 1`,
-        [
-          recordingId,
-          currentOrder,
-          HIGHLIGHT_STATUS.QUEUED,
-        ],
+        [recordingId, currentOrder, HIGHLIGHT_STATUS.QUEUED],
       );
 
       if (result.length > 0) {
         const next = result[0];
-        console.log(`Enqueuing next highlight ${next.id} (order ${next.processing_order})`);
+        console.log(
+          `Enqueuing next highlight ${next.id} (order ${next.processing_order})`,
+        );
 
         const command = new SendMessageCommand({
           QueueUrl: this.queueUrl,
@@ -786,7 +860,9 @@ export class ClipProcessorService {
 
         await this.sqsClient.send(command);
       } else {
-        console.log(`No more highlights to process for recording ${recordingId}`);
+        console.log(
+          `No more highlights to process for recording ${recordingId}`,
+        );
       }
     } finally {
       await queryRunner.release();

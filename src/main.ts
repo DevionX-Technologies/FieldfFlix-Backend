@@ -28,10 +28,16 @@ async function bootstrap() {
 
   app.enableCors(); // Enable CORS
 
-  app.use((req: { method: string; originalUrl?: string; url?: string }, _res: unknown, next: () => void) => {
-    appLogger.log(`→ ${req.method} ${req.originalUrl ?? req.url ?? ""}`);
-    next();
-  });
+  app.use(
+    (
+      req: { method: string; originalUrl?: string; url?: string },
+      _res: unknown,
+      next: () => void,
+    ) => {
+      appLogger.log(`→ ${req.method} ${req.originalUrl ?? req.url ?? ''}`);
+      next();
+    },
+  );
 
   // Apply Global Interceptor for success responses
   app.useGlobalInterceptors(new GlobalResponseInterceptor());
@@ -49,7 +55,9 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const port = configService.get<number>('PORT') ?? 3000;
   await app.listen(port, '0.0.0.0');
-  console.log(`Listening on 0.0.0.0:${port} (LAN devices use http://<this-pc-ip>:${port})`);
+  console.log(
+    `Listening on 0.0.0.0:${port} (LAN devices use http://<this-pc-ip>:${port})`,
+  );
   console.log(`Swagger UI is running at http://localhost:${port}`);
 }
 bootstrap();

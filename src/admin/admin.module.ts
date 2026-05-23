@@ -7,7 +7,11 @@ import { AdminController } from './admin.controller';
 import { AdminRoleService } from './admin-role.service';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([AdminPhone]), UserModule, RecordingModule],
+  imports: [
+    TypeOrmModule.forFeature([AdminPhone]),
+    UserModule,
+    RecordingModule,
+  ],
   controllers: [AdminController],
   providers: [AdminRoleService],
   exports: [AdminRoleService, TypeOrmModule],

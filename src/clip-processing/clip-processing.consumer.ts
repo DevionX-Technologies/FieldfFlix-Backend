@@ -1,4 +1,9 @@
-import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  OnModuleDestroy,
+} from '@nestjs/common';
 import {
   SQSClient,
   ReceiveMessageCommand,
@@ -42,9 +47,7 @@ export class ClipProcessingConsumer implements OnModuleInit, OnModuleDestroy {
 
     this.running = true;
     const concurrency = SQS_CONSUMER_CONCURRENCY;
-    this.logger.log(
-      `Starting ${concurrency} concurrent SQS polling loops`,
-    );
+    this.logger.log(`Starting ${concurrency} concurrent SQS polling loops`);
 
     for (let i = 0; i < concurrency; i++) {
       this.pollLoop(i).catch((err) => {
@@ -135,9 +138,9 @@ export class ClipProcessingConsumer implements OnModuleInit, OnModuleDestroy {
 
             this.logger.log(
               `[loop#${loopIndex}] Recording ${message.recordingId} processing complete: ` +
-              `status=${result.status}, processed=${result.processed}, ` +
-              `failed=${result.failed}, skipped=${result.skipped}, ` +
-              `duration=${result.durationMs}ms`,
+                `status=${result.status}, processed=${result.processed}, ` +
+                `failed=${result.failed}, skipped=${result.skipped}, ` +
+                `duration=${result.durationMs}ms`,
             );
 
             // Delete message on success (any non-thrown result)

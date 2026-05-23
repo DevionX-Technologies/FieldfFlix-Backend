@@ -8,7 +8,11 @@ import { FlickShortsService } from './flick-shorts.service';
 import { FlickShortsController } from './flick-shorts.controller';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([FlickShort, Recording]), UserModule, AdminModule],
+  imports: [
+    TypeOrmModule.forFeature([FlickShort, Recording]),
+    UserModule,
+    AdminModule,
+  ],
   providers: [FlickShortsService],
   controllers: [FlickShortsController],
   exports: [FlickShortsService],

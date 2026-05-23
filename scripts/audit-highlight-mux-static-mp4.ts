@@ -59,7 +59,10 @@ function summarizeMp4Renditions(staticRenditions: unknown): RenditionSummary {
     return { mp4Status: 'none', mp4Detail: 'no static_renditions' };
   }
   const mp4 = rows.filter(
-    (r) => r && typeof r === 'object' && String((r as { ext?: string }).ext) === 'mp4',
+    (r) =>
+      r &&
+      typeof r === 'object' &&
+      String((r as { ext?: string }).ext) === 'mp4',
   ) as Array<{ status?: string; name?: string }>;
 
   if (mp4.length === 0) {
@@ -72,9 +75,7 @@ function summarizeMp4Renditions(staticRenditions: unknown): RenditionSummary {
   }
 
   if (
-    mp4.some((r) =>
-      ['preparing', 'waiting'].includes(String(r.status || '')),
-    )
+    mp4.some((r) => ['preparing', 'waiting'].includes(String(r.status || '')))
   ) {
     const p = mp4.find((r) =>
       ['preparing', 'waiting'].includes(String(r.status || '')),
@@ -103,15 +104,14 @@ async function main() {
   const limit = Math.max(1, parseInt(arg('--limit') ?? '100', 10) || 100);
   const recordingId = arg('--recording-id');
   const asJson = process.argv.includes('--json');
-  const delayMs = Math.max(
-    0,
-    parseInt(arg('--delay-ms') ?? '120', 10) || 120,
-  );
+  const delayMs = Math.max(0, parseInt(arg('--delay-ms') ?? '120', 10) || 120);
 
   const muxTokenId = process.env.MUX_TOKEN_ID;
   const muxTokenSecret = process.env.MUX_TOKEN_SECRET;
   if (!muxTokenId || !muxTokenSecret) {
-    console.error('MUX_TOKEN_ID and MUX_TOKEN_SECRET must be set (same as API).');
+    console.error(
+      'MUX_TOKEN_ID and MUX_TOKEN_SECRET must be set (same as API).',
+    );
     process.exit(1);
   }
 
@@ -202,9 +202,7 @@ async function main() {
         const data = res.data?.data as Record<string, unknown> | undefined;
         const sr = data?.static_renditions;
         mux_asset_status =
-          data?.status != null && data.status !== ''
-            ? String(data.status)
-            : '';
+          data?.status != null && data.status !== '' ? String(data.status) : '';
         mux_mp4_support =
           data?.mp4_support != null && data.mp4_support !== ''
             ? String(data.mp4_support)

@@ -29,6 +29,10 @@ import {
   paginate,
   Pagination,
 } from 'tekvo-nest-typeorm-paginate';
+import { ESportsSupported } from './enum/turfs.enum';
+
+/** ILIKE fragment for operational Pickleball-only Balkanji venues (see turf-flick-sport.util). */
+const BALKANJI_NAME_ILIKE_PATTERN = '%balkanji%';
 
 @Injectable()
 export class TurfsService {
@@ -317,14 +321,39 @@ export class TurfsService {
     }
 
     if (sports_supported) {
-      queryBuilder.andWhere(
-        'turf.sports_supported && ARRAY[:...sports_supported]::"ESportsSupported"[]',
-        {
-          sports_supported: Array.isArray(sports_supported)
-            ? sports_supported
-            : [sports_supported],
-        },
-      );
+      const sportList = Array.isArray(sports_supported)
+        ? sports_supported
+        : [sports_supported];
+
+      /** Single-sport homepage filters — align list API with Balkanji = Pickleball-only policy. */
+      if (
+        sportList.length === 1 &&
+        sportList[0] === ESportsSupported.PICKLEBALL
+      ) {
+        queryBuilder.andWhere(
+          '(turf.sports_supported && ARRAY[:...sportPickle]::"ESportsSupported"[] OR turf.name ILIKE :balkanjiPattern)',
+          {
+            sportPickle: [ESportsSupported.PICKLEBALL],
+            balkanjiPattern: BALKANJI_NAME_ILIKE_PATTERN,
+          },
+        );
+      } else if (
+        sportList.length === 1 &&
+        sportList[0] === ESportsSupported.CRICKET
+      ) {
+        queryBuilder.andWhere(
+          '(turf.sports_supported && ARRAY[:...sportCricket]::"ESportsSupported"[] AND turf.name NOT ILIKE :excludeBalkanji)',
+          {
+            sportCricket: [ESportsSupported.CRICKET],
+            excludeBalkanji: BALKANJI_NAME_ILIKE_PATTERN,
+          },
+        );
+      } else {
+        queryBuilder.andWhere(
+          'turf.sports_supported && ARRAY[:...sports_supported]::"ESportsSupported"[]',
+          { sports_supported: sportList },
+        );
+      }
     }
 
     if (max_capacity) {

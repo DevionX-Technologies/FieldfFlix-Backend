@@ -1,6 +1,10 @@
 /**
  * Applies the same turf `sports_supported` rules as scripts/update-turf-sports-supported.sql.
  *
+ * Note: Balkanji Bari is Pickleball-only in FieldFlix *operational mapping* (`deriveFlickSportFromTurf`
+ * + turfs list filtering). Legacy DB rows may still list Cricket historic values — **do not** bulk-fix
+ * them here unless ops explicitly intends to rewrite `turfs`; there is intentionally no Balkanji UPDATE step.
+ *
  * Usage:
  *   node scripts/apply-turf-sports-supported.mjs          # dry-run (default)
  *   node scripts/apply-turf-sports-supported.mjs --apply  # run in one transaction + COMMIT
@@ -42,10 +46,6 @@ const STEPS = [
   {
     label: 'PickPad (Padel venue)',
     sql: `UPDATE turfs SET sports_supported = ARRAY['Paddle']::"ESportsSupported"[] WHERE name ILIKE '%PickPad%'`,
-  },
-  {
-    label: 'All India Balkanji Bari',
-    sql: `UPDATE turfs SET sports_supported = ARRAY['Pickleball', 'Cricket']::"ESportsSupported"[] WHERE name ILIKE '%All India Balkanji Bari%'`,
   },
   {
     label: 'Global Sports x Balkanji',

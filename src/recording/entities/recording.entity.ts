@@ -153,7 +153,6 @@ export class Recording {
   @Column({ type: 'varchar', length: 255, nullable: true })
   mux_watermark_media_bucket: string;
 
-
   @Column({ type: 'varchar', length: 255, nullable: true })
   recording_name: string | null;
 

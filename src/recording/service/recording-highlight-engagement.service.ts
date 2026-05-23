@@ -1,7 +1,4 @@
-import {
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { RecordingHighlightEngagement } from '../entities/recording-highlight-engagement.entity';
@@ -40,7 +37,9 @@ export class RecordingHighlightEngagementService {
   }
 
   private async ensureHighlightExists(highlightId: string): Promise<void> {
-    const exists = await this.highlightsRepo.exist({ where: { id: highlightId } });
+    const exists = await this.highlightsRepo.exist({
+      where: { id: highlightId },
+    });
     if (!exists) {
       throw new NotFoundException('Highlight not found');
     }
@@ -160,7 +159,9 @@ export class RecordingHighlightEngagementService {
     return map;
   }
 
-  async listSavedSummaries(userId: string): Promise<SavedHighlightSummaryDto[]> {
+  async listSavedSummaries(
+    userId: string,
+  ): Promise<SavedHighlightSummaryDto[]> {
     const rows = await this.engagementRepo.find({
       where: { userId, saved: true },
       relations: ['highlight'],
@@ -178,9 +179,7 @@ export class RecordingHighlightEngagementService {
       }
       const url =
         h.mux_public_playback_url ??
-        (h.playback_id
-          ? `https://stream.mux.com/${h.playback_id}.m3u8`
-          : null);
+        (h.playback_id ? `https://stream.mux.com/${h.playback_id}.m3u8` : null);
       if (!url) continue;
       out.push({
         recordingId: h.recordingId,

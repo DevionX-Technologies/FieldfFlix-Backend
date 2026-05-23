@@ -101,14 +101,14 @@ USER DURING RECORDING                         AFTER RECORDING STOPS
 
 ### Key Components
 
-| Component | Type | Purpose |
-|-----------|------|---------|
-| **Webhook Handler** | NestJS Controller + Service | Receives Mux webhooks, deduplicates, enqueues first highlight to SQS |
-| **SQS Queue** (`clip-processing`) | AWS SQS Standard Queue | Decouples clip creation from webhook; provides rate limiting via concurrency |
-| **SQS DLQ** (`clip-processing-dlq`) | AWS SQS Dead Letter Queue | Captures messages that fail after 5 SQS-level delivery attempts |
-| **clipProcessor Lambda** | AWS Lambda (SQS trigger) | Processes one clip at a time with advisory locks, sequential ordering, error classification |
-| **retryFailedHighlights Lambda** | AWS Lambda (EventBridge, every 10 min) | Sweeps stuck/failed/missed highlights and re-enqueues them to SQS |
-| **webhook_events table** | PostgreSQL | Deduplication of Mux webhook events |
+| Component                           | Type                                   | Purpose                                                                                     |
+| ----------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------- |
+| **Webhook Handler**                 | NestJS Controller + Service            | Receives Mux webhooks, deduplicates, enqueues first highlight to SQS                        |
+| **SQS Queue** (`clip-processing`)   | AWS SQS Standard Queue                 | Decouples clip creation from webhook; provides rate limiting via concurrency                |
+| **SQS DLQ** (`clip-processing-dlq`) | AWS SQS Dead Letter Queue              | Captures messages that fail after 5 SQS-level delivery attempts                             |
+| **clipProcessor Lambda**            | AWS Lambda (SQS trigger)               | Processes one clip at a time with advisory locks, sequential ordering, error classification |
+| **retryFailedHighlights Lambda**    | AWS Lambda (EventBridge, every 10 min) | Sweeps stuck/failed/missed highlights and re-enqueues them to SQS                           |
+| **webhook_events table**            | PostgreSQL                             | Deduplication of Mux webhook events                                                         |
 
 ---
 
@@ -392,6 +392,7 @@ Later:   Mux webhooks arrive for each clip -> status = 'ready'
 ### What "Done" Means for Predecessor Check
 
 A highlight is considered "done" (won't block the next one) if its status is:
+
 - `clip_created` — Mux accepted it, clip is encoding
 - `ready` — clip is fully ready
 - `permanently_failed` — gave up on it, move on
@@ -550,20 +551,21 @@ What matters is the processing_order WITHIN each recording.
 
 ### Summary Table
 
-| Concern | How It's Handled |
-|---------|-----------------|
-| Mixed messages from different recordings in SQS | Advisory lock is per-recording; different recordings don't block each other |
-| Sequence within one recording | `processing_order` check ensures A-2 waits for A-1, regardless of B or C |
-| Rate limit with many recordings | `maximumConcurrency: 2` limits total Mux API calls to 2 at any moment |
-| Queue order doesn't match recording order | Doesn't matter — sequential check is per-recording, not queue-position based |
-| More recordings than Lambda slots | Recordings queue up naturally; SQS delivers when a Lambda slot frees up |
-| One recording's failure affecting others | Each recording is independent; Recording A failing doesn't affect B or C |
+| Concern                                         | How It's Handled                                                             |
+| ----------------------------------------------- | ---------------------------------------------------------------------------- |
+| Mixed messages from different recordings in SQS | Advisory lock is per-recording; different recordings don't block each other  |
+| Sequence within one recording                   | `processing_order` check ensures A-2 waits for A-1, regardless of B or C     |
+| Rate limit with many recordings                 | `maximumConcurrency: 2` limits total Mux API calls to 2 at any moment        |
+| Queue order doesn't match recording order       | Doesn't matter — sequential check is per-recording, not queue-position based |
+| More recordings than Lambda slots               | Recordings queue up naturally; SQS delivers when a Lambda slot frees up      |
+| One recording's failure affecting others        | Each recording is independent; Recording A failing doesn't affect B or C     |
 
 ### The Key Insight
 
 **The SQS queue is a shared pipe, but the processing logic is per-recording.**
 
 Think of it like a restaurant kitchen with 2 chefs (maxConcurrency=2):
+
 - Orders (messages) from different tables (recordings) arrive on one ticket rail (SQS)
 - Each chef can work on any table's order
 - But within one table's order, dishes must be prepared in sequence (appetizer before main)
@@ -615,16 +617,16 @@ Think of it like a restaurant kitchen with 2 chefs (maxConcurrency=2):
 
 ### Status Definitions
 
-| Status | What It Means | What Happens Next |
-|--------|---------------|-------------------|
-| `pending` | User pressed highlight button; source recording not yet on Mux | Webhook handler will set it to `queued` when source asset is ready |
-| `queued` | SQS message exists; waiting for clipProcessor Lambda to pick it up | clipProcessor will process it |
-| `processing` | clipProcessor Lambda is actively calling Mux API for this highlight | Will transition to `clip_created`, `failed`, or `rate_limited` |
-| `clip_created` | Mux accepted the clip creation request; clip is encoding on Mux's side | Mux will send `video.asset.ready` webhook when encoding finishes |
-| `ready` | Clip is fully encoded; playback URL is available | **TERMINAL** - user can watch the clip |
-| `failed` | Mux API call failed (server error, network error, etc.) | Will be retried if `retryCount < 5`; otherwise `permanently_failed` |
-| `rate_limited` | Mux returned HTTP 429 (too many requests) | Re-enqueued with delay; separate counter (`rate_limit_retry_count`) |
-| `permanently_failed` | All retries exhausted or unrecoverable error (400, 401) | **TERMINAL** - requires manual intervention or admin retry endpoint |
+| Status               | What It Means                                                          | What Happens Next                                                   |
+| -------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `pending`            | User pressed highlight button; source recording not yet on Mux         | Webhook handler will set it to `queued` when source asset is ready  |
+| `queued`             | SQS message exists; waiting for clipProcessor Lambda to pick it up     | clipProcessor will process it                                       |
+| `processing`         | clipProcessor Lambda is actively calling Mux API for this highlight    | Will transition to `clip_created`, `failed`, or `rate_limited`      |
+| `clip_created`       | Mux accepted the clip creation request; clip is encoding on Mux's side | Mux will send `video.asset.ready` webhook when encoding finishes    |
+| `ready`              | Clip is fully encoded; playback URL is available                       | **TERMINAL** - user can watch the clip                              |
+| `failed`             | Mux API call failed (server error, network error, etc.)                | Will be retried if `retryCount < 5`; otherwise `permanently_failed` |
+| `rate_limited`       | Mux returned HTTP 429 (too many requests)                              | Re-enqueued with delay; separate counter (`rate_limit_retry_count`) |
+| `permanently_failed` | All retries exhausted or unrecoverable error (400, 401)                | **TERMINAL** - requires manual intervention or admin retry endpoint |
 
 ---
 
@@ -660,6 +662,7 @@ The `classifyError()` function in `clip-processor.util.ts` categorizes every Mux
 ### Rate Limit Handling (HTTP 429) — Detailed
 
 **Why it's special:** A 429 is NOT a failure. Mux is just saying "slow down." The request itself is perfectly valid. So we:
+
 - Do NOT count it as an error retry
 - Use a SEPARATE counter: `rate_limit_retry_count`
 - Parse the `Retry-After` header from Mux's response
@@ -876,6 +879,7 @@ Example: Recording with 5 highlights
 2. **`hasPendingPredecessors()` treats failed/rate_limited as non-blocking** — if H-2 is `failed` and H-3 arrives, H-3 sees H-2 as non-blocking and processes immediately.
 
 **Non-blocking statuses** (these do NOT block the next highlight):
+
 - `clip_created` — done
 - `ready` — done
 - `permanently_failed` — gave up
@@ -883,6 +887,7 @@ Example: Recording with 5 highlights
 - `rate_limited` — will be retried later, but don't wait for it
 
 **Blocking statuses** (these DO block the next highlight):
+
 - `pending` — not yet queued
 - `queued` — about to be processed
 - `processing` — actively being processed right now
@@ -932,14 +937,14 @@ Error occurs in clipProcessor
 
 The `retryFailedHighlights` Lambda runs every 10 minutes and catches highlights that fell through the cracks:
 
-| What It Catches | How It Fixes It |
-|-----------------|-----------------|
-| `processing` for > 5 min (Lambda crashed) | Reset to `queued`, re-enqueue |
-| `pending` with recording already ready (webhook missed) | Set to `queued`, enqueue |
-| `rate_limited` for > 10 min (SQS message lost) | Reset to `queued`, re-enqueue |
-| `failed` with retryCount < 5 | Re-enqueue with backoff delay |
-| `failed` with retryCount >= 5 | Mark `permanently_failed` |
-| `queued` for > 15 min (SQS message lost) | Re-enqueue |
+| What It Catches                                         | How It Fixes It               |
+| ------------------------------------------------------- | ----------------------------- |
+| `processing` for > 5 min (Lambda crashed)               | Reset to `queued`, re-enqueue |
+| `pending` with recording already ready (webhook missed) | Set to `queued`, enqueue      |
+| `rate_limited` for > 10 min (SQS message lost)          | Reset to `queued`, re-enqueue |
+| `failed` with retryCount < 5                            | Re-enqueue with backoff delay |
+| `failed` with retryCount >= 5                           | Mark `permanently_failed`     |
+| `queued` for > 15 min (SQS message lost)                | Re-enqueue                    |
 
 ---
 
@@ -979,6 +984,7 @@ vs checking recording first: 1 + (10 × 2) = 21 queries total (43% fewer)
 ### Problem
 
 Mux can deliver the same webhook multiple times. Without deduplication:
+
 - The same highlight could be enqueued to SQS twice
 - The same clip could be created twice in Mux
 
@@ -1151,18 +1157,18 @@ resources:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: fieldflicks-${stage}-clip-processing
-        VisibilityTimeout: 960        # 16 min (> Lambda timeout of 900s/15min)
-        MessageRetentionPeriod: 1209600  # 14 days
-        ReceiveMessageWaitTimeSeconds: 20  # long polling (cost efficient)
+        VisibilityTimeout: 960 # 16 min (> Lambda timeout of 900s/15min)
+        MessageRetentionPeriod: 1209600 # 14 days
+        ReceiveMessageWaitTimeSeconds: 20 # long polling (cost efficient)
         RedrivePolicy:
           deadLetterTargetArn: !GetAtt ClipProcessingDLQ.Arn
-          maxReceiveCount: 5           # after 5 SQS-level failures -> DLQ
+          maxReceiveCount: 5 # after 5 SQS-level failures -> DLQ
 
     ClipProcessingDLQ:
       Type: AWS::SQS::Queue
       Properties:
         QueueName: fieldflicks-${stage}-clip-processing-dlq
-        MessageRetentionPeriod: 1209600  # 14 days
+        MessageRetentionPeriod: 1209600 # 14 days
 ```
 
 ### clipProcessor Lambda
@@ -1171,25 +1177,25 @@ resources:
 clipProcessor:
   handler: dist/src/lambda/clip-processor/clip-processor_lambda.main
   memorySize: 512
-  timeout: 900                      # 15 minutes
+  timeout: 900 # 15 minutes
   environment:
     CLIP_PROCESSING_QUEUE_URL: !Ref ClipProcessingQueue
   events:
     - sqs:
         arn: !GetAtt ClipProcessingQueue.Arn
-        batchSize: 1                # process one message at a time
-        maximumConcurrency: 2       # at most 2 Lambda instances running simultaneously
+        batchSize: 1 # process one message at a time
+        maximumConcurrency: 2 # at most 2 Lambda instances running simultaneously
 ```
 
 ### Why These Settings Matter
 
-| Setting | Value | Why |
-|---------|-------|-----|
-| `batchSize: 1` | One message per Lambda invocation | Each clip needs full attention; if it fails, only one message is affected |
-| `maximumConcurrency: 2` | At most 2 Lambdas running at once | Mux allows ~5 req/s; with 2 concurrent + 5s delays, we stay well under |
-| `VisibilityTimeout: 960` | 16 minutes | Must be > Lambda timeout (900s). If Lambda crashes, SQS waits 16 min before making message visible again |
-| `maxReceiveCount: 5` | 5 SQS delivery attempts | After 5 times SQS tries to deliver and Lambda throws, message goes to DLQ |
-| `ReceiveMessageWaitTimeSeconds: 20` | Long polling | SQS waits up to 20s for messages before returning empty. Reduces API calls and cost |
+| Setting                             | Value                             | Why                                                                                                      |
+| ----------------------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `batchSize: 1`                      | One message per Lambda invocation | Each clip needs full attention; if it fails, only one message is affected                                |
+| `maximumConcurrency: 2`             | At most 2 Lambdas running at once | Mux allows ~5 req/s; with 2 concurrent + 5s delays, we stay well under                                   |
+| `VisibilityTimeout: 960`            | 16 minutes                        | Must be > Lambda timeout (900s). If Lambda crashes, SQS waits 16 min before making message visible again |
+| `maxReceiveCount: 5`                | 5 SQS delivery attempts           | After 5 times SQS tries to deliver and Lambda throws, message goes to DLQ                                |
+| `ReceiveMessageWaitTimeSeconds: 20` | Long polling                      | SQS waits up to 20s for messages before returning empty. Reduces API calls and cost                      |
 
 ### Rate Limit Prevention Layers
 
@@ -1327,55 +1333,61 @@ What happens:
 
 ### Core Files
 
-| File | Purpose |
-|------|---------|
-| `src/recording/service/recording-highlight.service.ts` | Main service: highlight creation, webhook handling, SQS enqueue |
-| `src/recording/controller/mux-webhook.controller.ts` | Webhook endpoint, signature verification |
-| `src/recording/entities/recording-highlights.entity.ts` | TypeORM entity with all columns |
-| `src/recording/entities/webhook-event.entity.ts` | Webhook deduplication entity |
-| `src/constant/constant.ts` | All processing constants, status enums, backoff delays |
+| File                                                    | Purpose                                                         |
+| ------------------------------------------------------- | --------------------------------------------------------------- |
+| `src/recording/service/recording-highlight.service.ts`  | Main service: highlight creation, webhook handling, SQS enqueue |
+| `src/recording/controller/mux-webhook.controller.ts`    | Webhook endpoint, signature verification                        |
+| `src/recording/entities/recording-highlights.entity.ts` | TypeORM entity with all columns                                 |
+| `src/recording/entities/webhook-event.entity.ts`        | Webhook deduplication entity                                    |
+| `src/constant/constant.ts`                              | All processing constants, status enums, backoff delays          |
 
 ### Lambda Functions
 
-| File | Purpose |
-|------|---------|
-| `src/lambda/clip-processor/clip-processor_lambda.ts` | SQS-triggered Lambda handler |
-| `src/lambda/clip-processor/services/clip-processor.service.ts` | Full clip processing logic: sequential check, advisory lock, Mux API call, error handling |
-| `src/lambda/clip-processor/types/clip-processor.types.ts` | TypeScript interfaces for messages and results |
-| `src/lambda/clip-processor/utils/clip-processor.util.ts` | Error classification, rate limit delay calculation, timestamp parsing |
-| `src/lambda/retry-failed-highlights/retry-failed-highlights_lambda.ts` | Sweep Lambda: finds stuck/failed highlights, re-enqueues to SQS |
-| `src/lambda/retry-failed-highlights/utils/lambda.util.ts` | Sweep Lambda utilities |
+| File                                                                   | Purpose                                                                                   |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `src/lambda/clip-processor/clip-processor_lambda.ts`                   | SQS-triggered Lambda handler                                                              |
+| `src/lambda/clip-processor/services/clip-processor.service.ts`         | Full clip processing logic: sequential check, advisory lock, Mux API call, error handling |
+| `src/lambda/clip-processor/types/clip-processor.types.ts`              | TypeScript interfaces for messages and results                                            |
+| `src/lambda/clip-processor/utils/clip-processor.util.ts`               | Error classification, rate limit delay calculation, timestamp parsing                     |
+| `src/lambda/retry-failed-highlights/retry-failed-highlights_lambda.ts` | Sweep Lambda: finds stuck/failed highlights, re-enqueues to SQS                           |
+| `src/lambda/retry-failed-highlights/utils/lambda.util.ts`              | Sweep Lambda utilities                                                                    |
 
 ### Infrastructure
 
-| File | Purpose |
-|------|---------|
-| `serverless.yml` | SQS queues, Lambda definitions, IAM permissions, event sources |
+| File                                                      | Purpose                                                                     |
+| --------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `serverless.yml`                                          | SQS queues, Lambda definitions, IAM permissions, event sources              |
 | `db/migrations/1760000000001-AddClipProcessingColumns.ts` | Adds processing_order, rate_limit_retry_count, sqs_message_id, lock_version |
-| `db/migrations/1760000000002-CreateWebhookEventsTable.ts` | Creates webhook_events table for idempotency |
+| `db/migrations/1760000000002-CreateWebhookEventsTable.ts` | Creates webhook_events table for idempotency                                |
 
 ### Constants Reference (from `src/constant/constant.ts`)
 
 ```typescript
 CLIP_PROCESSING = {
-  MAX_CONCURRENCY: 2,                        // Lambda concurrent invocations
-  INTER_CLIP_DELAY_SECONDS: 5,               // Delay between sequential clips
-  MAX_ERROR_RETRIES: 5,                      // 5xx/network max retries
-  MAX_RATE_LIMIT_RETRIES: 10,                // 429 max retries
-  RATE_LIMIT_DELAY_CAP_SECONDS: 120,         // Max 429 backoff delay
-  RATE_LIMIT_BASE_DELAY_SECONDS: 10,         // Base for exponential 429 delay
-  ERROR_BACKOFF_DELAYS: [0, 30, 120, 300],   // Fixed delays for error retries
-  NOT_MY_TURN_DELAY_SECONDS: 30,             // Re-queue when sequence not ready
-  ADVISORY_LOCK_DELAY_SECONDS: 15,           // Re-queue when lock held
-  STUCK_PROCESSING_THRESHOLD_MINUTES: 5,     // Sweep: processing too long
-  STUCK_RATE_LIMITED_THRESHOLD_MINUTES: 10,   // Sweep: rate_limited too long
-  WEBHOOK_EVENTS_CLEANUP_DAYS: 7,            // Sweep: delete old webhook events
-}
+  MAX_CONCURRENCY: 2, // Lambda concurrent invocations
+  INTER_CLIP_DELAY_SECONDS: 5, // Delay between sequential clips
+  MAX_ERROR_RETRIES: 5, // 5xx/network max retries
+  MAX_RATE_LIMIT_RETRIES: 10, // 429 max retries
+  RATE_LIMIT_DELAY_CAP_SECONDS: 120, // Max 429 backoff delay
+  RATE_LIMIT_BASE_DELAY_SECONDS: 10, // Base for exponential 429 delay
+  ERROR_BACKOFF_DELAYS: [0, 30, 120, 300], // Fixed delays for error retries
+  NOT_MY_TURN_DELAY_SECONDS: 30, // Re-queue when sequence not ready
+  ADVISORY_LOCK_DELAY_SECONDS: 15, // Re-queue when lock held
+  STUCK_PROCESSING_THRESHOLD_MINUTES: 5, // Sweep: processing too long
+  STUCK_RATE_LIMITED_THRESHOLD_MINUTES: 10, // Sweep: rate_limited too long
+  WEBHOOK_EVENTS_CLEANUP_DAYS: 7, // Sweep: delete old webhook events
+};
 
 HIGHLIGHT_STATUS = {
-  PENDING, QUEUED, PROCESSING, CLIP_CREATED,
-  READY, FAILED, RATE_LIMITED, PERMANENTLY_FAILED
-}
+  PENDING,
+  QUEUED,
+  PROCESSING,
+  CLIP_CREATED,
+  READY,
+  FAILED,
+  RATE_LIMITED,
+  PERMANENTLY_FAILED,
+};
 
-TERMINAL_STATUSES = [CLIP_CREATED, READY, PERMANENTLY_FAILED]
+TERMINAL_STATUSES = [CLIP_CREATED, READY, PERMANENTLY_FAILED];
 ```

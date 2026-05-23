@@ -16,25 +16,21 @@ The payment system allows users to:
 ### Core Components
 
 1. **Payment Entity** (`src/payment/entities/payment.entity.ts`)
-
    - Tracks all payment transactions
    - Links payments to users, recordings, and media uploads
    - Stores Razorpay order and payment IDs
 
 2. **Razorpay Service** (`src/common/service/razorpay.service.ts`)
-
    - Handles Razorpay API interactions
    - Creates orders, verifies payments, processes refunds
    - Converts between rupees and paise
 
 3. **Payment Service** (`src/payment/payment.service.ts`)
-
    - Business logic for payment operations
    - Creates payment orders, verifies payments
    - Manages payment history and refunds
 
 4. **Payment Restriction Service** (`src/payment/payment-restriction.service.ts`)
-
    - Enforces payment restrictions
    - Checks access permissions for recordings and highlights
    - Calculates payment amounts based on duration
@@ -362,17 +358,14 @@ curl -X GET "http://localhost:3000/recording-playback/{recordingId}/create-payme
 ## Security Considerations
 
 1. **Payment Verification**
-
    - Always verify payment signatures on the backend
    - Never trust frontend payment data alone
 
 2. **Access Control**
-
    - Check payment status before granting access
    - Implement proper JWT authentication
 
 3. **Rate Limiting**
-
    - Implement rate limiting on payment endpoints
    - Prevent abuse of payment creation
 
@@ -404,17 +397,14 @@ this.logger.error('Failed to verify payment signature', error);
 ### Common Issues
 
 1. **Razorpay Key Issues**
-
    - Verify `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` are correct
    - Check if keys are for the correct environment (test/production)
 
 2. **Payment Verification Fails**
-
    - Ensure signature verification logic is correct
    - Check if payment was actually successful in Razorpay dashboard
 
 3. **Migration Issues**
-
    - Run `npm run migration:run` to apply database changes
    - Check if all required tables are created
 

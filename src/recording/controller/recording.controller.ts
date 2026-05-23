@@ -60,7 +60,6 @@ export class RecordingController {
   private readonly uuidRegex =
     /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
-
   constructor(
     private readonly recordingService: RecordingService,
     private readonly fileServiceService: FileServiceService,
@@ -69,7 +68,7 @@ export class RecordingController {
     private readonly recordingHighlightsService: RecordingHighlightsService,
     private readonly muxService: MuxService,
     private readonly recordingHighlightEngagementService: RecordingHighlightEngagementService,
-  ) { }
+  ) {}
 
   /**
    * Handles the request to start a new recording.
@@ -479,8 +478,13 @@ export class RecordingController {
   }
 
   @Get('highlights/saved')
-  @ApiOperation({ summary: 'List saved recording highlights for the current user' })
-  @ApiResponse({ status: HttpStatus.OK, description: 'Saved highlights returned' })
+  @ApiOperation({
+    summary: 'List saved recording highlights for the current user',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Saved highlights returned',
+  })
   async listSavedRecordingHighlights(@Req() req: Request) {
     const { user_id } = await this.commonService.extractDataFromToken(req);
     return this.recordingHighlightEngagementService.listSavedSummaries(user_id);
@@ -724,7 +728,6 @@ export class RecordingController {
     return this.recordingService.getFavoriteVideos(user_id, query);
   }
 
-
   @ApiOperation({ summary: 'Share a recording with another user' })
   @ApiResponse({
     status: HttpStatus.CREATED,
@@ -910,19 +913,33 @@ export class RecordingController {
   async addBulkRecordingHighlights(
     @Param('recordingId') recordingId: string,
     @Body('source_asset_id') source_asset_id: string,
-    @Body(ValidationPipe) data: [{
-      relativeTimestamp: string,
-      mux_public_playback_url: string,
-      playback_id: string,
-      asset_id: string,
-    }],
+    @Body(ValidationPipe)
+    data: [
+      {
+        relativeTimestamp: string;
+        mux_public_playback_url: string;
+        playback_id: string;
+        asset_id: string;
+      },
+    ],
   ) {
-    return this.recordingHighlightsService.addBulkRecordingHighlights(recordingId, source_asset_id, data);
+    return this.recordingHighlightsService.addBulkRecordingHighlights(
+      recordingId,
+      source_asset_id,
+      data,
+    );
   }
 
   @Post('find-and-claim')
-  @ApiOperation({ summary: 'Find a recording by match details and claim access via creator phone number' })
-  @ApiResponse({ status: HttpStatus.OK, description: 'Matched recordings returned', type: [Recording] })
+  @ApiOperation({
+    summary:
+      'Find a recording by match details and claim access via creator phone number',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Matched recordings returned',
+    type: [Recording],
+  })
   async findAndClaimRecording(
     @Body(ValidationPipe) dto: FindAndClaimRecordingDto,
     @Req() req: Request,

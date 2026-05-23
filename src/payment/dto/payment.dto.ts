@@ -73,23 +73,10 @@ export class CreatePaymentOrderDto {
 /** Premium / plan checkout — amounts match mobile `ProfilePremium` copy. */
 export class CreatePlanOrderDto {
   @ApiProperty({
-    enum: [
-      'free',
-      'pro',
-      'premium',
-      'cricket',
-      'pickleball',
-      'padel',
-    ],
+    enum: ['free', 'pro', 'premium', 'cricket', 'pickleball', 'padel'],
   })
   @IsIn(['free', 'pro', 'premium', 'cricket', 'pickleball', 'padel'])
-  plan:
-    | 'free'
-    | 'pro'
-    | 'premium'
-    | 'cricket'
-    | 'pickleball'
-    | 'padel';
+  plan: 'free' | 'pro' | 'premium' | 'cricket' | 'pickleball' | 'padel';
 }
 
 /**

@@ -20,7 +20,8 @@ export class SendOtpDto {
 
 export class VerifyOtpDto {
   @ApiProperty({
-    description: 'Phone number in international format (digits only, country code without +)',
+    description:
+      'Phone number in international format (digits only, country code without +)',
     example: '919876543210',
   })
   @IsString()

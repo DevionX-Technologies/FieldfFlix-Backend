@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class AddFlickShortViewsAndLikesState1762200000000
-  implements MigrationInterface
-{
+export class AddFlickShortViewsAndLikesState1762200000000 implements MigrationInterface {
   name = 'AddFlickShortViewsAndLikesState1762200000000';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

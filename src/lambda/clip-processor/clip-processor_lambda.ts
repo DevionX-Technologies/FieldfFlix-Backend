@@ -53,7 +53,11 @@ export const main: Handler = async (
       try {
         message = JSON.parse(record.body);
       } catch (parseError) {
-        console.error('Failed to parse SQS message body:', record.body, parseError);
+        console.error(
+          'Failed to parse SQS message body:',
+          record.body,
+          parseError,
+        );
         continue; // Skip malformed messages — they'll go to DLQ after maxReceiveCount
       }
 

@@ -87,9 +87,7 @@ export class PaymentService {
 
     const base = RECORDING_UNLOCK_BASE_INR[tier];
     const total =
-      base <= 0
-        ? 0
-        : Math.round(base * (1 + RECORDING_UNLOCK_GST_RATE));
+      base <= 0 ? 0 : Math.round(base * (1 + RECORDING_UNLOCK_GST_RATE));
     return { tier, base, total };
   }
 
@@ -409,7 +407,13 @@ export class PaymentService {
       });
 
       if (!payment) {
-        return { active: false, plan: null, paid_at: null, expires_at: null, payment_id: null };
+        return {
+          active: false,
+          plan: null,
+          paid_at: null,
+          expires_at: null,
+          payment_id: null,
+        };
       }
 
       // Plan-style purchases have `expires_at == null` (lifetime). Order-style purchases
@@ -440,7 +444,13 @@ export class PaymentService {
       };
     } catch (error) {
       this.logger.error('Failed to load active plan', error);
-      return { active: false, plan: null, paid_at: null, expires_at: null, payment_id: null };
+      return {
+        active: false,
+        plan: null,
+        paid_at: null,
+        expires_at: null,
+        payment_id: null,
+      };
     }
   }
 

@@ -35,7 +35,9 @@ export class AdminRoleService {
     const last = phoneLast10(phone);
     if (!last) return false;
     if (BOOTSTRAP_ADMIN_PHONE_LAST_10.has(last)) return true;
-    const row = await this.adminPhoneRepo.findOne({ where: { phoneLast10: last } });
+    const row = await this.adminPhoneRepo.findOne({
+      where: { phoneLast10: last },
+    });
     return !!row;
   }
 
@@ -43,12 +45,17 @@ export class AdminRoleService {
     return this.adminPhoneRepo.find({ order: { createdAt: 'ASC' } });
   }
 
-  async addPhone(createdByUserId: string, rawPhone: string): Promise<AdminPhone> {
+  async addPhone(
+    createdByUserId: string,
+    rawPhone: string,
+  ): Promise<AdminPhone> {
     const last = phoneLast10(rawPhone);
     if (!last || last.length !== 10) {
       throw new BadRequestException('Invalid phone (need 10 digits).');
     }
-    const existing = await this.adminPhoneRepo.findOne({ where: { phoneLast10: last } });
+    const existing = await this.adminPhoneRepo.findOne({
+      where: { phoneLast10: last },
+    });
     if (existing) {
       throw new ConflictException('This number is already an admin.');
     }

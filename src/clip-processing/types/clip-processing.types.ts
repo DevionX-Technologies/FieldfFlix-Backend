@@ -31,7 +31,12 @@ export interface RecordingProcessingResult {
 }
 
 export interface ErrorClassification {
-  type: 'rate_limit' | 'server_error' | 'network_error' | 'bad_input' | 'auth_error';
+  type:
+    | 'rate_limit'
+    | 'server_error'
+    | 'network_error'
+    | 'bad_input'
+    | 'auth_error';
   httpStatus?: number;
   retryAfter?: number;
 }

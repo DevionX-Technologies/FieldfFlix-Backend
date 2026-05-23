@@ -194,7 +194,7 @@ export class RecordingHighlightsService {
         const timeSinceLastHighlight = Math.floor(
           (buttonClickTimestamp.getTime() -
             new Date(latestTimestamp.button_click_timestamp).getTime()) /
-          1000,
+            1000,
         );
 
         if (timeSinceLastHighlight < 30) {
@@ -588,8 +588,8 @@ export class RecordingHighlightsService {
 
     const playbackId = Array.isArray(muxResponse.data?.data?.playback_ids)
       ? muxResponse.data.data.playback_ids.find(
-        (p: any) => p?.policy === 'public',
-      )?.id
+          (p: any) => p?.policy === 'public',
+        )?.id
       : null;
 
     // Set isClipCreated = true and reset retryCount to 0 on success
@@ -939,7 +939,11 @@ export class RecordingHighlightsService {
             environment: environment?.name,
             playbackIds: data?.playback_ids,
           });
-          recordingToEnqueue = await this.handleAssetReady(assetId, data, queryRunner);
+          recordingToEnqueue = await this.handleAssetReady(
+            assetId,
+            data,
+            queryRunner,
+          );
           break;
         }
 
@@ -1022,7 +1026,7 @@ export class RecordingHighlightsService {
     // Extract playback_id from webhook data (more reliable than DB)
     const webhookPlaybackId = Array.isArray(webhookData?.playback_ids)
       ? webhookData.playback_ids.find((p: any) => p?.policy === 'public')?.id ||
-      webhookData.playback_ids[0]?.id
+        webhookData.playback_ids[0]?.id
       : null;
 
     // ────────────────────────────────────────────────────────────────────
@@ -1047,7 +1051,9 @@ export class RecordingHighlightsService {
 
       // Skip if already ready (idempotent)
       if (recordingHighlight.status === HIGHLIGHT_STATUS.READY) {
-        this.logger.log(`Highlight ${recordingHighlight.id} already ready, skipping`);
+        this.logger.log(
+          `Highlight ${recordingHighlight.id} already ready, skipping`,
+        );
         return null;
       }
 
@@ -1124,8 +1130,7 @@ export class RecordingHighlightsService {
       `Updated recording status to ready and isVideoCreated=true`,
       {
         recordingId: recording.id,
-        persistedPlaybackId:
-          recordingUpdate.mux_playback_id ?? '(already set)',
+        persistedPlaybackId: recordingUpdate.mux_playback_id ?? '(already set)',
       },
     );
 
@@ -1179,7 +1184,8 @@ export class RecordingHighlightsService {
     }
 
     // Re-order ALL processing_order by relative_timestamp (chronological order)
-    await queryRunner.query(`
+    await queryRunner.query(
+      `
       WITH ordered AS (
         SELECT id, ROW_NUMBER() OVER (
           ORDER BY
@@ -1203,7 +1209,13 @@ export class RecordingHighlightsService {
       SET processing_order = o.new_order
       FROM ordered o
       WHERE rh.id = o.id
-    `, [recording.id, HIGHLIGHT_STATUS.PERMANENTLY_FAILED, HIGHLIGHT_STATUS.FAILED]);
+    `,
+      [
+        recording.id,
+        HIGHLIGHT_STATUS.PERMANENTLY_FAILED,
+        HIGHLIGHT_STATUS.FAILED,
+      ],
+    );
 
     this.logger.log(
       `Completed setting highlights to queued and re-ordered by relative_timestamp for recording ${recording.id}`,
@@ -1405,9 +1417,9 @@ export class RecordingHighlightsService {
       throw error instanceof HttpException
         ? error
         : new HttpException(
-          `Failed to process asset ID ${recordingData.id}: ${error?.message || String(error)}`,
-          HttpStatus.INTERNAL_SERVER_ERROR,
-        );
+            `Failed to process asset ID ${recordingData.id}: ${error?.message || String(error)}`,
+            HttpStatus.INTERNAL_SERVER_ERROR,
+          );
     }
   }
 
@@ -1418,19 +1430,19 @@ export class RecordingHighlightsService {
     //   buttonClickTimestamp: Date,
     //   relativeTimestamp: string,
     // }],
-    data: [{
-      relativeTimestamp: string,
-      mux_public_playback_url: string,
-      playback_id: string,
-      asset_id: string,
-
-    }],
+    data: [
+      {
+        relativeTimestamp: string;
+        mux_public_playback_url: string;
+        playback_id: string;
+        asset_id: string;
+      },
+    ],
   ): Promise<any> {
     const queryRunner: QueryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
     try {
-
       for (const item of data) {
         // const recordingHighlight = await queryRunner.manager.save(RecordingHighlights, {
         //   recordingId: recordingId,
@@ -1441,18 +1453,25 @@ export class RecordingHighlightsService {
 
         // console.log(recordingHighlight);
 
-        await queryRunner.manager.update(RecordingHighlights, { recordingId: recordingId, relative_timestamp: item.relativeTimestamp }, {
-          source_asset_id: source_asset_id,
-          asset_id: item.asset_id,
-          mux_public_playback_url: item.mux_public_playback_url,
-          playback_id: item.playback_id,
-          status: 'ready',
-          isClipCreated: true,
-        });
+        await queryRunner.manager.update(
+          RecordingHighlights,
+          {
+            recordingId: recordingId,
+            relative_timestamp: item.relativeTimestamp,
+          },
+          {
+            source_asset_id: source_asset_id,
+            asset_id: item.asset_id,
+            mux_public_playback_url: item.mux_public_playback_url,
+            playback_id: item.playback_id,
+            status: 'ready',
+            isClipCreated: true,
+          },
+        );
       }
 
       await queryRunner.commitTransaction();
-      return "recordingHighlights";
+      return 'recordingHighlights';
     } catch (error) {
       await queryRunner.rollbackTransaction();
       throw error;

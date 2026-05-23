@@ -177,7 +177,9 @@ export class RecordingService {
    * Marks a stuck `in_progress` row as ended so a new session can start.
    * Best-effort stop on the Raspberry Pi (do not block start on failure).
    */
-  private async abandonOrphanInProgressRecording(rec: Recording): Promise<void> {
+  private async abandonOrphanInProgressRecording(
+    rec: Recording,
+  ): Promise<void> {
     this.logger.warn(
       `Clearing stale in_progress recording ${rec.id} for camera ${rec.cameraId} (started ${rec.startTime})`,
     );
@@ -651,12 +653,15 @@ export class RecordingService {
       (recording.status !== 'ready' || !recording.mux_playback_id)
     ) {
       try {
-        const asset = await this.muxService.getAssetDetails(recording.mux_asset_id);
+        const asset = await this.muxService.getAssetDetails(
+          recording.mux_asset_id,
+        );
         if (asset?.status === 'ready') {
           const livePlaybackId = Array.isArray(asset.playback_ids)
-            ? asset.playback_ids.find((p: any) => p?.policy === 'public')?.id ??
+            ? (asset.playback_ids.find((p: any) => p?.policy === 'public')
+                ?.id ??
               asset.playback_ids[0]?.id ??
-              null
+              null)
             : null;
 
           const patch: Partial<Recording> = {};
@@ -1020,9 +1025,7 @@ export class RecordingService {
    * Mux-ready recordings for admin FlickShort creation (picker + preview).
    * Returns a compact list; newest first.
    */
-  async listMuxReadyRecordingsForAdmin(
-    limit = 300,
-  ): Promise<
+  async listMuxReadyRecordingsForAdmin(limit = 300): Promise<
     Array<{
       id: string;
       mux_playback_id: string;
@@ -1045,7 +1048,9 @@ export class RecordingService {
     });
 
     return rows
-      .filter((r) => r.mux_playback_id && String(r.mux_playback_id).trim().length > 0)
+      .filter(
+        (r) => r.mux_playback_id && String(r.mux_playback_id).trim().length > 0,
+      )
       .map((r) => ({
         id: r.id,
         mux_playback_id: r.mux_playback_id as string,
@@ -1061,8 +1066,13 @@ export class RecordingService {
           : null,
         recording_name: r.recording_name ?? null,
         turfName: r.turf?.name ?? null,
-        flick_sport: deriveFlickSportFromTurf(r.turf?.sports_supported),
-        turf_sports_supported: (r.turf?.sports_supported ?? []).map((x) => String(x)),
+        flick_sport: deriveFlickSportFromTurf(
+          r.turf?.sports_supported,
+          r.turf?.name,
+        ),
+        turf_sports_supported: (r.turf?.sports_supported ?? []).map((x) =>
+          String(x),
+        ),
       }));
   }
 
@@ -1151,9 +1161,11 @@ export class RecordingService {
         // best-effort patch the DB) so the app stops showing "Processing".
         if (assetDetails && assetDetails.status === 'ready') {
           const livePlaybackId = Array.isArray(assetDetails.playback_ids)
-            ? assetDetails.playback_ids.find((p: any) => p?.policy === 'public')?.id ??
+            ? (assetDetails.playback_ids.find(
+                (p: any) => p?.policy === 'public',
+              )?.id ??
               assetDetails.playback_ids[0]?.id ??
-              null
+              null)
             : null;
 
           if (recording.status !== 'ready') {
@@ -1161,7 +1173,8 @@ export class RecordingService {
           }
           if (livePlaybackId && !recording.mux_playback_id) {
             (recording as any).mux_playback_id = livePlaybackId;
-            (recording as any).mux_media_url = `https://stream.mux.com/${livePlaybackId}.m3u8`;
+            (recording as any).mux_media_url =
+              `https://stream.mux.com/${livePlaybackId}.m3u8`;
           }
 
           // Self-heal the DB row in the background — never block the response.
@@ -1197,13 +1210,13 @@ export class RecordingService {
         (recording as any).payment = paymentInfo;
 
         // Also, filter out failed highlights from recording.recordingHighlights if present
-        if (
-          Array.isArray((recording as any).recordingHighlights)
-        ) {
-          (recording as any).recordingHighlights = (recording as any).recordingHighlights.filter(
+        if (Array.isArray((recording as any).recordingHighlights)) {
+          (recording as any).recordingHighlights = (
+            recording as any
+          ).recordingHighlights.filter(
             (highlight: any) =>
               highlight.status !== 'failed' &&
-              highlight.status !== 'PERMANENTLY_FAILED'
+              highlight.status !== 'PERMANENTLY_FAILED',
           );
         }
 
@@ -1337,16 +1350,16 @@ export class RecordingService {
         // Format turf detail
         const turfDetail = turf
           ? {
-            id: turf.id,
-            name: turf.name || '',
-            geo_location: turf.geo_location || null,
-            address_line: turf.address_line || null,
-            city: turf.city || null,
-            state: turf.state || null,
-            postal_code: turf.postal_code || null,
-            location: turf.location || null,
-            country: turf.country || null,
-          }
+              id: turf.id,
+              name: turf.name || '',
+              geo_location: turf.geo_location || null,
+              address_line: turf.address_line || null,
+              city: turf.city || null,
+              state: turf.state || null,
+              postal_code: turf.postal_code || null,
+              location: turf.location || null,
+              country: turf.country || null,
+            }
           : null;
 
         // Format recording highlights
@@ -1481,16 +1494,16 @@ export class RecordingService {
 
         const turfDetail = turf
           ? {
-            id: turf.id,
-            name: turf.name || '',
-            geo_location: turf.geo_location || null,
-            address_line: turf.address_line || null,
-            city: turf.city || null,
-            state: turf.state || null,
-            postal_code: turf.postal_code || null,
-            location: turf.location || null,
-            country: turf.country || null,
-          }
+              id: turf.id,
+              name: turf.name || '',
+              geo_location: turf.geo_location || null,
+              address_line: turf.address_line || null,
+              city: turf.city || null,
+              state: turf.state || null,
+              postal_code: turf.postal_code || null,
+              location: turf.location || null,
+              country: turf.country || null,
+            }
           : null;
 
         const recordingHighlights =
@@ -1600,7 +1613,9 @@ export class RecordingService {
       end_time: recording.endTime ?? null,
       turf_name: recording.turf?.name ?? null,
       owner_name:
-        (recording as any)?.user?.name ?? (recording as any)?.user?.full_name ?? null,
+        (recording as any)?.user?.name ??
+        (recording as any)?.user?.full_name ??
+        null,
       status: recording.status ?? null,
     };
   }
@@ -1615,12 +1630,12 @@ export class RecordingService {
       select: { id: true, userId: true },
     });
     if (!recording) {
-      throw new NotFoundException(`Recording with ID ${recordingId} not found.`);
+      throw new NotFoundException(
+        `Recording with ID ${recordingId} not found.`,
+      );
     }
     if (recording.userId !== userId) {
-      throw new ForbiddenException(
-        'You do not have access to this recording.',
-      );
+      throw new ForbiddenException('You do not have access to this recording.');
     }
     const count = await this.recordingHighlightsRepository.count({
       where: { recordingId },
@@ -1686,7 +1701,9 @@ export class RecordingService {
         playback_id: h.playback_id ?? null,
         mux_public_playback_url:
           h.mux_public_playback_url ??
-          (h.playback_id ? `https://stream.mux.com/${h.playback_id}.m3u8` : null),
+          (h.playback_id
+            ? `https://stream.mux.com/${h.playback_id}.m3u8`
+            : null),
         thumbnail_url: h.playback_id
           ? `https://image.mux.com/${h.playback_id}/thumbnail.jpg?time=2`
           : null,
@@ -1920,7 +1937,7 @@ export class RecordingService {
       };
       try {
         responsePayload = JSON.parse(rawBody);
-      } catch (parseErr) {
+      } catch {
         this.logger.error(
           `Invalid Lambda payload for ${highlightId}: ${rawBody?.slice(0, 500)}`,
         );
@@ -1986,7 +2003,9 @@ export class RecordingService {
         responsePayload.message ||
         responsePayload.error ||
         'Failed to convert highlight to MP4';
-      this.logger.warn(`Lambda MP4 export failed for ${highlightId}: ${failureMsg}`);
+      this.logger.warn(
+        `Lambda MP4 export failed for ${highlightId}: ${failureMsg}`,
+      );
       return {
         success: false,
         highlightId,
@@ -2131,7 +2150,10 @@ export class RecordingService {
         response?: { status?: number; data?: unknown };
       };
       const status = ax.response?.status;
-      if (status === 400 && muxIsStaticRenditionAlreadyDefinedResponse(ax.response?.data)) {
+      if (
+        status === 400 &&
+        muxIsStaticRenditionAlreadyDefinedResponse(ax.response?.data)
+      ) {
         return { ok: true };
       }
       if (status === 422) {
@@ -2163,9 +2185,10 @@ export class RecordingService {
    * Build a downloadable Mux static-rendition MP4 URL using only Mux API credentials
    * (no Lambda/S3). Creates `highest` static renditions on demand for existing assets.
    */
-  private async tryMuxStaticMp4SignedUrl(highlight: RecordingHighlights): Promise<
-    | { kind: 'ok'; signedUrl: string }
-    | { kind: 'err'; message: string }
+  private async tryMuxStaticMp4SignedUrl(
+    highlight: RecordingHighlights,
+  ): Promise<
+    { kind: 'ok'; signedUrl: string } | { kind: 'err'; message: string }
   > {
     const assetId = highlight.asset_id?.trim();
     const playbackId = highlight.playback_id?.trim();
@@ -2335,7 +2358,10 @@ export class RecordingService {
     }
 
     if (!this.isProgressiveMp4ExportUrl(url)) {
-      return { kind: 'err', message: 'Could not build a valid MP4 export URL.' };
+      return {
+        kind: 'err',
+        message: 'Could not build a valid MP4 export URL.',
+      };
     }
 
     return { kind: 'ok', signedUrl: url };
@@ -2345,9 +2371,12 @@ export class RecordingService {
    * Find a recording by turf, optional camera, time range, and creator's phone number.
    * Grants the requesting user access via SharedRecording if a match is found.
    */
-  async findAndClaimRecording(dto: FindAndClaimRecordingDto, requestingUserId: string): Promise<Recording[]> {
+  async findAndClaimRecording(
+    dto: FindAndClaimRecordingDto,
+    requestingUserId: string,
+  ): Promise<Recording[]> {
     const { turfId, cameraId, date, startTime, endTime, phoneLast10 } = dto;
-    
+
     // Parse time boundaries
     const startTimestamp = new Date(`${date}T${startTime}:00`);
     const endTimestamp = new Date(`${date}T${endTime}:00`);
@@ -2357,14 +2386,17 @@ export class RecordingService {
     }
 
     // Build the query
-    const qb = this.recordingRepository.createQueryBuilder('recording')
+    const qb = this.recordingRepository
+      .createQueryBuilder('recording')
       .leftJoinAndSelect('recording.user', 'user')
       .leftJoinAndSelect('recording.turf', 'turf')
       .leftJoinAndSelect('recording.camera', 'camera')
       .where('recording.turfId = :turfId', { turfId })
       .andWhere('recording.startTime >= :startTimestamp', { startTimestamp })
       .andWhere('recording.startTime <= :endTimestamp', { endTimestamp })
-      .andWhere('user.phone_number LIKE :phonePattern', { phonePattern: `%${phoneLast10}` });
+      .andWhere('user.phone_number LIKE :phonePattern', {
+        phonePattern: `%${phoneLast10}`,
+      });
 
     if (cameraId) {
       qb.andWhere('recording.cameraId = :cameraId', { cameraId });
@@ -2388,7 +2420,7 @@ export class RecordingService {
         where: {
           recording_id: match.id,
           shared_with_user_id: requestingUserId,
-        }
+        },
       });
 
       if (!existingShare) {
