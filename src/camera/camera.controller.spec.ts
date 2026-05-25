@@ -56,7 +56,15 @@ describe('CameraController', () => {
   describe('findAll', () => {
     it('should return a paginated list of cameras with default params', async () => {
       const cameras: Camera[] = [
-        { id: 'uuid1', name: 'Camera 1', turfId: 'turf1', turf: null },
+        {
+          id: 'uuid1',
+          name: 'Camera 1',
+          turfId: 'turf1',
+          raspberryPiBaseUrl: null,
+          court_number: null,
+          turf: null,
+          recording: [],
+        },
       ];
       const paginationResult = { data: cameras, total: 1 };
       mockCameraService.findAll.mockResolvedValue(paginationResult);
@@ -69,7 +77,15 @@ describe('CameraController', () => {
 
     it('should return a paginated list of cameras with specified params', async () => {
       const cameras: Camera[] = [
-        { id: 'uuid2', name: 'Camera 2', turfId: 'turf2', turf: null },
+        {
+          id: 'uuid2',
+          name: 'Camera 2',
+          turfId: 'turf2',
+          raspberryPiBaseUrl: null,
+          court_number: null,
+          turf: null,
+          recording: [],
+        },
       ];
       const paginationResult = { data: cameras, total: 1 };
       mockCameraService.findAll.mockResolvedValue(paginationResult);
@@ -87,7 +103,10 @@ describe('CameraController', () => {
         id: 'uuid',
         name: 'Test Camera',
         turfId: 'turf-uuid',
+        raspberryPiBaseUrl: null,
+        court_number: null,
         turf: null,
+        recording: [],
       };
       mockCameraService.findOne.mockResolvedValue(camera);
 

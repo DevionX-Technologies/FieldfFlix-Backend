@@ -1,8 +1,9 @@
 /**
- * Read-only: every turf + cameras (for matching ops sheet before reallocating).
+ * For UUID ↔ turf verification against the ops spreadsheet, prefer:
  *
- *   node scripts/list-cameras-per-turf.mjs
- *   npm run db:list-cameras-by-turf
+ *   npm run db:audit-turf-cameras
+ *
+ * Reads FieldFlix-Backend-clean/.env (DB_*).
  */
 import dotenv from 'dotenv';
 import pg from 'pg';
@@ -23,6 +24,16 @@ const client = new pg.Client({
 
 await client.connect();
 
+const hasCourtColRes = await client.query(`
+  SELECT 1 AS ok
+  FROM information_schema.columns
+  WHERE table_schema = 'public'
+    AND table_name = 'cameras'
+    AND column_name = 'court_number'
+  LIMIT 1
+`);
+const hasCourtNumberColumn = hasCourtColRes.rowCount > 0;
+
 const flat = await client.query(`
   SELECT
     t.id AS turf_id,
@@ -32,7 +43,8 @@ const flat = await client.query(`
     t.sports_supported,
     t.is_active,
     c.id AS camera_id,
-    c.name AS camera_name
+    c.name AS camera_name,
+    ${hasCourtNumberColumn ? 'c."court_number"' : 'NULL::integer'} AS court_number
   FROM turfs t
   LEFT JOIN cameras c ON c."turfId" = t.id
   ORDER BY t.name NULLS LAST, t.id::text, c.name NULLS LAST, c.id::text
@@ -56,6 +68,7 @@ for (const row of flat.rows) {
     byTurf.get(row.turf_id).cameras.push({
       camera_id: row.camera_id,
       camera_name: row.camera_name,
+      court_number: row.court_number,
     });
   }
 }
@@ -78,6 +91,10 @@ console.log(
         turfs_is_active_true: totals.rows[0].turfs_active,
         cameras_in_db: camCount.rows[0].n,
       },
+      cameras_court_number_column_present: hasCourtNumberColumn,
+      migration_hint: hasCourtNumberColumn
+        ? undefined
+        : 'Add cameras.court_number via backend migrations (npm run migration:run); court_number shown as null until then.',
       turfCameraMatrix: turfList.map((t) => ({
         ...t,
         camera_count: t.cameras.length,

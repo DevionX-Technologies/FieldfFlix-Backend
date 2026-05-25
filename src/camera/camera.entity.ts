@@ -24,6 +24,10 @@ export class Camera {
   @Column({ type: 'varchar', length: 255, nullable: true })
   raspberryPiBaseUrl: string;
 
+  /** Venue physical court / ground index (shown in-app; optional legacy rows may be unset). */
+  @Column({ type: 'integer', nullable: true })
+  court_number: number | null;
+
   @ManyToOne(() => TurfEntity)
   @JoinColumn({ name: 'turfId' })
   turf: TurfEntity;

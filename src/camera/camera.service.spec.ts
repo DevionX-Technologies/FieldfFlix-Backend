@@ -61,8 +61,24 @@ describe('CameraService', () => {
   describe('findAll', () => {
     it('should return an array of cameras with default pagination', async () => {
       const cameras: Camera[] = [
-        { id: 'uuid1', name: 'Camera 1', turfId: 'turf1', turf: null },
-        { id: 'uuid2', name: 'Camera 2', turfId: 'turf1', turf: null },
+        {
+          id: 'uuid1',
+          name: 'Camera 1',
+          turfId: 'turf1',
+          raspberryPiBaseUrl: null,
+          court_number: null,
+          turf: null,
+          recording: [],
+        },
+        {
+          id: 'uuid2',
+          name: 'Camera 2',
+          turfId: 'turf1',
+          raspberryPiBaseUrl: null,
+          court_number: null,
+          turf: null,
+          recording: [],
+        },
       ];
       const total = cameras.length;
       mockCameraRepository.findAndCount.mockResolvedValue([cameras, total]);
@@ -78,7 +94,15 @@ describe('CameraService', () => {
 
     it('should return an array of cameras with specified pagination', async () => {
       const cameras: Camera[] = [
-        { id: 'uuid3', name: 'Camera 3', turfId: 'turf2', turf: null },
+        {
+          id: 'uuid3',
+          name: 'Camera 3',
+          turfId: 'turf2',
+          raspberryPiBaseUrl: null,
+          court_number: null,
+          turf: null,
+          recording: [],
+        },
       ];
       const total = cameras.length;
       const paginationParams = { page: 2, limit: 5 };
@@ -100,7 +124,10 @@ describe('CameraService', () => {
         id: 'uuid',
         name: 'Test Camera',
         turfId: 'turf-uuid',
+        raspberryPiBaseUrl: null,
+        court_number: null,
         turf: null,
+        recording: [],
       };
       mockCameraRepository.findOne.mockResolvedValue(camera);
 

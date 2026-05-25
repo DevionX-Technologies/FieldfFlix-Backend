@@ -7,6 +7,8 @@ import {
   IsIn,
   Min,
   Max,
+  IsNotEmpty,
+  ValidateIf,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaymentType, PaymentStatus } from '../entities/payment.entity';
@@ -104,6 +106,18 @@ export class VerifyPaymentDto {
   })
   @IsEnum(PaymentStatus)
   status: PaymentStatus;
+
+  @ValidateIf((o: VerifyPaymentDto) => o.status === PaymentStatus.COMPLETED)
+  @ApiPropertyOptional({
+    description:
+      'HMAC SHA256 signature from Razorpay Checkout (order_id|payment_id). Required when status is completed.',
+    example: 'abc123signature',
+  })
+  @IsNotEmpty({
+    message: 'razorpay_signature is required when status is completed',
+  })
+  @IsString()
+  razorpay_signature?: string;
 }
 
 /**

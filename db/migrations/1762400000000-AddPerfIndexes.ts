@@ -11,7 +11,7 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
  *   - recordings.cameraId          -- single-camera history lookups
  *   - recordings.userId,startTime  -- "my recordings" sorted by recency
  *   - recording_highlights.recording_id  -- highlights list per recording
- *   - shared_recordings.recording_id, .shared_to_user_id  -- "shared with me" join
+ *   - shared_recordings.recording_id, .shared_with_user_id  -- "shared with me" join
  *   - flick_shorts.recording_id, .approved_at
  *   - payments.(user_id,status)    -- "any pending payment for this user?"
  *   - payments.(recording_id,status)  -- "is this recording already unlocked?"
@@ -40,7 +40,7 @@ export class AddPerfIndexes1762400000000 implements MigrationInterface {
       `CREATE INDEX IF NOT EXISTS "idx_recording_highlights_status" ON "recording_highlights" ("status")`,
 
       `CREATE INDEX IF NOT EXISTS "idx_shared_recordings_recording_id" ON "shared_recordings" ("recording_id")`,
-      `CREATE INDEX IF NOT EXISTS "idx_shared_recordings_shared_to_user_id" ON "shared_recordings" ("shared_to_user_id")`,
+      `CREATE INDEX IF NOT EXISTS "idx_shared_recordings_shared_with_user_id" ON "shared_recordings" ("shared_with_user_id")`,
 
       `CREATE INDEX IF NOT EXISTS "idx_flick_shorts_recording_id" ON "flick_shorts" ("recording_id")`,
       `CREATE INDEX IF NOT EXISTS "idx_flick_shorts_status_approved_at" ON "flick_shorts" ("status", "approved_at" DESC)`,
@@ -52,15 +52,17 @@ export class AddPerfIndexes1762400000000 implements MigrationInterface {
       `CREATE INDEX IF NOT EXISTS "idx_turfs_sports_supported_gin" ON "turfs" USING GIN ("sports_supported")`,
     ];
 
-    for (const sql of stmts) {
+    for (let i = 0; i < stmts.length; i++) {
+      const sp = `sp_add_perf_${i}`;
+      await queryRunner.query(`SAVEPOINT ${sp}`);
       try {
-        await queryRunner.query(sql);
+        await queryRunner.query(stmts[i]);
+        await queryRunner.query(`RELEASE SAVEPOINT ${sp}`);
       } catch (err) {
-        // GIN on enum-array may need extension; flick_shorts may not exist yet
-        // in older deploys; log and continue rather than failing the whole batch.
+        await queryRunner.query(`ROLLBACK TO SAVEPOINT ${sp}`);
         // eslint-disable-next-line no-console
         console.warn(
-          `[AddPerfIndexes] skipped: ${sql} :: ${(err as Error).message}`,
+          `[AddPerfIndexes] skipped: ${stmts[i]} :: ${(err as Error).message}`,
         );
       }
     }
@@ -74,6 +76,7 @@ export class AddPerfIndexes1762400000000 implements MigrationInterface {
       `DROP INDEX IF EXISTS "idx_payments_user_status"`,
       `DROP INDEX IF EXISTS "idx_flick_shorts_status_approved_at"`,
       `DROP INDEX IF EXISTS "idx_flick_shorts_recording_id"`,
+      `DROP INDEX IF EXISTS "idx_shared_recordings_shared_with_user_id"`,
       `DROP INDEX IF EXISTS "idx_shared_recordings_shared_to_user_id"`,
       `DROP INDEX IF EXISTS "idx_shared_recordings_recording_id"`,
       `DROP INDEX IF EXISTS "idx_recording_highlights_status"`,

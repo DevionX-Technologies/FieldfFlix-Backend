@@ -352,9 +352,83 @@ export class PaymentService {
         });
       }
 
-      // Update payment status based on the provided status
+      const razorpayPaymentId = verifyPaymentDto.razorpay_payment_id?.trim();
+      if (!razorpayPaymentId) {
+        throw new BadRequestException({
+          message: 'Invalid request',
+          detail: 'razorpay_payment_id is required',
+        });
+      }
+
+      if (verifyPaymentDto.status === PaymentStatus.COMPLETED) {
+        const signature = verifyPaymentDto.razorpay_signature?.trim();
+        if (!signature) {
+          throw new BadRequestException({
+            message: 'Verification failed',
+            detail: 'razorpay_signature is required for completed payments',
+          });
+        }
+
+        const signatureValid = await this.razorpayService.verifyPayment(
+          verifyPaymentDto.razorpay_order_id,
+          razorpayPaymentId,
+          signature,
+        );
+        if (!signatureValid) {
+          throw new BadRequestException({
+            message: 'Verification failed',
+            detail: 'Invalid Razorpay payment signature',
+          });
+        }
+
+        let rpPayment: { order_id?: string; status?: string; amount?: number };
+        try {
+          rpPayment =
+            await this.razorpayService.getPaymentDetails(razorpayPaymentId);
+        } catch (err: unknown) {
+          const detail = err instanceof Error ? err.message : String(err);
+          this.logger.warn(
+            `Razorpay fetch failed during verify — refusing to unlock: ${detail}`,
+          );
+          throw new BadRequestException({
+            message: 'Verification failed',
+            detail: 'Could not confirm payment with Razorpay',
+          });
+        }
+
+        if (rpPayment?.order_id !== verifyPaymentDto.razorpay_order_id) {
+          throw new BadRequestException({
+            message: 'Verification failed',
+            detail: 'Razorpay payment does not belong to this order',
+          });
+        }
+
+        const remoteStatus = String(rpPayment?.status ?? '').toLowerCase();
+        if (remoteStatus !== 'captured' && remoteStatus !== 'authorized') {
+          throw new BadRequestException({
+            message: 'Verification failed',
+            detail: `Razorpay reports payment status "${remoteStatus}" — not payable`,
+          });
+        }
+
+        const remoteRupees = Number(rpPayment.amount) / 100;
+        const expectedRupees = Number(payment.amount);
+        if (
+          Number.isFinite(remoteRupees) &&
+          Number.isFinite(expectedRupees) &&
+          Math.abs(remoteRupees - expectedRupees) > 0.015
+        ) {
+          throw new BadRequestException({
+            message: 'Verification failed',
+            detail: 'Payment amount does not match order',
+          });
+        }
+
+        payment.razorpay_signature = signature;
+      }
+
       payment.status = verifyPaymentDto.status;
-      payment.razorpay_payment_id = verifyPaymentDto.razorpay_payment_id;
+      payment.razorpay_payment_id = razorpayPaymentId;
 
       // Set paid_at only if payment is completed
       if (verifyPaymentDto.status === PaymentStatus.COMPLETED) {
