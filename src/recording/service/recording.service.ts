@@ -2392,8 +2392,12 @@ export class RecordingService {
       .leftJoinAndSelect('recording.turf', 'turf')
       .leftJoinAndSelect('recording.camera', 'camera')
       .where('recording.turfId = :turfId', { turfId })
-      .andWhere('recording.startTime >= :startTimestamp', { startTimestamp })
-      .andWhere('recording.startTime <= :endTimestamp', { endTimestamp })
+      /** Overlap booking window ↔ recording interval (fixes matches when session started earlier). */
+      .andWhere('recording.startTime < :endTimestamp', { endTimestamp })
+      .andWhere(
+        '(recording.endTime IS NULL OR recording.endTime > :startTimestamp)',
+        { startTimestamp },
+      )
       .andWhere('user.phone_number LIKE :phonePattern', {
         phonePattern: `%${phoneLast10}`,
       });
