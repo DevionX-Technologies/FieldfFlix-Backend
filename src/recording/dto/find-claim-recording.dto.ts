@@ -47,5 +47,8 @@ export class FindAndClaimRecordingDto {
   })
   @IsString()
   @IsNotEmpty()
+  @Matches(/^\d{10}$/, {
+    message: 'phoneLast10 must be exactly 10 digits',
+  })
   phoneLast10: string;
 }

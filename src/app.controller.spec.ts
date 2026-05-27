@@ -16,7 +16,7 @@ describe('AppController', () => {
 
   describe('root', () => {
     it('should return live date and version on root', () => {
-      expect(appController.getHello()).toMatch(
+      expect(appController.findMyPhone()).toMatch(
         /^FieldFlix API is up — .+ IST — build 1\.2 — \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\.$/,
       );
     });

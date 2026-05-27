@@ -21,6 +21,7 @@ import {
 import { RazorpayService } from '../common/service/razorpay.service';
 import { User } from '../user/entities/user.entity';
 import { Recording } from '../recording/entities/recording.entity';
+import { SharedRecording } from '../recording/entities/shared-recording.entity';
 import { Request } from 'express';
 import { randomUUID } from 'crypto';
 import { CommonService } from 'src/common/service/common.service';
@@ -44,6 +45,8 @@ export class PaymentService {
     private readonly userRepository: Repository<User>,
     @InjectRepository(Recording)
     private readonly recordingRepository: Repository<Recording>,
+    @InjectRepository(SharedRecording)
+    private readonly sharedRecordingRepository: Repository<SharedRecording>,
     private readonly razorpayService: RazorpayService,
     private readonly commonService: CommonService,
   ) {}
@@ -562,6 +565,65 @@ export class PaymentService {
     } catch (error) {
       this.logger.error('Failed to get payment history', error);
       throw error;
+    }
+  }
+
+  /**
+   * Group-unlock view for the mobile app.
+   *
+   * Returns the IDs of every recording the user has access to (they own it,
+   * OR someone — including a Find-My-Recording claim — shared it with them)
+   * that has at least one COMPLETED payment of type RECORDING_ACCESS or
+   * HIGHLIGHT_ACCESS, by any user.
+   *
+   * The Recordings screen calls this so that the lock icon flips to "open"
+   * the moment a single group member completes payment — even if a different
+   * user actually paid.
+   */
+  async getUnlockedRecordingIdsForUser(userId: string): Promise<string[]> {
+    try {
+      // 1. Recording IDs visible to this user (owner + shared with).
+      const ownedRows = await this.recordingRepository.find({
+        where: { userId },
+        select: ['id'],
+      });
+      const sharedRows = await this.sharedRecordingRepository.find({
+        where: { shared_with_user_id: userId },
+        select: ['recording_id'],
+      });
+
+      const visibleIds = new Set<string>();
+      for (const r of ownedRows) {
+        if (r?.id) visibleIds.add(String(r.id));
+      }
+      for (const s of sharedRows) {
+        if (s?.recording_id) visibleIds.add(String(s.recording_id));
+      }
+      if (visibleIds.size === 0) return [];
+
+      // 2. Of those, find the ones with any completed RECORDING_ACCESS or
+      //    HIGHLIGHT_ACCESS payment (from anyone in the group).
+      const paid = await this.paymentRepository
+        .createQueryBuilder('payment')
+        .select('DISTINCT payment.recording_id', 'recording_id')
+        .where('payment.recording_id IN (:...ids)', {
+          ids: [...visibleIds],
+        })
+        .andWhere('payment.status = :completed', {
+          completed: PaymentStatus.COMPLETED,
+        })
+        .andWhere('payment.payment_type IN (:...types)', {
+          types: [PaymentType.RECORDING_ACCESS, PaymentType.HIGHLIGHT_ACCESS],
+        })
+        .getRawMany<{ recording_id: string }>();
+
+      return paid.map((p) => String(p.recording_id ?? '')).filter((id) => !!id);
+    } catch (error) {
+      this.logger.error(
+        'Failed to compute unlocked recording ids for user',
+        error,
+      );
+      return [];
     }
   }
 

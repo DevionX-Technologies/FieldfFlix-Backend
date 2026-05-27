@@ -4,7 +4,7 @@ import { Injectable } from '@nestjs/common';
 export class AppService {
   private static readonly VERSION = '1.2';
 
-  getHello(): string {
+  findMyPhone(): string {
     const dateLabel = new Date().toLocaleDateString('en-GB', {
       weekday: 'long',
       year: 'numeric',

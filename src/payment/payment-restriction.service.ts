@@ -18,6 +18,34 @@ export class PaymentRestrictionService {
     private readonly paymentRepository: Repository<PaymentEntity>,
   ) {}
 
+  /**
+   * Group-unlock semantics for recording / highlight access.
+   *
+   * A recording is unlocked for everyone with access (the owner + anyone who
+   * claimed it via "Find My Recording" via SharedRecording) as soon as ANY of
+   * them completes a payment of type RECORDING_ACCESS or HIGHLIGHT_ACCESS.
+   *
+   * Access (who is allowed to consume the unlock) is enforced upstream by the
+   * route guards / repository scoping — those layers already restrict the
+   * recording id to the owner + shared list. We only answer the question
+   * "is this recording id unlocked for SOMEBODY?" here.
+   */
+  async hasAnyCompletedPaymentForRecording(
+    recordingId: string,
+  ): Promise<boolean> {
+    const payment = await this.paymentRepository.findOne({
+      where: {
+        recording_id: recordingId,
+        status: PaymentStatus.COMPLETED,
+        payment_type: In([
+          PaymentType.RECORDING_ACCESS,
+          PaymentType.HIGHLIGHT_ACCESS,
+        ]),
+      },
+    });
+    return !!payment;
+  }
+
   async checkRecordingAccess(
     userId: string,
     recordingId: string,
@@ -33,24 +61,18 @@ export class PaymentRestrictionService {
         `Checking recording access for user: ${userId}, recording: ${recordingId}`,
       );
 
-      // Check if user has paid for this recording
-      const payment = await this.paymentRepository.findOne({
-        where: {
-          user_id: userId,
-          recording_id: recordingId,
-          status: PaymentStatus.COMPLETED,
-          payment_type: In([
-            PaymentType.RECORDING_ACCESS,
-            PaymentType.HIGHLIGHT_ACCESS,
-          ]),
-        },
-      });
+      // Group unlock: any user (owner OR a Find-My-Recording claimer) who
+      // already paid unlocks playback for everyone with access.
+      const groupPaid =
+        await this.hasAnyCompletedPaymentForRecording(recordingId);
 
-      if (payment) {
-        this.logger.log(`User has paid access for recording: ${recordingId}`);
+      if (groupPaid) {
+        this.logger.log(
+          `Recording ${recordingId} unlocked via group payment for user ${userId}`,
+        );
         return {
           canAccess: true,
-          reason: 'User has paid access',
+          reason: 'Recording paid by a group member',
         };
       }
 
@@ -89,25 +111,19 @@ export class PaymentRestrictionService {
   }
 
   /**
-   * True when the user has completed a per-recording unlock (full match or
-   * highlight access). Used to gate export/share flows that must match in-app paywall.
+   * True when SOMEONE in the recording's group (owner or claimer) has a
+   * completed RECORDING_ACCESS or HIGHLIGHT_ACCESS payment. Used by export /
+   * share gates so the in-app lock icon and the gated flows agree.
+   *
+   * Note: this intentionally ignores `userId`. Group-unlock semantics — one
+   * member pays, everyone with access plays. The `userId` parameter is kept
+   * for compatibility with existing call sites.
    */
   async hasCompletedRecordingOrHighlightAccess(
-    userId: string,
+    _userId: string,
     recordingId: string,
   ): Promise<boolean> {
-    const payment = await this.paymentRepository.findOne({
-      where: {
-        user_id: userId,
-        recording_id: recordingId,
-        status: PaymentStatus.COMPLETED,
-        payment_type: In([
-          PaymentType.RECORDING_ACCESS,
-          PaymentType.HIGHLIGHT_ACCESS,
-        ]),
-      },
-    });
-    return !!payment;
+    return this.hasAnyCompletedPaymentForRecording(recordingId);
   }
 
   calculatePaymentAmount(durationInSeconds: number): number {

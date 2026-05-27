@@ -133,6 +133,40 @@ export class PaymentController {
   }
 
   /**
+   * Group-unlock view for the Recordings screen.
+   *
+   * Returns the IDs of every recording the user has access to (owned OR
+   * shared via Find-My-Recording) that has at least one completed
+   * RECORDING_ACCESS / HIGHLIGHT_ACCESS payment from anyone in the group.
+   *
+   * Declared before `:paymentId` so the literal path is not captured as an id.
+   */
+  @Get('unlocked-recordings')
+  @ApiOperation({
+    summary: 'List unlocked recording IDs for the current user',
+    description:
+      'Returns recording IDs visible to the user (owner or claimer) where any group member has completed a recording / highlight access payment.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Recording IDs retrieved successfully',
+    schema: {
+      type: 'object',
+      properties: {
+        recording_ids: { type: 'array', items: { type: 'string' } },
+      },
+    },
+  })
+  async getUnlockedRecordings(
+    @Request() req: any,
+  ): Promise<{ recording_ids: string[] }> {
+    const ids = await this.paymentService.getUnlockedRecordingIdsForUser(
+      req.user.user_id,
+    );
+    return { recording_ids: ids };
+  }
+
+  /**
    * Check if user has paid for specific recording playback (recording-scoped purchases only).
    * Declared before `:paymentId` so `check-access` is not captured as an id.
    */

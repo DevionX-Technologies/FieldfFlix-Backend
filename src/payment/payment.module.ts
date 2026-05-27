@@ -6,6 +6,7 @@ import { PaymentRestrictionService } from './payment-restriction.service';
 import { PaymentEntity } from './entities/payment.entity';
 import { User } from '../user/entities/user.entity';
 import { Recording } from '../recording/entities/recording.entity';
+import { SharedRecording } from '../recording/entities/shared-recording.entity';
 import { MediaUploadEntity } from '../media-upload/entities/media-upload.entity';
 import { RecordingHighlights } from '../recording/entities/recording-highlights.entity';
 import { CommonModule } from '../common/common.module';
@@ -19,6 +20,7 @@ import { CommonModule } from '../common/common.module';
       PaymentEntity,
       User,
       Recording,
+      SharedRecording,
       MediaUploadEntity,
       RecordingHighlights,
     ]),

@@ -2368,8 +2368,26 @@ export class RecordingService {
   }
 
   /**
-   * Find a recording by turf, optional camera, time range, and creator's phone number.
-   * Grants the requesting user access via SharedRecording if a match is found.
+   * Find a recording by turf, optional camera (or its court_number), time
+   * window, and the creator's phone number. Grants the requesting user access
+   * via SharedRecording for every match.
+   *
+   * Matching semantics:
+   *   - Turf must match exactly.
+   *   - Recording interval overlaps the requested window on the requested day
+   *     (full timestamp comparison — yesterday 3 PM never matches today 3 PM).
+   *   - Phone matches the last 10 digits exactly:
+   *       RIGHT(<digits-only phone>, 10) = :phoneLast10
+   *     Strips spaces, +, dashes etc. so "+91 98765 43210" matches "9876543210"
+   *     while a 7-digit suffix on a longer foreign number does not.
+   *   - When the requester selected a court (cameraId from the dropdown), we
+   *     expand the filter to every camera at the same venue that shares the
+   *     same `court_number`. Many venues run multiple cameras on the same
+   *     court; the recording could be on any of them.
+   *
+   * Payment lock is intentionally NOT touched here. Claiming only makes the
+   * recording visible. It stays locked until a completed PaymentEntity row
+   * exists (see PaymentRestrictionService.checkRecordingAccess).
    */
   async findAndClaimRecording(
     dto: FindAndClaimRecordingDto,
@@ -2377,33 +2395,76 @@ export class RecordingService {
   ): Promise<Recording[]> {
     const { turfId, cameraId, date, startTime, endTime, phoneLast10 } = dto;
 
-    // Parse time boundaries
     const startTimestamp = new Date(`${date}T${startTime}:00`);
     const endTimestamp = new Date(`${date}T${endTime}:00`);
 
     if (isNaN(startTimestamp.getTime()) || isNaN(endTimestamp.getTime())) {
       throw new BadRequestException('Invalid date or time format');
     }
+    if (!/^\d{10}$/.test(phoneLast10 ?? '')) {
+      throw new BadRequestException('phoneLast10 must be exactly 10 digits');
+    }
 
-    // Build the query
+    // If the user picked a court (cameraId), expand to every camera at the
+    // same venue with the same `court_number` so we don't miss recordings
+    // captured by a sibling camera on the same physical court.
+    let cameraIdsForCourt: string[] | null = null;
+    if (cameraId) {
+      try {
+        const cameraRepo =
+          this.recordingRepository.manager.getRepository('cameras');
+        const picked = await cameraRepo
+          .createQueryBuilder('cam')
+          .where('cam.id = :cameraId', { cameraId })
+          .getOne();
+
+        const courtNumber =
+          picked && (picked as any).court_number != null
+            ? (picked as any).court_number
+            : null;
+
+        if (courtNumber != null) {
+          const siblings = await cameraRepo
+            .createQueryBuilder('cam')
+            .where('cam.turfId = :turfId', { turfId })
+            .andWhere('cam.court_number = :courtNumber', { courtNumber })
+            .getMany();
+          const ids = siblings
+            .map((c: any) => String(c.id))
+            .filter((id) => !!id);
+          cameraIdsForCourt = ids.length > 0 ? ids : [cameraId];
+        } else {
+          cameraIdsForCourt = [cameraId];
+        }
+      } catch (err) {
+        this.logger?.warn?.(
+          `findAndClaimRecording: could not expand cameraId ${cameraId} to siblings (${(err as Error)?.message}); falling back to exact match`,
+        );
+        cameraIdsForCourt = [cameraId];
+      }
+    }
+
     const qb = this.recordingRepository
       .createQueryBuilder('recording')
       .leftJoinAndSelect('recording.user', 'user')
       .leftJoinAndSelect('recording.turf', 'turf')
       .leftJoinAndSelect('recording.camera', 'camera')
       .where('recording.turfId = :turfId', { turfId })
-      /** Overlap booking window ↔ recording interval (fixes matches when session started earlier). */
       .andWhere('recording.startTime < :endTimestamp', { endTimestamp })
       .andWhere(
         '(recording.endTime IS NULL OR recording.endTime > :startTimestamp)',
         { startTimestamp },
       )
-      .andWhere('user.phone_number LIKE :phonePattern', {
-        phonePattern: `%${phoneLast10}`,
-      });
+      // Exact-last-10-digits match against the digits-only phone number.
+      .andWhere(
+        "RIGHT(REGEXP_REPLACE(COALESCE(user.phone_number, ''), '\\D', '', 'g'), 10) = :phoneLast10",
+        { phoneLast10 },
+      );
 
-    if (cameraId) {
-      qb.andWhere('recording.cameraId = :cameraId', { cameraId });
+    if (cameraIdsForCourt && cameraIdsForCourt.length > 0) {
+      qb.andWhere('recording.cameraId IN (:...cameraIdsForCourt)', {
+        cameraIdsForCourt,
+      });
     }
 
     const matches = await qb.getMany();
@@ -2412,14 +2473,15 @@ export class RecordingService {
       return [];
     }
 
-    // For each match, ensure the requesting user has access
+    // Grant the requester access via SharedRecording. This makes the match
+    // visible on the requester's "My Recordings" / "Shared with me" lists but
+    // does NOT unlock paid playback — that is governed entirely by the
+    // PaymentEntity table.
     for (const match of matches) {
-      // If the requester is already the owner, skip
       if (match.userId === requestingUserId) {
         continue;
       }
 
-      // Check if already shared
       const existingShare = await this.sharedRecordingRepository.findOne({
         where: {
           recording_id: match.id,
