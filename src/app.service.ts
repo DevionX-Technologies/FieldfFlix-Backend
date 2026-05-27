@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 @Injectable()
 export class AppService {
-  private static readonly VERSION = '1.1';
+  private static readonly VERSION = '1.2';
 
   getHello(): string {
     const dateLabel = new Date().toLocaleDateString('en-GB', {
@@ -12,6 +12,7 @@ export class AppService {
       day: 'numeric',
       timeZone: 'Asia/Kolkata',
     });
-    return `Backend is live on ${dateLabel}, version ${AppService.VERSION}.`;
+    const stamp = new Date().toISOString();
+    return `FieldFlix API is up — ${dateLabel} IST — build ${AppService.VERSION} — ${stamp}.`;
   }
 }
