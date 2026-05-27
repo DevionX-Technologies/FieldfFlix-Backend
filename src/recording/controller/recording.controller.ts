@@ -31,7 +31,10 @@ import {
   ApiBody,
 } from '@nestjs/swagger';
 import { StartRecordingDto } from '../dto/start-recording.dto';
-import { FindAndClaimRecordingDto } from '../dto/find-claim-recording.dto';
+import {
+  FindAndClaimRecordingDto,
+  FindRecordingsDto,
+} from '../dto/find-claim-recording.dto';
 import { StopRecordingDto } from '../dto/stop-recording.dto';
 import { Recording } from '../entities/recording.entity';
 import { Public } from 'src/decorators/public.decorator';
@@ -946,5 +949,48 @@ export class RecordingController {
   ) {
     const { user_id } = await this.commonService.extractDataFromToken(req);
     return this.recordingService.findAndClaimRecording(dto, user_id);
+  }
+
+  /**
+   * Search for recordings matching the picked venue (and its alias turf
+   * UUIDs), court number, ±1h time window, and last-10-digit phone filter.
+   *
+   * Does NOT claim. The mobile client renders the result list, the user
+   * picks the recording that's actually theirs, and the FE then calls
+   * `POST /recording/claim/:recordingId` for that one.
+   */
+  @Post('find')
+  @ApiOperation({
+    summary:
+      'Search recordings by turf(s) + court number + time window + phone — no auto-claim',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Matched recordings returned',
+    type: [Recording],
+  })
+  async findRecordings(@Body(ValidationPipe) dto: FindRecordingsDto) {
+    return this.recordingService.findRecordings(dto);
+  }
+
+  /**
+   * Explicit per-recording claim. Creates a SharedRecording row so the
+   * recording shows up under the requester's My Recordings tab. Idempotent.
+   * Does not touch payment / unlock state.
+   */
+  @Post('claim/:recordingId')
+  @ApiOperation({
+    summary: 'Claim access to a specific recording found via /recording/find',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Claim result',
+  })
+  async claimRecording(
+    @Param('recordingId') recordingId: string,
+    @Req() req: Request,
+  ) {
+    const { user_id } = await this.commonService.extractDataFromToken(req);
+    return this.recordingService.claimRecording(recordingId, user_id);
   }
 }

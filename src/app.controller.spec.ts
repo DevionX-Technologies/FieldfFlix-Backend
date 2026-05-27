@@ -17,7 +17,7 @@ describe('AppController', () => {
   describe('root', () => {
     it('should return live date and version on root', () => {
       expect(appController.getHello()).toBe(
-        'FieldFlicks findmyphone is up, healthy, and accepting requests.',
+        'FieldFlicks venue-updation build is live — find-my-recording v2 (7-venue dedupe + court-number search) deployed.',
       );
     });
   });

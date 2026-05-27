@@ -11,7 +11,10 @@ import {
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, Not, QueryRunner, Repository } from 'typeorm';
 import { StartRecordingDto } from '../dto/start-recording.dto';
-import { FindAndClaimRecordingDto } from '../dto/find-claim-recording.dto';
+import {
+  FindAndClaimRecordingDto,
+  FindRecordingsDto,
+} from '../dto/find-claim-recording.dto';
 import { RaspberryPiApiService } from '../../raspberry-pi/raspberry-pi-api.service';
 import { Camera } from '../../camera/camera.entity';
 import { FileServiceService } from 'src/file-service/file-service.service';
@@ -2368,32 +2371,51 @@ export class RecordingService {
   }
 
   /**
-   * Find a recording by turf, optional camera (or its court_number), time
-   * window, and the creator's phone number. Grants the requesting user access
-   * via SharedRecording for every match.
+   * One-hour tolerance applied to BOTH ends of the user-supplied time window
+   * before overlap testing. Users rarely remember a start time more accurately
+   * than "around 5 PM", so a 4–6 PM window on input becomes a 3–7 PM search.
+   */
+  private readonly FIND_RECORDING_TIME_TOLERANCE_MS = 60 * 60 * 1000;
+
+  /**
+   * Build (and execute) the recording search used by both the new
+   * search-only `findRecordings` flow and the legacy `findAndClaim` path.
    *
    * Matching semantics:
-   *   - Turf must match exactly.
-   *   - Recording interval overlaps the requested window on the requested day
-   *     (full timestamp comparison — yesterday 3 PM never matches today 3 PM).
-   *   - Phone matches the last 10 digits exactly:
-   *       RIGHT(<digits-only phone>, 10) = :phoneLast10
-   *     Strips spaces, +, dashes etc. so "+91 98765 43210" matches "9876543210"
-   *     while a 7-digit suffix on a longer foreign number does not.
-   *   - When the requester selected a court (cameraId from the dropdown), we
-   *     expand the filter to every camera at the same venue that shares the
-   *     same `court_number`. Many venues run multiple cameras on the same
-   *     court; the recording could be on any of them.
-   *
-   * Payment lock is intentionally NOT touched here. Claiming only makes the
-   * recording visible. It stays locked until a completed PaymentEntity row
-   * exists (see PaymentRestrictionService.checkRecordingAccess).
+   *   - Recording must belong to ANY of the supplied `turfIds` (the picked
+   *     venue plus every duplicate-name alias).
+   *   - When `courtNumber` is given, the candidate cameras are every camera
+   *     at any of those turfs whose `court_number` equals the requested
+   *     number. The recording's `cameraId` must be in that set.
+   *   - Legacy clients without `courtNumber` may still pass a single
+   *     `cameraId`; we then expand it to every camera at the same venues
+   *     that shares its `court_number` (back-compat with the old DTO).
+   *   - Time window is padded by ±1h before overlap testing.
+   *   - Phone matches the last 10 digits exactly against the digits-only
+   *     phone number of the recording's creator.
    */
-  async findAndClaimRecording(
-    dto: FindAndClaimRecordingDto,
-    requestingUserId: string,
-  ): Promise<Recording[]> {
-    const { turfId, cameraId, date, startTime, endTime, phoneLast10 } = dto;
+  private async runRecordingSearch(args: {
+    turfIds: string[];
+    courtNumber?: number | null;
+    cameraId?: string | null;
+    date: string;
+    startTime: string;
+    endTime: string;
+    phoneLast10: string;
+  }): Promise<Recording[]> {
+    const {
+      turfIds,
+      courtNumber,
+      cameraId,
+      date,
+      startTime,
+      endTime,
+      phoneLast10,
+    } = args;
+
+    if (!Array.isArray(turfIds) || turfIds.length === 0) {
+      throw new BadRequestException('At least one turfId is required');
+    }
 
     const startTimestamp = new Date(`${date}T${startTime}:00`);
     const endTimestamp = new Date(`${date}T${endTime}:00`);
@@ -2405,42 +2427,61 @@ export class RecordingService {
       throw new BadRequestException('phoneLast10 must be exactly 10 digits');
     }
 
-    // If the user picked a court (cameraId), expand to every camera at the
-    // same venue with the same `court_number` so we don't miss recordings
-    // captured by a sibling camera on the same physical court.
-    let cameraIdsForCourt: string[] | null = null;
-    if (cameraId) {
+    const tol = this.FIND_RECORDING_TIME_TOLERANCE_MS;
+    const paddedStart = new Date(startTimestamp.getTime() - tol);
+    const paddedEnd = new Date(endTimestamp.getTime() + tol);
+
+    // Resolve the set of cameraIds to filter by.
+    //   - If courtNumber given → every camera at any of `turfIds` with that
+    //     court_number.
+    //   - Else if legacy cameraId given → expand to siblings sharing the
+    //     same court_number at any of `turfIds`.
+    //   - Else → no camera filter (match any camera at the venues).
+    let cameraIdsFilter: string[] | null = null;
+    const cameraRepo =
+      this.recordingRepository.manager.getRepository('cameras');
+
+    if (courtNumber != null) {
+      const cams = await cameraRepo
+        .createQueryBuilder('cam')
+        .where('cam.turfId IN (:...turfIds)', { turfIds })
+        .andWhere('cam.court_number = :courtNumber', { courtNumber })
+        .getMany()
+        .catch(() => [] as any[]);
+      cameraIdsFilter = cams.map((c: any) => String(c.id)).filter((id) => !!id);
+      if (cameraIdsFilter.length === 0) {
+        // No camera at any alias turf has that court_number → no matches
+        // can exist. Short-circuit so we don't run the recordings query.
+        return [];
+      }
+    } else if (cameraId) {
       try {
-        const cameraRepo =
-          this.recordingRepository.manager.getRepository('cameras');
         const picked = await cameraRepo
           .createQueryBuilder('cam')
           .where('cam.id = :cameraId', { cameraId })
           .getOne();
-
-        const courtNumber =
+        const cn =
           picked && (picked as any).court_number != null
             ? (picked as any).court_number
             : null;
-
-        if (courtNumber != null) {
+        if (cn != null) {
           const siblings = await cameraRepo
             .createQueryBuilder('cam')
-            .where('cam.turfId = :turfId', { turfId })
-            .andWhere('cam.court_number = :courtNumber', { courtNumber })
+            .where('cam.turfId IN (:...turfIds)', { turfIds })
+            .andWhere('cam.court_number = :cn', { cn })
             .getMany();
           const ids = siblings
             .map((c: any) => String(c.id))
             .filter((id) => !!id);
-          cameraIdsForCourt = ids.length > 0 ? ids : [cameraId];
+          cameraIdsFilter = ids.length > 0 ? ids : [cameraId];
         } else {
-          cameraIdsForCourt = [cameraId];
+          cameraIdsFilter = [cameraId];
         }
       } catch (err) {
         this.logger?.warn?.(
-          `findAndClaimRecording: could not expand cameraId ${cameraId} to siblings (${(err as Error)?.message}); falling back to exact match`,
+          `runRecordingSearch: could not expand cameraId ${cameraId} (${(err as Error)?.message})`,
         );
-        cameraIdsForCourt = [cameraId];
+        cameraIdsFilter = [cameraId];
       }
     }
 
@@ -2449,46 +2490,130 @@ export class RecordingService {
       .leftJoinAndSelect('recording.user', 'user')
       .leftJoinAndSelect('recording.turf', 'turf')
       .leftJoinAndSelect('recording.camera', 'camera')
-      .where('recording.turfId = :turfId', { turfId })
-      .andWhere('recording.startTime < :endTimestamp', { endTimestamp })
+      .where('recording.turfId IN (:...turfIds)', { turfIds })
+      .andWhere('recording.startTime < :paddedEnd', { paddedEnd })
       .andWhere(
-        '(recording.endTime IS NULL OR recording.endTime > :startTimestamp)',
-        { startTimestamp },
+        '(recording.endTime IS NULL OR recording.endTime > :paddedStart)',
+        { paddedStart },
       )
-      // Exact-last-10-digits match against the digits-only phone number.
       .andWhere(
         "RIGHT(REGEXP_REPLACE(COALESCE(user.phone_number, ''), '\\D', '', 'g'), 10) = :phoneLast10",
         { phoneLast10 },
       );
 
-    if (cameraIdsForCourt && cameraIdsForCourt.length > 0) {
-      qb.andWhere('recording.cameraId IN (:...cameraIdsForCourt)', {
-        cameraIdsForCourt,
+    if (cameraIdsFilter && cameraIdsFilter.length > 0) {
+      qb.andWhere('recording.cameraId IN (:...cameraIdsFilter)', {
+        cameraIdsFilter,
       });
     }
 
-    const matches = await qb.getMany();
+    return qb.getMany();
+  }
 
-    if (matches.length === 0) {
-      return [];
+  /**
+   * Search-only endpoint backing `POST /recording/find`.
+   *
+   * Returns every recording matching the venue (and its alias turfs), the
+   * picked court number, a ±1h time window, and the last-10-digit phone
+   * filter. Does NOT create a SharedRecording row — the requester picks one
+   * from the result list and explicitly claims it via `POST
+   * /recording/claim/:recordingId`.
+   */
+  async findRecordings(dto: FindRecordingsDto): Promise<Recording[]> {
+    return this.runRecordingSearch({
+      turfIds: dto.turfIds,
+      courtNumber: dto.courtNumber ?? null,
+      cameraId: dto.cameraId ?? null,
+      date: dto.date,
+      startTime: dto.startTime,
+      endTime: dto.endTime,
+      phoneLast10: dto.phoneLast10,
+    });
+  }
+
+  /**
+   * Explicit per-recording claim — backing `POST /recording/claim/:id`.
+   *
+   * Creates a SharedRecording row so the recording appears in the requester's
+   * "My Recordings" / "Shared with me" lists. Idempotent — re-claiming is a
+   * no-op. Payment lock is NOT touched here: claim only makes the recording
+   * visible. Whether playback is unlocked is governed exclusively by
+   * PaymentRestrictionService (group-unlock semantics).
+   */
+  async claimRecording(
+    recordingId: string,
+    requestingUserId: string,
+  ): Promise<{ claimed: boolean; reason: string; recording: Recording }> {
+    if (!recordingId) {
+      throw new BadRequestException('recordingId is required');
+    }
+    const recording = await this.recordingRepository.findOne({
+      where: { id: recordingId },
+      relations: ['user', 'turf', 'camera'],
+    });
+    if (!recording) {
+      throw new NotFoundException('Recording not found');
     }
 
-    // Grant the requester access via SharedRecording. This makes the match
-    // visible on the requester's "My Recordings" / "Shared with me" lists but
-    // does NOT unlock paid playback — that is governed entirely by the
-    // PaymentEntity table.
-    for (const match of matches) {
-      if (match.userId === requestingUserId) {
-        continue;
-      }
+    if (recording.userId === requestingUserId) {
+      return {
+        claimed: true,
+        reason: 'Requester already owns this recording',
+        recording,
+      };
+    }
 
+    const existingShare = await this.sharedRecordingRepository.findOne({
+      where: {
+        recording_id: recording.id,
+        shared_with_user_id: requestingUserId,
+      },
+    });
+    if (existingShare) {
+      return {
+        claimed: true,
+        reason: 'Already shared with this user',
+        recording,
+      };
+    }
+
+    const share = this.sharedRecordingRepository.create({
+      recording_id: recording.id,
+      shared_with_user_id: requestingUserId,
+    });
+    await this.sharedRecordingRepository.save(share);
+
+    return { claimed: true, reason: 'Shared with user', recording };
+  }
+
+  /**
+   * Legacy combined search-and-auto-claim. Kept for backward compatibility
+   * with older mobile builds. New clients use `findRecordings` + an explicit
+   * `claimRecording` so the user picks the right match before it's claimed.
+   */
+  async findAndClaimRecording(
+    dto: FindAndClaimRecordingDto,
+    requestingUserId: string,
+  ): Promise<Recording[]> {
+    const matches = await this.runRecordingSearch({
+      turfIds: [dto.turfId],
+      courtNumber: null,
+      cameraId: dto.cameraId ?? null,
+      date: dto.date,
+      startTime: dto.startTime,
+      endTime: dto.endTime,
+      phoneLast10: dto.phoneLast10,
+    });
+    if (matches.length === 0) return [];
+
+    for (const match of matches) {
+      if (match.userId === requestingUserId) continue;
       const existingShare = await this.sharedRecordingRepository.findOne({
         where: {
           recording_id: match.id,
           shared_with_user_id: requestingUserId,
         },
       });
-
       if (!existingShare) {
         const share = this.sharedRecordingRepository.create({
           recording_id: match.id,
@@ -2497,7 +2622,6 @@ export class RecordingService {
         await this.sharedRecordingRepository.save(share);
       }
     }
-
     return matches;
   }
 }
