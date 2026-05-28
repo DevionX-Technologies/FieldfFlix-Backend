@@ -61,30 +61,6 @@ import { PaymentRestrictionService } from 'src/payment/payment-restriction.servi
 @Injectable()
 export class RecordingService {
   private readonly logger = new Logger(RecordingService.name);
-  /** `recordings.startTime/endTime` are stored as IST wall-clock in `timestamp without time zone`. */
-  private static readonly IST_OFFSET_MS = 5.5 * 60 * 60 * 1000;
-
-  /**
-   * Normalize a DB timestamp-without-timezone value that represents IST wall-clock
-   * into a stable UTC `Date`, independent of server timezone.
-   */
-  private normalizeIstTimestamp(
-    value: Date | string | null | undefined,
-  ): Date | null {
-    if (!value) return null;
-    const d = value instanceof Date ? value : new Date(value);
-    if (Number.isNaN(d.getTime())) return null;
-    const wallClockAsUtc = Date.UTC(
-      d.getFullYear(),
-      d.getMonth(),
-      d.getDate(),
-      d.getHours(),
-      d.getMinutes(),
-      d.getSeconds(),
-      d.getMilliseconds(),
-    );
-    return new Date(wallClockAsUtc - RecordingService.IST_OFFSET_MS);
-  }
   private readonly lambdaClient: LambdaClient;
 
   /** If `in_progress` is older than this, it is treated as abandoned (app crash / no stop) and cleared. */
@@ -709,11 +685,6 @@ export class RecordingService {
       }
     }
 
-    const normalizedStart = this.normalizeIstTimestamp(recording.startTime);
-    const normalizedEnd = this.normalizeIstTimestamp(recording.endTime);
-    if (normalizedStart) (recording as any).startTime = normalizedStart;
-    (recording as any).endTime = normalizedEnd;
-
     return recording;
   }
 
@@ -1241,11 +1212,6 @@ export class RecordingService {
         // Add payment info to recording
         (recording as any).payment = paymentInfo;
 
-        const normalizedStart = this.normalizeIstTimestamp(recording.startTime);
-        const normalizedEnd = this.normalizeIstTimestamp(recording.endTime);
-        if (normalizedStart) (recording as any).startTime = normalizedStart;
-        (recording as any).endTime = normalizedEnd;
-
         // Also, filter out failed highlights from recording.recordingHighlights if present
         if (Array.isArray((recording as any).recordingHighlights)) {
           (recording as any).recordingHighlights = (
@@ -1423,8 +1389,8 @@ export class RecordingService {
             owner_phone: owner?.phone_number || '',
             turfId: recording.turfId || null,
             turf_detail: turfDetail,
-            startTime: this.normalizeIstTimestamp(recording.startTime),
-            endTime: this.normalizeIstTimestamp(recording.endTime),
+            startTime: recording.startTime,
+            endTime: recording.endTime || null,
             s3Path: presignedS3Path,
             status: recording.status,
             mux_asset_id: recording.mux_asset_id || null,
@@ -1565,8 +1531,8 @@ export class RecordingService {
             owner_name: owner?.name || '',
             turfId: recording.turfId || null,
             turf_detail: turfDetail,
-            startTime: this.normalizeIstTimestamp(recording.startTime),
-            endTime: this.normalizeIstTimestamp(recording.endTime),
+            startTime: recording.startTime,
+            endTime: recording.endTime || null,
             s3Path: presignedS3Path,
             status: recording.status,
             mux_asset_id: recording.mux_asset_id || null,
@@ -1646,8 +1612,8 @@ export class RecordingService {
       mux_playback_id: recording.mux_playback_id ?? null,
       mux_media_url: recording.mux_media_url ?? null,
       duration_seconds: durationSeconds,
-      start_time: this.normalizeIstTimestamp(recording.startTime),
-      end_time: this.normalizeIstTimestamp(recording.endTime),
+      start_time: recording.startTime ?? null,
+      end_time: recording.endTime ?? null,
       turf_name: recording.turf?.name ?? null,
       owner_name:
         (recording as any)?.user?.name ??
