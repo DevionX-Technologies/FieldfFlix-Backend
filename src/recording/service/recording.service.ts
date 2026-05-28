@@ -2404,8 +2404,10 @@ export class RecordingService {
       throw new BadRequestException('At least one turfId is required');
     }
 
-    const startTimestamp = new Date(`${date}T${startTime}:00`);
-    const endTimestamp = new Date(`${date}T${endTime}:00`);
+    // Mobile sends local venue date/time (IST). Parse with explicit offset so
+    // server timezone differences cannot shift the search window.
+    const startTimestamp = new Date(`${date}T${startTime}:00+05:30`);
+    const endTimestamp = new Date(`${date}T${endTime}:00+05:30`);
 
     if (isNaN(startTimestamp.getTime()) || isNaN(endTimestamp.getTime())) {
       throw new BadRequestException('Invalid date or time format');
@@ -2418,12 +2420,17 @@ export class RecordingService {
     const paddedStart = new Date(startTimestamp.getTime() - tol);
     const paddedEnd = new Date(endTimestamp.getTime() + tol);
 
+    if (paddedEnd <= paddedStart) {
+      throw new BadRequestException('endTime must be after startTime');
+    }
+
     const qb = this.recordingRepository
       .createQueryBuilder('recording')
       .leftJoinAndSelect('recording.user', 'user')
       .leftJoinAndSelect('recording.turf', 'turf')
       .leftJoinAndSelect('recording.camera', 'camera')
       .where('recording.turfId IN (:...turfIds)', { turfIds })
+      .andWhere('recording.startTime >= :paddedStart', { paddedStart })
       .andWhere('recording.startTime < :paddedEnd', { paddedEnd })
       .andWhere(
         '(recording.endTime IS NULL OR recording.endTime > :paddedStart)',
