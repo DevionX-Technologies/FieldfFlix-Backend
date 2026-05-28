@@ -10,6 +10,16 @@ WORKDIR /usr/src/app
 # Add cache-busting argument
 ARG CACHEBUST=1
 
+# Build provenance — populated from GitHub Actions via --build-arg. These end
+# up baked into the image as env vars and are surfaced by GET / so anyone can
+# tell which commit + build time is actually live in ECS.
+ARG BUILD_SHA=unknown
+ARG BUILD_TIME=unknown
+ARG BUILD_REF=unknown
+ENV BUILD_SHA=$BUILD_SHA
+ENV BUILD_TIME=$BUILD_TIME
+ENV BUILD_REF=$BUILD_REF
+
 # Copy the package.json and package-lock.json (if available)
 COPY package*.json ./
 

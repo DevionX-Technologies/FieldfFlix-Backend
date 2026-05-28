@@ -2384,34 +2384,21 @@ export class RecordingService {
    * Matching semantics:
    *   - Recording must belong to ANY of the supplied `turfIds` (the picked
    *     venue plus every duplicate-name alias).
-   *   - When `courtNumber` is given, the candidate cameras are every camera
-   *     at any of those turfs whose `court_number` equals the requested
-   *     number. The recording's `cameraId` must be in that set.
-   *   - Legacy clients without `courtNumber` may still pass a single
-   *     `cameraId`; we then expand it to every camera at the same venues
-   *     that shares its `court_number` (back-compat with the old DTO).
+   *   - Court / camera are intentionally ignored for matching (UX request:
+   *     "search by arena + time + phone only"), so all cameras at the venue
+   *     are eligible.
    *   - Time window is padded by ±1h before overlap testing.
    *   - Phone matches the last 10 digits exactly against the digits-only
    *     phone number of the recording's creator.
    */
   private async runRecordingSearch(args: {
     turfIds: string[];
-    courtNumber?: number | null;
-    cameraId?: string | null;
     date: string;
     startTime: string;
     endTime: string;
     phoneLast10: string;
   }): Promise<Recording[]> {
-    const {
-      turfIds,
-      courtNumber,
-      cameraId,
-      date,
-      startTime,
-      endTime,
-      phoneLast10,
-    } = args;
+    const { turfIds, date, startTime, endTime, phoneLast10 } = args;
 
     if (!Array.isArray(turfIds) || turfIds.length === 0) {
       throw new BadRequestException('At least one turfId is required');
@@ -2431,60 +2418,6 @@ export class RecordingService {
     const paddedStart = new Date(startTimestamp.getTime() - tol);
     const paddedEnd = new Date(endTimestamp.getTime() + tol);
 
-    // Resolve the set of cameraIds to filter by.
-    //   - If courtNumber given → every camera at any of `turfIds` with that
-    //     court_number.
-    //   - Else if legacy cameraId given → expand to siblings sharing the
-    //     same court_number at any of `turfIds`.
-    //   - Else → no camera filter (match any camera at the venues).
-    let cameraIdsFilter: string[] | null = null;
-    const cameraRepo =
-      this.recordingRepository.manager.getRepository('cameras');
-
-    if (courtNumber != null) {
-      const cams = await cameraRepo
-        .createQueryBuilder('cam')
-        .where('cam.turfId IN (:...turfIds)', { turfIds })
-        .andWhere('cam.court_number = :courtNumber', { courtNumber })
-        .getMany()
-        .catch(() => [] as any[]);
-      cameraIdsFilter = cams.map((c: any) => String(c.id)).filter((id) => !!id);
-      if (cameraIdsFilter.length === 0) {
-        // No camera at any alias turf has that court_number → no matches
-        // can exist. Short-circuit so we don't run the recordings query.
-        return [];
-      }
-    } else if (cameraId) {
-      try {
-        const picked = await cameraRepo
-          .createQueryBuilder('cam')
-          .where('cam.id = :cameraId', { cameraId })
-          .getOne();
-        const cn =
-          picked && (picked as any).court_number != null
-            ? (picked as any).court_number
-            : null;
-        if (cn != null) {
-          const siblings = await cameraRepo
-            .createQueryBuilder('cam')
-            .where('cam.turfId IN (:...turfIds)', { turfIds })
-            .andWhere('cam.court_number = :cn', { cn })
-            .getMany();
-          const ids = siblings
-            .map((c: any) => String(c.id))
-            .filter((id) => !!id);
-          cameraIdsFilter = ids.length > 0 ? ids : [cameraId];
-        } else {
-          cameraIdsFilter = [cameraId];
-        }
-      } catch (err) {
-        this.logger?.warn?.(
-          `runRecordingSearch: could not expand cameraId ${cameraId} (${(err as Error)?.message})`,
-        );
-        cameraIdsFilter = [cameraId];
-      }
-    }
-
     const qb = this.recordingRepository
       .createQueryBuilder('recording')
       .leftJoinAndSelect('recording.user', 'user')
@@ -2501,12 +2434,6 @@ export class RecordingService {
         { phoneLast10 },
       );
 
-    if (cameraIdsFilter && cameraIdsFilter.length > 0) {
-      qb.andWhere('recording.cameraId IN (:...cameraIdsFilter)', {
-        cameraIdsFilter,
-      });
-    }
-
     return qb.getMany();
   }
 
@@ -2522,8 +2449,6 @@ export class RecordingService {
   async findRecordings(dto: FindRecordingsDto): Promise<Recording[]> {
     return this.runRecordingSearch({
       turfIds: dto.turfIds,
-      courtNumber: dto.courtNumber ?? null,
-      cameraId: dto.cameraId ?? null,
       date: dto.date,
       startTime: dto.startTime,
       endTime: dto.endTime,
@@ -2597,8 +2522,6 @@ export class RecordingService {
   ): Promise<Recording[]> {
     const matches = await this.runRecordingSearch({
       turfIds: [dto.turfId],
-      courtNumber: null,
-      cameraId: dto.cameraId ?? null,
       date: dto.date,
       startTime: dto.startTime,
       endTime: dto.endTime,
