@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 @Injectable()
 export class AppService {
-  private static readonly VERSION = '1.6';
+  private static readonly VERSION = '1.7';
   /** Captured once when the process boots — represents container start time. */
   private static readonly BOOTED_AT = new Date().toISOString();
 
@@ -23,7 +23,7 @@ export class AppService {
     const buildTime = String(process.env.BUILD_TIME ?? 'unknown');
     const ref = String(process.env.BUILD_REF ?? 'unknown');
     return [
-      'FieldFlicks backend update is live — Find My Recording now enforces date/time (+/-1h buffer) with strict phone matching.',
+      'FieldFlicks backend update is live — timestamp alignment fixed and Find My Recording uses strict date/time (+/-1h) and phone filters.',
       `version=${AppService.VERSION}`,
       `sha=${shortSha}`,
       `built=${buildTime}`,
