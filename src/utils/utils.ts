@@ -1,6 +1,11 @@
 import { jwtDecode } from 'jwt-decode';
 import { UnauthorizedException } from '@nestjs/common';
-import { HOURLY_RATE } from 'src/constant/constant';
+import {
+  HALF_HOUR_SEC,
+  recordingUnlockBaseInr,
+  parsePlannedDurationSecFromMetadata,
+  type RecordingUnlockSport,
+} from 'src/utils/recording-pricing';
 
 export function extractDataFromToken(token: string): any {
   try {
@@ -75,11 +80,21 @@ export function parseRelativeTimestampToSeconds(
 
 export function calculatePaymentAmountFromDuration(
   durationInSeconds: number,
+  tier: RecordingUnlockSport = 'pickleball',
 ): number {
-  // Round up to the nearest hour block, then multiply by hourly rate
-  // e.g., 1-3600s = 1 hour = 240, 3601-7200s = 2 hours = 480
-  const hours = Math.ceil(durationInSeconds / 3600);
-  return hours * HOURLY_RATE;
+  return recordingUnlockTotalInr(
+    recordingUnlockBaseInr(tier, durationInSeconds),
+  );
+}
+
+/** Pre-tax unlock base from recording metadata (sport + planned timer). */
+export function recordingUnlockBaseFromRecording(
+  metadata: unknown,
+  tier: RecordingUnlockSport,
+): number {
+  const plannedSec =
+    parsePlannedDurationSecFromMetadata(metadata) ?? HALF_HOUR_SEC;
+  return recordingUnlockBaseInr(tier, plannedSec);
 }
 
 /**

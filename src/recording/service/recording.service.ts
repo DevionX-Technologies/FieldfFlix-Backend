@@ -36,10 +36,14 @@ import {
   PaymentEntity,
 } from 'src/payment/entities/payment.entity';
 import { deriveFlickSportFromTurf } from 'src/common/turf-flick-sport.util';
+import { formatDurationToHHMMSS } from 'src/utils/utils';
 import {
-  calculatePaymentAmountFromDuration,
-  formatDurationToHHMMSS,
-} from 'src/utils/utils';
+  HALF_HOUR_SEC,
+  recordingUnlockBaseInr,
+  recordingUnlockTotalInr,
+  parsePlannedDurationSecFromMetadata,
+  resolveUnlockTierFromRecording,
+} from 'src/utils/recording-pricing';
 import {
   HIGHLIGHT_STATUS,
   HOURLY_RATE,
@@ -1102,10 +1106,16 @@ export class RecordingService {
     const recordingsWithPayment = await Promise.all(
       recordings.map(async (recording) => {
         let gameDuration = formatDurationToHHMMSS(0);
+        const unlockTier = resolveUnlockTierFromRecording(recording);
+        const plannedSec =
+          parsePlannedDurationSecFromMetadata(recording.metadata) ??
+          HALF_HOUR_SEC;
+        const unlockBase = recordingUnlockBaseInr(unlockTier, plannedSec);
+        const unlockTotal = recordingUnlockTotalInr(unlockBase);
         const paymentInfo: any = {
           status: PaymentStatus.PENDING,
-          payment_amount: HOURLY_RATE,
-          base_amount: HOURLY_RATE,
+          payment_amount: unlockTotal,
+          base_amount: unlockBase,
           game_duration: gameDuration,
         };
 
@@ -1150,11 +1160,6 @@ export class RecordingService {
         if (assetDetails && assetDetails.duration) {
           gameDuration = formatDurationToHHMMSS(assetDetails.duration);
           paymentInfo.game_duration = gameDuration;
-
-          // Calculate payment amount based on duration
-          paymentInfo.payment_amount = calculatePaymentAmountFromDuration(
-            assetDetails.duration,
-          );
         }
 
         // Treat Mux as the source of truth for "is the asset playable yet?"

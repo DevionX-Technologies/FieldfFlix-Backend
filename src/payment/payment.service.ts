@@ -25,12 +25,15 @@ import { SharedRecording } from '../recording/entities/shared-recording.entity';
 import { Request } from 'express';
 import { randomUUID } from 'crypto';
 import { CommonService } from 'src/common/service/common.service';
+import { HOURLY_RATE } from 'src/constant/constant';
 import {
-  HOURLY_RATE,
+  HALF_HOUR_SEC,
   RECORDING_UNLOCK_BASE_INR,
-  RECORDING_UNLOCK_GST_RATE,
-} from 'src/constant/constant';
-import { ESportsSupported } from 'src/turfs/enum/turfs.enum';
+  recordingUnlockBaseInr,
+  recordingUnlockTotalInr,
+  parsePlannedDurationSecFromMetadata,
+  resolveUnlockTierFromRecording,
+} from 'src/utils/recording-pricing';
 /**
  * Payment service for handling payment operations
  */
@@ -60,37 +63,11 @@ export class PaymentService {
     base: number;
     total: number;
   } {
-    let tier: keyof typeof RECORDING_UNLOCK_BASE_INR = 'pickleball';
-    const meta = recording.metadata;
-    const sessionSport =
-      meta && typeof meta === 'object' && 'fieldflix_session_sport' in meta
-        ? (meta as { fieldflix_session_sport?: string }).fieldflix_session_sport
-        : null;
-    if (
-      sessionSport === 'cricket' ||
-      sessionSport === 'pickleball' ||
-      sessionSport === 'padel'
-    ) {
-      tier = sessionSport as keyof typeof RECORDING_UNLOCK_BASE_INR;
-    } else {
-      const sp = recording.turf?.sports_supported ?? [];
-      const hasCricket = sp.includes(ESportsSupported.CRICKET);
-      const hasPickle = sp.some(
-        (x) =>
-          x === ESportsSupported.PICKLEBALL || x === ESportsSupported.PICKLE,
-      );
-      const hasPaddle = sp.includes(ESportsSupported.PADDLE);
-      const n = Number(hasCricket) + Number(hasPickle) + Number(hasPaddle);
-      if (n === 1) {
-        if (hasCricket) tier = 'cricket';
-        else if (hasPaddle) tier = 'padel';
-        else if (hasPickle) tier = 'pickleball';
-      }
-    }
-
-    const base = RECORDING_UNLOCK_BASE_INR[tier];
-    const total =
-      base <= 0 ? 0 : Math.round(base * (1 + RECORDING_UNLOCK_GST_RATE));
+    const tier = resolveUnlockTierFromRecording(recording);
+    const plannedSec =
+      parsePlannedDurationSecFromMetadata(recording.metadata) ?? HALF_HOUR_SEC;
+    const base = recordingUnlockBaseInr(tier, plannedSec);
+    const total = recordingUnlockTotalInr(base);
     return { tier, base, total };
   }
 
