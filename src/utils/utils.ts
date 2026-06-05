@@ -3,6 +3,7 @@ import { UnauthorizedException } from '@nestjs/common';
 import {
   HALF_HOUR_SEC,
   recordingUnlockBaseInr,
+  recordingUnlockTotalInr,
   parsePlannedDurationSecFromMetadata,
   type RecordingUnlockSport,
 } from 'src/utils/recording-pricing';
