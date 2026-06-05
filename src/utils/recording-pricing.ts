@@ -17,11 +17,11 @@ export type RecordingUnlockSport = keyof typeof SPORT_HOURLY_RATE_INR;
 
 export const HALF_HOUR_SEC = 30 * 60;
 
-/** @deprecated Use sport + duration helpers — 30-min minimum base for legacy imports. */
+/** Pre-GST price for one 30-min block (cricket unlock free for now). */
 export const RECORDING_UNLOCK_BASE_INR = {
   cricket: 0,
-  pickleball: SPORT_HOURLY_RATE_INR.pickleball,
-  padel: SPORT_HOURLY_RATE_INR.padel,
+  pickleball: SPORT_HOURLY_RATE_INR.pickleball / 2,
+  padel: SPORT_HOURLY_RATE_INR.padel / 2,
 } as const;
 
 export function halfHourBlocksFromDuration(plannedDurationSec: number): number {
@@ -35,10 +35,9 @@ export function recordingUnlockBaseInr(
   plannedDurationSec: number,
 ): number {
   if (tier === 'cricket') return 0;
-  const hourly = SPORT_HOURLY_RATE_INR[tier];
+  const halfHourRate = SPORT_HOURLY_RATE_INR[tier] / 2;
   const blocks = halfHourBlocksFromDuration(plannedDurationSec);
-  const incrementPerHalfHour = hourly / 2;
-  return Math.round(hourly + (blocks - 1) * incrementPerHalfHour);
+  return Math.round(blocks * halfHourRate);
 }
 
 export function recordingUnlockTotalInr(base: number): number {
