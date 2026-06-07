@@ -20,7 +20,7 @@ describe('AppController', () => {
       // Includes the build-provenance suffix injected at boot, so match by
       // prefix rather than equality. CI builds always populate BUILD_SHA via
       // --build-arg; local dev sees `sha=unknown`.
-      expect(out).toMatch(/^payment updated/);
+      expect(out).toMatch(/^qr modifications/);
       expect(out).toContain('version=');
       expect(out).toContain('sha=');
       expect(out).toContain('built=');

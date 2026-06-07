@@ -27,6 +27,7 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from 'src/auth/guards/jwt-auth.guard';
+import { Public } from 'src/decorators/public.decorator';
 
 /**
  * Controller for managing Camera resources.
@@ -110,22 +111,29 @@ export class CameraController {
   }
 
   /**
-   * Get a camera by ID.
-   * @param id - The ID of the camera.
-   * @returns The camera entity.
-   * @throws NotFoundException if the camera is not found.
+   * Get a camera by ID. Public so the web QR-scan flow (which runs without
+   * a JWT) can resolve the DB-backed `court_number` directly from the QR's
+   * `cameraId`. Only exposes the safe fields — no Pi base URL etc.
    */
+  @Public()
   @Get(':id')
-  @ApiOperation({ summary: 'Get a camera by ID' })
+  @ApiOperation({ summary: 'Get a camera by ID (public, scoped fields)' })
   @ApiParam({ name: 'id', description: 'ID of the camera to retrieve' })
   @ApiResponse({
     status: 200,
-    description: 'Returns the camera with the specified ID.',
+    description:
+      'Returns id, name, turfId, and court_number for the camera. Safe to call without auth.',
     type: Camera,
   })
   @ApiResponse({ status: 404, description: 'Camera not found.' })
-  findOne(@Param('id') id: string): Promise<Camera> {
-    return this.cameraService.findOne(id);
+  async findOne(@Param('id') id: string): Promise<Partial<Camera>> {
+    const cam = await this.cameraService.findOne(id);
+    return {
+      id: cam.id,
+      name: cam.name,
+      turfId: cam.turfId,
+      court_number: cam.court_number,
+    };
   }
 
   /**

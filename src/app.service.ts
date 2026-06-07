@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 @Injectable()
 export class AppService {
-  private static readonly VERSION = '1.9';
+  private static readonly VERSION = '2.0';
   /** Captured once when the process boots — represents container start time. */
   private static readonly BOOTED_AT = new Date().toISOString();
 
@@ -23,7 +23,7 @@ export class AppService {
     const buildTime = String(process.env.BUILD_TIME ?? 'unknown');
     const ref = String(process.env.BUILD_REF ?? 'unknown');
     return [
-      'payment updated',
+      'qr modifications',
       `version=${AppService.VERSION}`,
       `sha=${shortSha}`,
       `built=${buildTime}`,
