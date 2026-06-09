@@ -10,6 +10,8 @@ import { SharedRecording } from '../recording/entities/shared-recording.entity';
 import { MediaUploadEntity } from '../media-upload/entities/media-upload.entity';
 import { RecordingHighlights } from '../recording/entities/recording-highlights.entity';
 import { CommonModule } from '../common/common.module';
+import { PointsModule } from '../points/points.module';
+import { CouponsModule } from '../coupons/coupons.module';
 
 /**
  * Payment module for handling payment operations
@@ -25,6 +27,8 @@ import { CommonModule } from '../common/common.module';
       RecordingHighlights,
     ]),
     CommonModule,
+    PointsModule,
+    CouponsModule,
   ],
   controllers: [PaymentController],
   providers: [PaymentService, PaymentRestrictionService],

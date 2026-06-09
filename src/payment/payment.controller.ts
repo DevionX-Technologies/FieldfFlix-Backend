@@ -299,11 +299,13 @@ export class PaymentController {
   async createRecordingPaymentOrder(
     @Request() req: any,
     @Param('recordingId') recordingId: string,
+    @Body() body?: { couponCode?: string },
   ) {
     try {
       return await this.paymentService.createPaymentOrderForRecording(
         req,
         recordingId,
+        body?.couponCode ?? null,
       );
     } catch (error) {
       if (error instanceof HttpException) {

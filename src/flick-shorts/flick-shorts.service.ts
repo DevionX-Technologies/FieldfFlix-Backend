@@ -18,7 +18,11 @@ import { FlickShort, FlickShortComment } from './entities/flick-short.entity';
 import {
   CreateFlickShortDto,
   FlickShortCommentBodyDto,
+  SubmitHighlightAsFlickShortDto,
 } from './dto/flick-short.dto';
+import { PointsService } from 'src/points/points.service';
+import { PointEventType } from 'src/points/entities/point-event.entity';
+import { RecordingHighlights } from 'src/recording/entities/recording-highlights.entity';
 
 export type FlickShortPublicDto = {
   id: string;
@@ -68,8 +72,11 @@ export class FlickShortsService {
     private readonly flickRepo: Repository<FlickShort>,
     @InjectRepository(Recording)
     private readonly recordingRepo: Repository<Recording>,
+    @InjectRepository(RecordingHighlights)
+    private readonly highlightsRepo: Repository<RecordingHighlights>,
     private readonly userService: UserService,
     private readonly adminRole: AdminRoleService,
+    private readonly pointsService: PointsService,
   ) {}
 
   private toPublic(
@@ -183,6 +190,100 @@ export class FlickShortsService {
     return { ok: true };
   }
 
+  /**
+   * User-facing flow: take an existing highlight and submit it as a candidate
+   * FlickShort. The returned row starts UNAPPROVED — admin must hit
+   * `PATCH /flick-shorts/:id/approve` before it appears in the public feed.
+   *
+   * Permissions: caller must own the parent recording. (Sharing access does
+   * NOT grant submission rights.)
+   *
+   * Clip window:
+   *   - Sport-locked vertical (9:16) — the mobile player overlays black bars
+   *     above and below, with the video centered. Same as every other
+   *     short in the feed.
+   *   - Computes `startSec` as `(highlight.button_click_timestamp -
+   *     recording.startTime)` in seconds, then backs up by `preRollSec`
+   *     (default 7) so the moment isn't right at the start of the clip.
+   *   - `endSec = startSec + FLICK_SHORT_MAX_SEC`. Clipped to >= 0.
+   *
+   * Idempotency: NOT enforced here on purpose — the user might want to submit
+   * the same highlight twice with different copy. The admin queue is where
+   * duplicates get pruned.
+   */
+  async createFromHighlight(
+    userId: string,
+    highlightId: string,
+    dto: SubmitHighlightAsFlickShortDto,
+  ): Promise<FlickShortPublicDto> {
+    if (!userId) throw new ForbiddenException();
+
+    const highlight = await this.highlightsRepo.findOne({
+      where: { id: highlightId },
+    });
+    if (!highlight) throw new NotFoundException('Highlight not found');
+
+    const rec = await this.recordingRepo.findOne({
+      where: { id: highlight.recordingId },
+      relations: ['turf'],
+    });
+    if (!rec) throw new NotFoundException('Recording not found');
+    if (!rec.mux_playback_id) {
+      throw new BadRequestException(
+        'Recording is not ready for streaming yet — try again after it processes',
+      );
+    }
+    if (rec.userId !== userId) {
+      throw new ForbiddenException(
+        'Only the recording owner can submit its highlights as FlickShorts',
+      );
+    }
+
+    const recordingStartMs = rec.startTime
+      ? new Date(rec.startTime).getTime()
+      : null;
+    const clickMs = highlight.button_click_timestamp
+      ? new Date(highlight.button_click_timestamp).getTime()
+      : null;
+    let clickOffsetSec = 0;
+    if (
+      recordingStartMs != null &&
+      clickMs != null &&
+      clickMs >= recordingStartMs
+    ) {
+      clickOffsetSec = Math.floor((clickMs - recordingStartMs) / 1000);
+    }
+
+    const preRoll = Math.max(
+      0,
+      Math.min(FLICK_SHORT_MAX_SEC - 1, dto.preRollSec ?? 7),
+    );
+    const startSec = Math.max(0, clickOffsetSec - preRoll);
+    const endSec = startSec + FLICK_SHORT_MAX_SEC;
+
+    const sport = deriveFlickSportFromTurf(
+      rec.turf?.sports_supported,
+      rec.turf?.name,
+    );
+
+    const row = this.flickRepo.create({
+      recordingId: rec.id,
+      sport,
+      title: (dto.title ?? '').trim() || 'Highlight',
+      topText: dto.topText ?? '',
+      bottomText: dto.bottomText ?? '',
+      aspect: '9:16',
+      muxPlaybackId: rec.mux_playback_id,
+      startSec,
+      endSec,
+      approved: false,
+      createdByUserId: userId,
+      comments: [],
+    });
+    const saved = await this.flickRepo.save(row);
+    return this.toPublic(saved, userId);
+  }
+
   async setApproved(
     userId: string,
     id: string,
@@ -191,8 +292,29 @@ export class FlickShortsService {
     await this.requireAdminByUserId(userId);
     const row = await this.flickRepo.findOne({ where: { id } });
     if (!row) throw new NotFoundException();
+    const wasApproved = row.approved;
     row.approved = approved;
     const saved = await this.flickRepo.save(row);
+
+    // Award points to the submitting user only on a false → true transition,
+    // and only when we have a createdByUserId. Re-approving an already-approved
+    // row is a no-op via the idempotency key (eventType + refId + userId).
+    if (!wasApproved && approved && saved.createdByUserId) {
+      void this.pointsService
+        .awardPoints({
+          userId: saved.createdByUserId,
+          eventType: PointEventType.FLICKSHORT_APPROVED,
+          refId: saved.id,
+          metadata: {
+            flickShortId: saved.id,
+            recordingId: saved.recordingId,
+          },
+        })
+        .catch(() => {
+          /* points failures must not break approval flow */
+        });
+    }
+
     return this.toPublic(saved, userId);
   }
 

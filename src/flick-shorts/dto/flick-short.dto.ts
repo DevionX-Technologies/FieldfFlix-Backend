@@ -54,6 +54,39 @@ export class CreateFlickShortDto {
   endSec?: number;
 }
 
+/**
+ * Body for `POST /flick-shorts/from-highlight/:highlightId`. The recording id
+ * and Mux playback id are derived from the highlight server-side; the user
+ * only chooses the framing copy.
+ */
+export class SubmitHighlightAsFlickShortDto {
+  @IsString()
+  @MaxLength(255)
+  title: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  topText?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  bottomText?: string;
+
+  /**
+   * Number of seconds of footage to keep BEFORE the highlight moment. The
+   * total clip is capped at 15s by `FLICK_SHORT_MAX_SEC`; the rest is
+   * footage after the moment.
+   */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @Max(14)
+  preRollSec?: number;
+}
+
 export class FlickShortCommentBodyDto {
   @IsString()
   @IsNotEmpty()

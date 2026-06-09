@@ -20,6 +20,7 @@ import {
   CreateFlickShortDto,
   FlickShortCommentBodyDto,
   SetApprovedBodyDto,
+  SubmitHighlightAsFlickShortDto,
 } from './dto/flick-short.dto';
 
 @Controller('flick-shorts')
@@ -47,6 +48,24 @@ export class FlickShortsController {
     @Body() body: CreateFlickShortDto,
   ) {
     return this.service.create(req.user.user_id, body);
+  }
+
+  /**
+   * User-facing submission flow. Owner of a recording highlights tap "Submit
+   * to FlickShorts" in the mobile app; the new short lands in the admin
+   * queue UNAPPROVED. Admin approves via PATCH /flick-shorts/:id/approve.
+   */
+  @Post('from-highlight/:highlightId')
+  submitFromHighlight(
+    @Req() req: Request & { user: ILocalLoginPayload },
+    @Param('highlightId', ParseUUIDPipe) highlightId: string,
+    @Body() body: SubmitHighlightAsFlickShortDto,
+  ) {
+    return this.service.createFromHighlight(
+      req.user.user_id,
+      highlightId,
+      body,
+    );
   }
 
   @Patch(':id/approve')

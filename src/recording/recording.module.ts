@@ -22,6 +22,7 @@ import { RecordingHighlightEngagement } from './entities/recording-highlight-eng
 import { WebhookEvent } from './entities/webhook-event.entity';
 import { PaymentModule } from 'src/payment/payment.module';
 import { ClipProcessingModule } from 'src/clip-processing/clip-processing.module';
+import { PointsModule } from 'src/points/points.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { ClipProcessingModule } from 'src/clip-processing/clip-processing.module
     JwtModule,
     PaymentModule,
     ClipProcessingModule,
+    PointsModule,
   ],
   controllers: [
     RecordingController,

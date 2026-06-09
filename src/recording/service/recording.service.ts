@@ -58,6 +58,8 @@ import {
 import { SharedRecordingResponseDto } from '../dto/shared-recording-response.dto';
 import { RecordingHighlightEngagementService } from './recording-highlight-engagement.service';
 import { PaymentRestrictionService } from 'src/payment/payment-restriction.service';
+import { PointsService } from 'src/points/points.service';
+import { PointEventType } from 'src/points/entities/point-event.entity';
 
 /**
  * Service for managing recordings.
@@ -101,6 +103,7 @@ export class RecordingService {
     private readonly dataSource: DataSource,
     private readonly recordingHighlightEngagementService: RecordingHighlightEngagementService,
     private readonly paymentRestrictionService: PaymentRestrictionService,
+    private readonly pointsService: PointsService,
   ) {
     // Match S3 client: use explicit keys when present (local/.env), else default chain (IAM role).
     const region = process.env.AWS_REGION || 'ap-south-1';
@@ -320,6 +323,16 @@ export class RecordingService {
 
       if (findAllDeviceTokeToSendNotification.user_devices_token.length === 0) {
         await queryRunner.commitTransaction();
+        // Best-effort points award — failures here must NEVER break recording start.
+        this.awardPointsBestEffort({
+          userId,
+          eventType: PointEventType.RECORDING_CREATE,
+          refId: savedRecording.id,
+          metadata: {
+            recordingId: savedRecording.id,
+            turfId: savedRecording.turfId,
+          },
+        });
         return savedRecording;
       } else {
         const title = 'Lights, camera, action 🎬';
@@ -349,6 +362,16 @@ export class RecordingService {
       }
 
       await queryRunner.commitTransaction();
+      // Best-effort points award — failures here must NEVER break recording start.
+      this.awardPointsBestEffort({
+        userId,
+        eventType: PointEventType.RECORDING_CREATE,
+        refId: savedRecording.id,
+        metadata: {
+          recordingId: savedRecording.id,
+          turfId: savedRecording.turfId,
+        },
+      });
       return savedRecording;
     } catch (error) {
       this.logger.error('Error in start recording:', error);
@@ -2520,7 +2543,51 @@ export class RecordingService {
     });
     await this.sharedRecordingRepository.save(share);
 
+    // Points: claimer gets RECORDING_RECEIVE, owner gets RECORDING_SHARE.
+    // Idempotency-keyed by (recordingId, userId) so repeated claims don't
+    // double-credit.
+    this.awardPointsBestEffort({
+      userId: requestingUserId,
+      eventType: PointEventType.RECORDING_RECEIVE,
+      refId: recording.id,
+      metadata: { recordingId: recording.id, ownerUserId: recording.userId },
+    });
+    if (recording.userId) {
+      this.awardPointsBestEffort({
+        userId: recording.userId,
+        eventType: PointEventType.RECORDING_SHARE,
+        refId: `${recording.id}:${requestingUserId}`,
+        metadata: {
+          recordingId: recording.id,
+          sharedWithUserId: requestingUserId,
+        },
+      });
+    }
+
     return { claimed: true, reason: 'Shared with user', recording };
+  }
+
+  /**
+   * Fire-and-forget points award. Catches any error so a failure in the
+   * gamification layer never breaks the primary domain action (recording
+   * start, share, claim, etc.). Uses `void` so we don't accidentally
+   * `await` it inside a transaction.
+   */
+  private awardPointsBestEffort(args: {
+    userId: string;
+    eventType: PointEventType;
+    refId?: string | null;
+    metadata?: Record<string, unknown>;
+  }): void {
+    void this.pointsService
+      .awardPoints(args)
+      .catch((err) =>
+        this.logger.warn(
+          `awardPoints(${args.eventType}, user=${args.userId}, ref=${
+            args.refId ?? '-'
+          }) failed: ${(err as Error)?.message ?? String(err)}`,
+        ),
+      );
   }
 
   /**
@@ -2555,6 +2622,26 @@ export class RecordingService {
           shared_with_user_id: requestingUserId,
         });
         await this.sharedRecordingRepository.save(share);
+
+        // Same points pair as `claimRecording`. Same idempotency keys so the
+        // legacy and new paths never double-credit the same (recording, user).
+        this.awardPointsBestEffort({
+          userId: requestingUserId,
+          eventType: PointEventType.RECORDING_RECEIVE,
+          refId: match.id,
+          metadata: { recordingId: match.id, ownerUserId: match.userId },
+        });
+        if (match.userId) {
+          this.awardPointsBestEffort({
+            userId: match.userId,
+            eventType: PointEventType.RECORDING_SHARE,
+            refId: `${match.id}:${requestingUserId}`,
+            metadata: {
+              recordingId: match.id,
+              sharedWithUserId: requestingUserId,
+            },
+          });
+        }
       }
     }
     return matches;

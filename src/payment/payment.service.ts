@@ -22,6 +22,9 @@ import { RazorpayService } from '../common/service/razorpay.service';
 import { User } from '../user/entities/user.entity';
 import { Recording } from '../recording/entities/recording.entity';
 import { SharedRecording } from '../recording/entities/shared-recording.entity';
+import { PointsService } from '../points/points.service';
+import { PointEventType } from '../points/entities/point-event.entity';
+import { CouponsService } from '../coupons/coupons.service';
 import { Request } from 'express';
 import { randomUUID } from 'crypto';
 import { CommonService } from 'src/common/service/common.service';
@@ -52,6 +55,8 @@ export class PaymentService {
     private readonly sharedRecordingRepository: Repository<SharedRecording>,
     private readonly razorpayService: RazorpayService,
     private readonly commonService: CommonService,
+    private readonly pointsService: PointsService,
+    private readonly couponsService: CouponsService,
   ) {}
 
   /**
@@ -74,6 +79,7 @@ export class PaymentService {
   async createPaymentOrderForRecording(
     req: Request,
     recordingId: string,
+    couponCode?: string | null,
   ): Promise<PaymentResponseDto> {
     try {
       this.logger.log(`Creating payment order for recording: ${recordingId}`);
@@ -127,13 +133,42 @@ export class PaymentService {
         }
       }
 
-      const { tier, base, total } = this.unlockTierAndAmounts(recording);
+      const {
+        tier,
+        base,
+        total: undiscountedTotal,
+      } = this.unlockTierAndAmounts(recording);
       const label =
         tier === 'pickleball'
           ? 'Pickleball'
           : tier === 'padel'
             ? 'Padel'
             : 'Cricket';
+
+      // Apply a coupon if the caller passed one. We re-preview here (rather
+      // than trusting a discounted price from the client) so a tampered
+      // request body can't grant arbitrary discounts. The assignment id
+      // is persisted on the payment row's metadata and consumed on verify.
+      let total = undiscountedTotal;
+      let couponAssignmentId: string | null = null;
+      let couponDiscountInr = 0;
+      let couponLabel: string | null = null;
+      if (couponCode && couponCode.trim()) {
+        const preview = await this.couponsService.previewDiscount(
+          tokenData.user_id,
+          couponCode,
+          Math.round(undiscountedTotal),
+        );
+        if (preview) {
+          total = preview.discountedPriceInr;
+          couponAssignmentId = preview.assignmentId;
+          couponDiscountInr = Math.max(
+            0,
+            Math.round(undiscountedTotal) - preview.discountedPriceInr,
+          );
+          couponLabel = preview.label;
+        }
+      }
 
       if (total <= 0) {
         const payment = this.paymentRepository.create({
@@ -169,10 +204,45 @@ export class PaymentService {
         base_amount: base,
         payment_type: PaymentType.RECORDING_ACCESS,
         recording_id: recordingId,
-        description: `${label} full recording unlock`,
+        description: couponAssignmentId
+          ? `${label} full recording unlock — ${couponLabel} applied`
+          : `${label} full recording unlock`,
       };
 
-      return await this.createPaymentOrder(tokenData.user_id, createPaymentDto);
+      const order = await this.createPaymentOrder(
+        tokenData.user_id,
+        createPaymentDto,
+      );
+
+      // Stash the coupon assignment id on the just-created payment row's
+      // metadata so `verifyPayment` can call `coupons.redeem` once the user
+      // actually pays. We re-fetch by razorpay_order_id (the id we just got
+      // back from createPaymentOrder) to find the row.
+      if (couponAssignmentId) {
+        try {
+          const paymentRow = await this.paymentRepository.findOne({
+            where: { razorpay_order_id: order.razorpay_order_id },
+          });
+          if (paymentRow) {
+            paymentRow.metadata = {
+              ...(paymentRow.metadata ?? {}),
+              coupon: {
+                assignmentId: couponAssignmentId,
+                discountInr: couponDiscountInr,
+                label: couponLabel,
+                undiscountedTotal,
+              },
+            };
+            await this.paymentRepository.save(paymentRow);
+          }
+        } catch (err) {
+          this.logger.warn(
+            `Failed to persist coupon metadata on payment for order ${order.razorpay_order_id}: ${(err as Error)?.message ?? err}`,
+          );
+        }
+      }
+
+      return order;
     } catch (error) {
       this.logger.error('Failed to create payment order for recording', error);
       throw error;
@@ -418,6 +488,69 @@ export class PaymentService {
       await this.paymentRepository.update(payment.id, payment);
 
       this.logger.log(`Payment verified successfully: ${payment.id}`);
+
+      // Best-effort points award for the user that just successfully paid.
+      // Idempotency by paymentId: a retry of `verify` won't double-credit.
+      if (
+        verifyPaymentDto.status === PaymentStatus.COMPLETED &&
+        payment.user_id
+      ) {
+        void this.pointsService
+          .awardPoints({
+            userId: payment.user_id,
+            eventType: PointEventType.PAYMENT_COMPLETE,
+            refId: payment.id,
+            metadata: {
+              paymentId: payment.id,
+              recordingId: payment.recording_id ?? null,
+              paymentType: payment.payment_type,
+            },
+          })
+          .catch((err) =>
+            this.logger.warn(
+              `awardPoints(PAYMENT_COMPLETE, user=${payment.user_id}, payment=${payment.id}) failed: ${
+                (err as Error)?.message ?? String(err)
+              }`,
+            ),
+          );
+
+        // If the payment had a coupon attached at order-creation time,
+        // consume it now. Idempotent by paymentId — retries don't
+        // double-decrement. We deliberately don't refund the user if
+        // redeem returns null (e.g. coupon expired between order and pay) —
+        // they already paid the discounted amount via Razorpay; we just
+        // log so admin can investigate.
+        const couponMeta = (payment.metadata as Record<string, unknown>)?.[
+          'coupon'
+        ] as
+          | {
+              assignmentId?: string;
+              undiscountedTotal?: number;
+            }
+          | undefined;
+        if (couponMeta?.assignmentId) {
+          try {
+            const redemption = await this.couponsService.redeem({
+              userId: payment.user_id,
+              assignmentId: couponMeta.assignmentId,
+              paymentId: payment.id,
+              recordingId: payment.recording_id ?? null,
+              basePriceInr: Math.round(
+                couponMeta.undiscountedTotal ?? Number(payment.amount),
+              ),
+            });
+            if (!redemption) {
+              this.logger.warn(
+                `Coupon assignment ${couponMeta.assignmentId} could not be redeemed at verify (already exhausted or expired). Payment ${payment.id} kept; admin action may be needed.`,
+              );
+            }
+          } catch (err) {
+            this.logger.warn(
+              `Coupon redeem at verify failed for payment ${payment.id}: ${(err as Error)?.message ?? err}`,
+            );
+          }
+        }
+      }
 
       return {
         success: true,

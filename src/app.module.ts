@@ -29,6 +29,8 @@ import { ClipProcessingModule } from './clip-processing/clip-processing.module';
 import { FlickShortsModule } from './flick-shorts/flick-shorts.module';
 import { AdminModule } from './admin/admin.module';
 import { SupportModule } from './support/support.module';
+import { PointsModule } from './points/points.module';
+import { CouponsModule } from './coupons/coupons.module';
 
 @Module({
   imports: [
@@ -67,6 +69,8 @@ import { SupportModule } from './support/support.module';
     AdminModule,
     FlickShortsModule,
     SupportModule,
+    PointsModule,
+    CouponsModule,
   ],
   controllers: [AppController, SharedMediaRootController],
   providers: [
