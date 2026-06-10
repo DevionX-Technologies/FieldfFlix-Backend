@@ -7,6 +7,9 @@ import { PointsService } from './points.service';
 import { PointsController } from './points.controller';
 import { AdminModule } from 'src/admin/admin.module';
 import { UserModule } from 'src/user/user.module';
+import { CommonModule } from 'src/common/common.module';
+import { User } from 'src/user/entities/user.entity';
+import { NotificationEntity } from 'src/notification/entities/notification.entity';
 
 /**
  * Points & leaderboard substrate. Exports `PointsService` so other modules
@@ -23,9 +26,17 @@ import { UserModule } from 'src/user/user.module';
  */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([PointEvent, UserPoints, PointConfig]),
+    TypeOrmModule.forFeature([
+      PointEvent,
+      UserPoints,
+      PointConfig,
+      User,
+      NotificationEntity,
+    ]),
     forwardRef(() => AdminModule),
     UserModule,
+    // Pulls in `FireBaseNotificationService` for the points-award push.
+    CommonModule,
   ],
   controllers: [PointsController],
   providers: [PointsService],

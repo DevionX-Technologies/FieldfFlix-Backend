@@ -5,6 +5,10 @@ import { createHash } from 'crypto';
 import { PointEvent, PointEventType } from './entities/point-event.entity';
 import { PointConfig } from './entities/point-config.entity';
 import { UserPoints } from './entities/user-points.entity';
+import { User } from 'src/user/entities/user.entity';
+import { NotificationEntity } from 'src/notification/entities/notification.entity';
+import { FireBaseNotificationService } from 'src/common/service/fire-base.service';
+import { MessageStatus, NotificationType } from 'src/constant/enum';
 
 /**
  * Default per-event point values + admin-facing labels. Used to seed
@@ -46,6 +50,11 @@ export class PointsService implements OnModuleInit {
     private readonly configRepo: Repository<PointConfig>,
     @InjectRepository(UserPoints)
     private readonly userPointsRepo: Repository<UserPoints>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
+    @InjectRepository(NotificationEntity)
+    private readonly notificationRepo: Repository<NotificationEntity>,
+    private readonly fireBaseNotificationService: FireBaseNotificationService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -126,83 +135,205 @@ export class PointsService implements OnModuleInit {
 
     const idempotencyKey = this.buildIdempotencyKey(eventType, userId, refId);
 
-    return this.dataSource.transaction(async (manager) => {
-      // Pre-check by idempotencyKey so we don't waste the upsert when this is
-      // a duplicate (and so we can return the existing row).
-      const existing = await manager.getRepository(PointEvent).findOne({
-        where: { idempotencyKey },
-      });
-      if (existing) {
-        return null;
-      }
-
-      const event = manager.getRepository(PointEvent).create({
-        userId,
-        eventType,
-        refId,
-        idempotencyKey,
-        points: value,
-        metadata,
-      });
-      let saved: PointEvent;
-      try {
-        saved = await manager.getRepository(PointEvent).save(event);
-      } catch (err: unknown) {
-        // Race with another concurrent insert — the unique index caught it.
-        if (
-          err &&
-          typeof err === 'object' &&
-          'code' in err &&
-          String((err as { code: string }).code) === '23505'
-        ) {
+    return this.dataSource
+      .transaction(async (manager) => {
+        // Pre-check by idempotencyKey so we don't waste the upsert when this is
+        // a duplicate (and so we can return the existing row).
+        const existing = await manager.getRepository(PointEvent).findOne({
+          where: { idempotencyKey },
+        });
+        if (existing) {
           return null;
         }
-        throw err;
-      }
 
-      // Upsert user_points total. INSERT ... ON CONFLICT keeps writes atomic.
-      await manager
-        .getRepository(UserPoints)
-        .createQueryBuilder()
-        .insert()
-        .values({ userId, totalPoints: value })
-        .orUpdate(['totalPoints'], ['userId'], {
-          skipUpdateIfNoValuesChanged: false,
-        })
-        .setParameter('inc', value)
-        .execute()
-        .catch(async () => {
-          // Fallback path for environments where ON CONFLICT setParameter isn't
-          // honoured the way we want. Issue an explicit UPDATE that increments.
-          await manager
-            .getRepository(UserPoints)
-            .createQueryBuilder()
-            .update()
-            .set({
-              totalPoints: () => `"totalPoints" + ${value}`,
-            })
-            .where('userId = :userId', { userId })
-            .execute();
-        });
-
-      // Make doubly sure: if the user had no prior row and the upsert above
-      // inserted a fresh row with totalPoints=value, the explicit increment
-      // path would double-count. Resolve by reading + reconciling.
-      const row = await manager
-        .getRepository(UserPoints)
-        .findOne({ where: { userId } });
-      if (!row) {
-        await manager.getRepository(UserPoints).insert({
+        const event = manager.getRepository(PointEvent).create({
           userId,
-          totalPoints: value,
+          eventType,
+          refId,
+          idempotencyKey,
+          points: value,
+          metadata,
         });
-      }
+        let saved: PointEvent;
+        try {
+          saved = await manager.getRepository(PointEvent).save(event);
+        } catch (err: unknown) {
+          // Race with another concurrent insert — the unique index caught it.
+          if (
+            err &&
+            typeof err === 'object' &&
+            'code' in err &&
+            String((err as { code: string }).code) === '23505'
+          ) {
+            return null;
+          }
+          throw err;
+        }
 
-      this.logger.debug(
-        `Awarded ${value} pts to user ${userId} for ${eventType} (ref=${refId ?? '-'})`,
-      );
-      return saved;
+        // Upsert user_points total. INSERT ... ON CONFLICT keeps writes atomic.
+        await manager
+          .getRepository(UserPoints)
+          .createQueryBuilder()
+          .insert()
+          .values({ userId, totalPoints: value })
+          .orUpdate(['totalPoints'], ['userId'], {
+            skipUpdateIfNoValuesChanged: false,
+          })
+          .setParameter('inc', value)
+          .execute()
+          .catch(async () => {
+            // Fallback path for environments where ON CONFLICT setParameter isn't
+            // honoured the way we want. Issue an explicit UPDATE that increments.
+            await manager
+              .getRepository(UserPoints)
+              .createQueryBuilder()
+              .update()
+              .set({
+                totalPoints: () => `"totalPoints" + ${value}`,
+              })
+              .where('userId = :userId', { userId })
+              .execute();
+          });
+
+        // Make doubly sure: if the user had no prior row and the upsert above
+        // inserted a fresh row with totalPoints=value, the explicit increment
+        // path would double-count. Resolve by reading + reconciling.
+        const row = await manager
+          .getRepository(UserPoints)
+          .findOne({ where: { userId } });
+        if (!row) {
+          await manager.getRepository(UserPoints).insert({
+            userId,
+            totalPoints: value,
+          });
+        }
+
+        this.logger.debug(
+          `Awarded ${value} pts to user ${userId} for ${eventType} (ref=${refId ?? '-'})`,
+        );
+        return saved;
+      })
+      .then(async (saved) => {
+        // Fire a notification AFTER the award transaction commits — outside the
+        // tx so a notification failure can never roll the points back. Best
+        // effort: any error is logged but never bubbles up. Skip when `saved`
+        // is null (already-awarded / no-op).
+        if (saved) {
+          const label =
+            config?.label ?? def?.label ?? this.humanizeEventType(eventType);
+          void this.fireAwardNotification({
+            userId,
+            eventType,
+            points: value,
+            label,
+          }).catch((err) =>
+            this.logger.warn(
+              `points award notification failed for user=${userId} event=${eventType}: ${(err as Error)?.message ?? err}`,
+            ),
+          );
+        }
+        return saved;
+      });
+  }
+
+  /**
+   * Build and dispatch the celebration notification for a points award.
+   *
+   *   1. Look up every FCM device token for this user.
+   *   2. Push a notification per token via `FireBaseNotificationService`,
+   *      including a `data` payload (`eventType`, `points`, `totalPoints`,
+   *      `label`) that the mobile app reads to render an in-app celebration
+   *      toast and refresh the Profile points pill without a refetch.
+   *   3. Persist a row in `notifications` so it also appears in the in-app
+   *      notification list (same pattern as RECORDING_START etc.).
+   *
+   * Idempotency is already enforced at the award layer (one PointEvent per
+   * (eventType, userId, refId)), so re-deliveries of the same event will not
+   * produce duplicate notifications.
+   */
+  private async fireAwardNotification(args: {
+    userId: string;
+    eventType: PointEventType;
+    points: number;
+    label: string;
+  }): Promise<void> {
+    const user = await this.userRepo.findOne({
+      where: { id: args.userId },
+      relations: ['user_devices_token'],
     });
+    if (!user) return;
+    const totals = await this.userPointsRepo.findOne({
+      where: { userId: args.userId },
+    });
+    const totalPoints = totals?.totalPoints ?? args.points;
+
+    const title = `+${args.points} pts! 🎉`;
+    const body = `${args.label} — you now have ${totalPoints} pts.`;
+
+    // Push to every device the user has registered. We swallow per-device
+    // errors so a single bad token doesn't kill the loop for the rest.
+    const tokens = user.user_devices_token ?? [];
+    for (const t of tokens) {
+      const token = (t as { devices_id?: string })?.devices_id;
+      if (!token) continue;
+      try {
+        await this.fireBaseNotificationService.sendNotification(
+          {
+            notification: { title, body },
+            token,
+            // FCM `data` is loosely typed at the consumer side — cast to a
+            // generic record so additional keys (event metadata) survive the
+            // transport. The mobile app reads them in its FCM handler to
+            // drive the celebration toast + Profile pill refresh.
+            data: {
+              click_action: 'POINTS_AWARDED',
+              type: 'POINTS_AWARDED',
+              eventType: String(args.eventType),
+              points: String(args.points),
+              totalPoints: String(totalPoints),
+              label: args.label,
+            } as unknown as { click_action: string },
+          },
+          user.id,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `FCM send failed for user=${user.id} token=${token.slice(0, 8)}…: ${(err as Error)?.message ?? err}`,
+        );
+      }
+    }
+
+    // Persist the in-app notification row so the user's notification list
+    // also gets this entry, just like RECORDING_START / RECORDING_STOP do.
+    try {
+      // `data` is typed as `any[]` on the entity but is used as a JSONB blob
+      // in practice — wrap in an array so the column accepts the payload.
+      await this.notificationRepo.save({
+        user_id: user.id,
+        title,
+        body,
+        data: [
+          {
+            eventType: args.eventType,
+            points: args.points,
+            totalPoints,
+            label: args.label,
+          },
+        ],
+        message_status: MessageStatus.UNREAD,
+        notification_type: NotificationType.POINTS_AWARDED,
+        is_soft_delete: false,
+      } as unknown as Partial<NotificationEntity>);
+    } catch (err) {
+      this.logger.warn(
+        `failed to persist POINTS_AWARDED notification for user=${user.id}: ${(err as Error)?.message ?? err}`,
+      );
+    }
+  }
+
+  /** Friendly fallback when no config row carries a custom label. */
+  private humanizeEventType(eventType: PointEventType): string {
+    return String(eventType).replace(/_/g, ' ');
   }
 
   /** Current total + breakdown for a user. */
