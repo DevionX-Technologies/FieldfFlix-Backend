@@ -213,9 +213,12 @@ export class FlickShortsService {
    *     (default 7) so the moment isn't right at the start of the clip.
    *   - `endSec = startSec + FLICK_SHORT_MAX_SEC`. Clipped to >= 0.
    *
-   * Idempotency: NOT enforced here on purpose — the user might want to submit
-   * the same highlight twice with different copy. The admin queue is where
-   * duplicates get pruned.
+   * Dedup: a highlight can be submitted ONCE while there's an existing row
+   * for it. To resubmit, the previous row must first be deleted (admin
+   * "reject") OR — if the previous row is already approved — the highlight
+   * is permanently linked to that short and not resubmittable. This stops
+   * two different shared viewers from spamming the admin queue with the
+   * same clip.
    */
   async createFromHighlight(
     userId: string,
@@ -228,6 +231,22 @@ export class FlickShortsService {
       where: { id: highlightId },
     });
     if (!highlight) throw new NotFoundException('Highlight not found');
+
+    // Dedup: any existing FlickShort row for this highlight blocks resubmission.
+    // Admin "rejection" = DELETE the row (handled by `deleteAsAdmin` for
+    // unapproved rows). Once approved, the row stays, so no one can claim
+    // the same highlight again — the existing public short is the canonical
+    // version.
+    const existingForHighlight = await this.flickRepo.findOne({
+      where: { sourceHighlightId: highlightId },
+    });
+    if (existingForHighlight) {
+      throw new BadRequestException(
+        existingForHighlight.approved
+          ? 'This highlight is already a FlickShort in the public feed.'
+          : 'This highlight has already been submitted and is awaiting admin review.',
+      );
+    }
 
     const rec = await this.recordingRepo.findOne({
       where: { id: highlight.recordingId },
@@ -294,8 +313,28 @@ export class FlickShortsService {
       approved: false,
       createdByUserId: userId,
       comments: [],
+      // Link this row back to the highlight so future submission attempts
+      // can detect "already submitted" without scanning recording_id ranges.
+      sourceHighlightId: highlightId,
     });
-    const saved = await this.flickRepo.save(row);
+    let saved: FlickShort;
+    try {
+      saved = await this.flickRepo.save(row);
+    } catch (err: unknown) {
+      // Defensive: race condition where two requests insert simultaneously.
+      // Treat as the dedup case above and surface a friendly message.
+      if (
+        err &&
+        typeof err === 'object' &&
+        'code' in err &&
+        String((err as { code: string }).code) === '23505'
+      ) {
+        throw new BadRequestException(
+          'This highlight has already been submitted and is awaiting admin review.',
+        );
+      }
+      throw err;
+    }
     return this.toPublic(saved, userId);
   }
 

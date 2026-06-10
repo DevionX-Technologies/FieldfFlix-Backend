@@ -29,6 +29,7 @@ import { Request } from 'express';
 import { randomUUID } from 'crypto';
 import { CommonService } from 'src/common/service/common.service';
 import { HOURLY_RATE } from 'src/constant/constant';
+import { RECORDING_UNLOCK_GST_RATE } from 'src/utils/recording-pricing';
 import {
   HALF_HOUR_SEC,
   RECORDING_UNLOCK_BASE_INR,
@@ -145,10 +146,16 @@ export class PaymentService {
             ? 'Padel'
             : 'Cricket';
 
-      // Apply a coupon if the caller passed one. We re-preview here (rather
-      // than trusting a discounted price from the client) so a tampered
-      // request body can't grant arbitrary discounts. The assignment id
-      // is persisted on the payment row's metadata and consumed on verify.
+      // Coupon math. RULE: discount is applied to the PRE-GST base, then GST
+      // is recomputed on the discounted base, then the resulting total is
+      // what the user pays. Important so the receipt shows:
+      //     base (post-discount)   ₹X
+      //     GST @ 18%              ₹Y     (= X * 0.18, rounded)
+      //     total                  ₹X+Y
+      // …rather than the confusing "discount nibbles GST too" effect we
+      // had when applying % to the GST-inclusive total directly.
+      const baseRounded = Math.round(base);
+      let discountedBase = baseRounded;
       let total = undiscountedTotal;
       let couponAssignmentId: string | null = null;
       let couponDiscountInr = 0;
@@ -157,15 +164,15 @@ export class PaymentService {
         const preview = await this.couponsService.previewDiscount(
           tokenData.user_id,
           couponCode,
-          Math.round(undiscountedTotal),
+          baseRounded, // ← preview against BASE, not GST-inclusive total
         );
         if (preview) {
-          total = preview.discountedPriceInr;
+          discountedBase = preview.discountedPriceInr;
+          couponDiscountInr = Math.max(0, baseRounded - discountedBase);
+          // Re-apply GST on the discounted base for the Razorpay order
+          // total. Same rounding rule the rest of the pricing layer uses.
+          total = Math.round(discountedBase * (1 + RECORDING_UNLOCK_GST_RATE));
           couponAssignmentId = preview.assignmentId;
-          couponDiscountInr = Math.max(
-            0,
-            Math.round(undiscountedTotal) - preview.discountedPriceInr,
-          );
           couponLabel = preview.label;
         }
       }
@@ -201,7 +208,11 @@ export class PaymentService {
 
       const createPaymentDto: CreatePaymentOrderDto = {
         amount: total,
-        base_amount: base,
+        // `base_amount` reflects the discounted base — the receipt math
+        // (base + GST = total) stays consistent end-to-end. Original base
+        // is preserved on `metadata.coupon.undiscountedBase` if we need to
+        // explain "you saved ₹X" later.
+        base_amount: discountedBase,
         payment_type: PaymentType.RECORDING_ACCESS,
         recording_id: recordingId,
         description: couponAssignmentId
@@ -228,8 +239,12 @@ export class PaymentService {
               ...(paymentRow.metadata ?? {}),
               coupon: {
                 assignmentId: couponAssignmentId,
+                /** Pre-GST discount in rupees. */
                 discountInr: couponDiscountInr,
                 label: couponLabel,
+                /** Pre-discount base for receipts ("you saved ₹X"). */
+                undiscountedBase: baseRounded,
+                /** Pre-discount total (base+GST) before this coupon. */
                 undiscountedTotal,
               },
             };
@@ -525,6 +540,7 @@ export class PaymentService {
         ] as
           | {
               assignmentId?: string;
+              undiscountedBase?: number;
               undiscountedTotal?: number;
             }
           | undefined;
@@ -535,8 +551,13 @@ export class PaymentService {
               assignmentId: couponMeta.assignmentId,
               paymentId: payment.id,
               recordingId: payment.recording_id ?? null,
+              // The redemption audit logs the price the discount was applied
+              // to — which is the PRE-GST base, matching the new
+              // preview/redeem semantics.
               basePriceInr: Math.round(
-                couponMeta.undiscountedTotal ?? Number(payment.amount),
+                couponMeta.undiscountedBase ??
+                  couponMeta.undiscountedTotal ??
+                  Number(payment.base_amount ?? payment.amount),
               ),
             });
             if (!redemption) {

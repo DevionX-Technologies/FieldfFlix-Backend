@@ -64,6 +64,19 @@ export class FlickShort {
   @Column({ name: 'created_by_user_id', type: 'uuid', nullable: true })
   createdByUserId: string | null;
 
+  /**
+   * The highlight this FlickShort was generated from (when submitted via the
+   * mobile app's "Submit to FlickShorts" sheet). Used to dedupe: as long as
+   * a row with the same `sourceHighlightId` exists, the highlight cannot be
+   * resubmitted. Admin can "reject" by `DELETE`-ing the pending row, which
+   * also frees the highlight for resubmission.
+   *
+   * `null` for rows created via the admin Studio (which doesn't pick a
+   * highlight — it free-form-picks startSec/endSec from a recording).
+   */
+  @Column({ name: 'source_highlight_id', type: 'uuid', nullable: true })
+  sourceHighlightId: string | null;
+
   @Column({ type: 'jsonb', default: () => '[]' })
   comments: FlickShortComment[];
 
