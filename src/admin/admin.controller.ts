@@ -3,7 +3,9 @@ import {
   Controller,
   Delete,
   ForbiddenException,
+  forwardRef,
   Get,
+  Inject,
   NotFoundException,
   Param,
   Post,
@@ -24,6 +26,11 @@ export class AdminController {
   constructor(
     private readonly adminRole: AdminRoleService,
     private readonly userService: UserService,
+    // `RecordingModule` is imported in `AdminModule` behind `forwardRef` to
+    // break the AdminModule ↔ RecordingModule cycle. The matching forwardRef
+    // here lets Nest resolve `RecordingService` lazily — without it the DI
+    // container sees `undefined` at construction time.
+    @Inject(forwardRef(() => RecordingService))
     private readonly recordingService: RecordingService,
   ) {}
 
