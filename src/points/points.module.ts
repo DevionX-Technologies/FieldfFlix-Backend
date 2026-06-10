@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { PointEvent } from './entities/point-event.entity';
 import { UserPoints } from './entities/user-points.entity';
@@ -13,11 +13,18 @@ import { UserModule } from 'src/user/user.module';
  * (recording, payment, flick-shorts) can `awardPoints(...)` at the relevant
  * lifecycle hooks. Admin gating for the config endpoints reuses
  * AdminRoleService — same source of truth as the rest of the admin surface.
+ *
+ * AdminModule is imported behind `forwardRef` because the module graph forms
+ * a cycle:
+ *   AppModule → RecordingModule → PaymentModule → PointsModule → AdminModule
+ *           ← (AdminModule re-imports RecordingModule)
+ * `forwardRef` defers the reference until both modules are constructed, so
+ * neither sees the other as `undefined` at instantiation time.
  */
 @Module({
   imports: [
     TypeOrmModule.forFeature([PointEvent, UserPoints, PointConfig]),
-    AdminModule,
+    forwardRef(() => AdminModule),
     UserModule,
   ],
   controllers: [PointsController],
