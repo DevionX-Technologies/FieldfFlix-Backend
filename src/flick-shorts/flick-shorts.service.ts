@@ -23,6 +23,7 @@ import {
 import { PointsService } from 'src/points/points.service';
 import { PointEventType } from 'src/points/entities/point-event.entity';
 import { RecordingHighlights } from 'src/recording/entities/recording-highlights.entity';
+import { SharedRecording } from 'src/recording/entities/shared-recording.entity';
 
 export type FlickShortPublicDto = {
   id: string;
@@ -74,6 +75,8 @@ export class FlickShortsService {
     private readonly recordingRepo: Repository<Recording>,
     @InjectRepository(RecordingHighlights)
     private readonly highlightsRepo: Repository<RecordingHighlights>,
+    @InjectRepository(SharedRecording)
+    private readonly sharedRecordingRepo: Repository<SharedRecording>,
     private readonly userService: UserService,
     private readonly adminRole: AdminRoleService,
     private readonly pointsService: PointsService,
@@ -195,8 +198,11 @@ export class FlickShortsService {
    * FlickShort. The returned row starts UNAPPROVED — admin must hit
    * `PATCH /flick-shorts/:id/approve` before it appears in the public feed.
    *
-   * Permissions: caller must own the parent recording. (Sharing access does
-   * NOT grant submission rights.)
+   * Permissions: caller must have access to the parent recording — either as
+   * the owner OR as a SharedRecording recipient (e.g. via Find-My-Recording
+   * or an explicit share). Admin still has to approve before the short goes
+   * public, so opening this up doesn't risk leaking content the owner
+   * didn't want shared.
    *
    * Clip window:
    *   - Sport-locked vertical (9:16) — the mobile player overlays black bars
@@ -233,10 +239,19 @@ export class FlickShortsService {
         'Recording is not ready for streaming yet — try again after it processes',
       );
     }
+    // Allow submission if the caller owns the recording OR has it shared
+    // with them via SharedRecording (Find-My-Recording claim or explicit
+    // share). Anyone with legitimate read access is allowed to nominate the
+    // clip — admin moderates before it goes public.
     if (rec.userId !== userId) {
-      throw new ForbiddenException(
-        'Only the recording owner can submit its highlights as FlickShorts',
-      );
+      const sharedRow = await this.sharedRecordingRepo.findOne({
+        where: { recording_id: rec.id, shared_with_user_id: userId },
+      });
+      if (!sharedRow) {
+        throw new ForbiddenException(
+          'You need access to this recording to submit its highlights to FlickShorts.',
+        );
+      }
     }
 
     const recordingStartMs = rec.startTime
