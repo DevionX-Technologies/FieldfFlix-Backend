@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 @Injectable()
 export class AppService {
-  private static readonly VERSION = '3.4';
+  private static readonly VERSION = '3.6';
   /** Captured once when the process boots — represents container start time. */
   private static readonly BOOTED_AT = new Date().toISOString();
 
@@ -23,7 +23,7 @@ export class AppService {
     const buildTime = String(process.env.BUILD_TIME ?? 'unknown');
     const ref = String(process.env.BUILD_REF ?? 'unknown');
     return [
-      'coupons applied pre-GST + base pricing model live',
+      'auto-stop cron + /admin/cameras-today triage + pre-GST coupons',
       `version=${AppService.VERSION}`,
       `sha=${shortSha}`,
       `built=${buildTime}`,

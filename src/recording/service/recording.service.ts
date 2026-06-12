@@ -8,6 +8,7 @@ import {
   BadRequestException,
   HttpException,
 } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, Not, QueryRunner, Repository } from 'typeorm';
 import { StartRecordingDto } from '../dto/start-recording.dto';
@@ -181,6 +182,112 @@ export class RecordingService {
     const start = new Date(rec.startTime).getTime();
     if (Number.isNaN(start)) return true;
     return Date.now() - start > RecordingService.STALE_IN_PROGRESS_MS;
+  }
+
+  /**
+   * Grace period added on top of the planned duration before the server
+   * auto-stops a session. Gives the client-side timer a small head-start so
+   * that the FCM "wrap" notification almost always fires from the user-facing
+   * stop call (which has user context) rather than the cron path.
+   */
+  private static readonly AUTO_STOP_GRACE_MS = 30 * 1000; // 30 seconds
+
+  /**
+   * Re-entrancy guard. The cron runs every minute but a slow Pi call could
+   * take longer than that — without this, two ticks could try to stop the
+   * same recording concurrently. We use a process-local flag because the
+   * actual stop path is idempotent via the status check inside stopRecording,
+   * but skipping when already running avoids unnecessary log noise.
+   */
+  private autoStopRunning = false;
+
+  /**
+   * Server-side auto-stop for expired sessions.
+   *
+   * The mobile app already runs a foreground timer that calls `stopRecording`
+   * when the planned duration elapses. That timer is unreliable in real
+   * deployment — backgrounded apps, locked phones, app crashes, network
+   * drops, and force-quits all leave the recording running on the Pi and
+   * the row sitting in `in_progress` until the 2-hour staleness sweep
+   * picks it up. That's been producing recordings that overrun their
+   * planned duration by 10–40 minutes in production traffic.
+   *
+   * This cron closes the gap. Every minute it finds rows where
+   *   status = 'in_progress'
+   *   AND startTime + (metadata.fieldflix_planned_duration_sec * 1000) + grace < NOW()
+   * and calls the existing `stopRecording` path for each one. Because we
+   * call the public method (not the inner Pi call directly) the existing
+   * notification, points award, and metadata cleanup all run unchanged.
+   *
+   * Errors per recording are caught individually so one bad row never
+   * blocks the rest of the batch.
+   */
+  @Cron(CronExpression.EVERY_MINUTE)
+  async autoStopExpiredRecordings(): Promise<void> {
+    if (this.autoStopRunning) {
+      this.logger.debug(
+        'autoStopExpiredRecordings: previous run still in flight, skipping tick',
+      );
+      return;
+    }
+    this.autoStopRunning = true;
+    try {
+      // Cheap broad sweep — there are rarely many `in_progress` rows at any
+      // moment (one per active camera). We filter further in memory rather
+      // than build a JSON-aware SQL predicate.
+      const candidates = await this.recordingRepository.find({
+        where: { status: 'in_progress' },
+      });
+      if (candidates.length === 0) return;
+
+      const now = Date.now();
+      const expired = candidates.filter((rec) => {
+        const planned = parsePlannedDurationSecFromMetadata(rec.metadata);
+        if (planned == null) return false; // no planned duration → don't touch
+        const startMs = new Date(rec.startTime).getTime();
+        if (!Number.isFinite(startMs)) return false;
+        return (
+          now >= startMs + planned * 1000 + RecordingService.AUTO_STOP_GRACE_MS
+        );
+      });
+
+      if (expired.length === 0) return;
+      this.logger.log(
+        `autoStopExpiredRecordings: ${expired.length} session(s) past planned end — stopping`,
+      );
+
+      for (const rec of expired) {
+        try {
+          const planned = parsePlannedDurationSecFromMetadata(rec.metadata);
+          const overrunSec = Math.max(
+            0,
+            Math.floor(
+              (now - new Date(rec.startTime).getTime()) / 1000 - (planned ?? 0),
+            ),
+          );
+          this.logger.log(
+            `autoStopExpiredRecordings: stopping ${rec.id} ` +
+              `(camera=${rec.cameraId}, planned=${planned}s, overrun=${overrunSec}s)`,
+          );
+          await this.stopRecording(rec.id);
+        } catch (e) {
+          // Log and continue — one bad recording shouldn't block the
+          // others. The next cron tick will retry naturally if the row
+          // is still in_progress.
+          this.logger.warn(
+            `autoStopExpiredRecordings: failed to stop ${rec.id}: ${
+              (e as Error)?.message ?? e
+            }`,
+          );
+        }
+      }
+    } catch (e) {
+      this.logger.error(
+        `autoStopExpiredRecordings: unexpected error — ${(e as Error)?.message ?? e}`,
+      );
+    } finally {
+      this.autoStopRunning = false;
+    }
   }
 
   /**
@@ -1050,6 +1157,130 @@ export class RecordingService {
   /**
    * Converts seconds to HH:MM:SS format
    */
+
+  /**
+   * Camera activity for the current day, grouped by camera and by status.
+   *
+   * Built for incident triage: when "all recordings today have been rejected"
+   * the operator needs a fast answer to "which cameras are firing, and which
+   * status are their recordings landing in?". The query intentionally lives
+   * close to the recording table so a new admin endpoint can call it without
+   * hand-rolling SQL.
+   *
+   * Window is "today" in the server's local timezone, defined as
+   * `recordings.startTime >= CURRENT_DATE`. We also surface the most recent
+   * failed recording per camera with its raspberryPiRecordingId and any
+   * captured metadata.error so the operator can jump straight to logs.
+   */
+  async cameraActivityToday(): Promise<{
+    asOf: string;
+    cameras: Array<{
+      cameraId: string | null;
+      cameraName: string | null;
+      court_number: number | null;
+      turfName: string | null;
+      total: number;
+      byStatus: Record<string, number>;
+      lastFailedAt: string | null;
+      lastFailedRecordingId: string | null;
+      lastFailedRaspberryPiRecordingId: string | null;
+    }>;
+    totalsAllCameras: Record<string, number>;
+  }> {
+    // SQL is the cleanest tool for grouped counts. Raw query keeps the
+    // join shape explicit and avoids loading recording rows into memory
+    // just to bucket them by status.
+    const rows: Array<{
+      cameraId: string | null;
+      cameraName: string | null;
+      court_number: number | null;
+      turfName: string | null;
+      status: string;
+      count: string;
+    }> = await this.recordingRepository.query(
+      `SELECT r."cameraId"            AS "cameraId",
+              c.name                  AS "cameraName",
+              c.court_number          AS "court_number",
+              t.name                  AS "turfName",
+              r.status                AS status,
+              COUNT(*)::text          AS count
+         FROM recordings r
+    LEFT JOIN cameras c ON c.id = r."cameraId"
+    LEFT JOIN turfs   t ON t.id = c."turfId"
+        WHERE r."startTime" >= CURRENT_DATE
+     GROUP BY r."cameraId", c.name, c.court_number, t.name, r.status
+     ORDER BY t.name NULLS LAST, c.court_number NULLS LAST, r.status`,
+    );
+
+    // Last failed recording per camera — pulled in a second query so we
+    // can surface the most actionable failure for each camera.
+    const failedRows: Array<{
+      cameraId: string | null;
+      lastFailedAt: string | null;
+      lastFailedRecordingId: string | null;
+      lastFailedRaspberryPiRecordingId: string | null;
+    }> = await this.recordingRepository.query(
+      `SELECT DISTINCT ON (r."cameraId")
+              r."cameraId"               AS "cameraId",
+              r."startTime"              AS "lastFailedAt",
+              r.id                       AS "lastFailedRecordingId",
+              r."raspberryPiRecordingId" AS "lastFailedRaspberryPiRecordingId"
+         FROM recordings r
+        WHERE r."startTime" >= CURRENT_DATE
+          AND r.status = 'failed'
+     ORDER BY r."cameraId", r."startTime" DESC`,
+    );
+    const failedByCamera = new Map(failedRows.map((f) => [f.cameraId, f]));
+
+    // Bucket by cameraId so the response collapses status rows into a single
+    // entry per camera with a status-count map.
+    const byCam = new Map<string, ReturnType<typeof emptyCam>>();
+    const emptyCam = () => ({
+      cameraId: null as string | null,
+      cameraName: null as string | null,
+      court_number: null as number | null,
+      turfName: null as string | null,
+      total: 0,
+      byStatus: {} as Record<string, number>,
+      lastFailedAt: null as string | null,
+      lastFailedRecordingId: null as string | null,
+      lastFailedRaspberryPiRecordingId: null as string | null,
+    });
+    const totalsAllCameras: Record<string, number> = {};
+    for (const row of rows) {
+      const key = row.cameraId ?? 'NULL';
+      const cell = byCam.get(key) ?? emptyCam();
+      cell.cameraId = row.cameraId;
+      cell.cameraName = row.cameraName;
+      cell.court_number =
+        row.court_number == null ? null : Number(row.court_number);
+      cell.turfName = row.turfName;
+      const n = Number(row.count);
+      cell.byStatus[row.status] = (cell.byStatus[row.status] ?? 0) + n;
+      cell.total += n;
+      totalsAllCameras[row.status] = (totalsAllCameras[row.status] ?? 0) + n;
+      const f = failedByCamera.get(row.cameraId ?? null);
+      if (f) {
+        cell.lastFailedAt = f.lastFailedAt
+          ? new Date(f.lastFailedAt).toISOString()
+          : null;
+        cell.lastFailedRecordingId = f.lastFailedRecordingId;
+        cell.lastFailedRaspberryPiRecordingId =
+          f.lastFailedRaspberryPiRecordingId;
+      }
+      byCam.set(key, cell);
+    }
+
+    return {
+      asOf: new Date().toISOString(),
+      cameras: Array.from(byCam.values()).sort((a, b) => {
+        const ta = (a.turfName ?? '').localeCompare(b.turfName ?? '');
+        if (ta !== 0) return ta;
+        return (a.court_number ?? 0) - (b.court_number ?? 0);
+      }),
+      totalsAllCameras,
+    };
+  }
 
   /**
    * Mux-ready recordings for admin FlickShort creation (picker + preview).

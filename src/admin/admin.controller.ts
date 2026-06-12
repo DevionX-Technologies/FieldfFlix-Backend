@@ -53,6 +53,23 @@ export class AdminController {
     return this.recordingService.listMuxReadyRecordingsForAdmin();
   }
 
+  /**
+   * Per-camera recording activity for the current day, grouped by status.
+   *
+   * Designed for incident triage when the operator sees a spike of "failed"
+   * recordings and needs to know whether the failures are concentrated on
+   * one Raspberry Pi or spread across the fleet. Response also surfaces the
+   * most recent failed recording per camera with its raspberryPiRecordingId
+   * so the operator can jump straight to the Pi’s logs.
+   *
+   *   GET /admin/cameras-today
+   */
+  @Get('cameras-today')
+  async camerasToday(@Req() req: Request & { user: ILocalLoginPayload }) {
+    await this.assertAdmin(req.user.user_id);
+    return this.recordingService.cameraActivityToday();
+  }
+
   @Get('phones')
   async listPhones(@Req() req: Request & { user: ILocalLoginPayload }) {
     await this.assertAdmin(req.user.user_id);
