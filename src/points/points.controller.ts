@@ -5,6 +5,8 @@ import {
   Get,
   Param,
   Patch,
+  Post,
+  Delete,
   Query,
   Req,
   UsePipes,
@@ -18,6 +20,7 @@ import { UserService } from 'src/user/user.service';
 import { PointEventType } from './entities/point-event.entity';
 import { PointsService } from './points.service';
 import { UpdatePointConfigDto } from './dto/update-config.dto';
+import { UpsertLevelDto } from './dto/upsert-level.dto';
 
 @ApiTags('points')
 @ApiBearerAuth('access-token')
@@ -103,6 +106,50 @@ export class PointsController {
       enabled: updated.enabled,
       updatedAt: updated.updatedAt.toISOString(),
     };
+  }
+
+  /** Admin/User: list all level configs. */
+  @Get('levels')
+  @ApiOperation({ summary: 'Admin/User: list all level configs' })
+  async listLevels() {
+    return this.points.listLevels();
+  }
+
+  /** Admin: create or update a level config. */
+  @Post('levels')
+  @ApiOperation({ summary: 'Admin: create or update a level config' })
+  async upsertLevel(
+    @Req() req: Request & { user: ILocalLoginPayload },
+    @Body() body: UpsertLevelDto,
+  ) {
+    await this.assertAdmin(req.user.user_id);
+    const updated = await this.points.createOrUpdateLevel(
+      body.level,
+      body.minPoints,
+      body.name,
+    );
+    return {
+      level: updated.level,
+      minPoints: updated.minPoints,
+      name: updated.name,
+      updatedAt: updated.updatedAt.toISOString(),
+    };
+  }
+
+  /** Admin: delete a level config. */
+  @Delete('levels/:level')
+  @ApiOperation({ summary: 'Admin: delete a level config' })
+  async deleteLevel(
+    @Req() req: Request & { user: ILocalLoginPayload },
+    @Param('level') levelRaw: string,
+  ) {
+    await this.assertAdmin(req.user.user_id);
+    const level = Number(levelRaw);
+    if (Number.isNaN(level) || level < 1) {
+      throw new ForbiddenException('Invalid level');
+    }
+    await this.points.deleteLevel(level);
+    return { success: true };
   }
 
   private async assertAdmin(userId: string): Promise<void> {

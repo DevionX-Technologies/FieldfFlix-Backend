@@ -4,17 +4,13 @@ import { DataSource, Repository } from 'typeorm';
 import { createHash } from 'crypto';
 import { PointEvent, PointEventType } from './entities/point-event.entity';
 import { PointConfig } from './entities/point-config.entity';
+import { LevelConfig } from './entities/level-config.entity';
 import { UserPoints } from './entities/user-points.entity';
 import { User } from 'src/user/entities/user.entity';
 import { NotificationEntity } from 'src/notification/entities/notification.entity';
 import { FireBaseNotificationService } from 'src/common/service/fire-base.service';
 import { MessageStatus, NotificationType } from 'src/constant/enum';
 
-/**
- * Default per-event point values + admin-facing labels. Used to seed
- * `point_configs` on first boot, and as a fallback when a config row is
- * missing (e.g. between code releases that introduce a new event type).
- */
 const DEFAULT_CONFIGS: Record<
   PointEventType,
   { points: number; label: string }
@@ -38,6 +34,14 @@ const DEFAULT_CONFIGS: Record<
   },
 };
 
+const DEFAULT_LEVELS = [
+  { level: 1, minPoints: 0, name: 'Bronze' },
+  { level: 2, minPoints: 10, name: 'Silver' },
+  { level: 3, minPoints: 30, name: 'Gold' },
+  { level: 4, minPoints: 60, name: 'Pro' },
+  { level: 5, minPoints: 100, name: 'Legend' },
+];
+
 @Injectable()
 export class PointsService implements OnModuleInit {
   private readonly logger = new Logger(PointsService.name);
@@ -48,6 +52,8 @@ export class PointsService implements OnModuleInit {
     private readonly eventRepo: Repository<PointEvent>,
     @InjectRepository(PointConfig)
     private readonly configRepo: Repository<PointConfig>,
+    @InjectRepository(LevelConfig)
+    private readonly levelConfigRepo: Repository<LevelConfig>,
     @InjectRepository(UserPoints)
     private readonly userPointsRepo: Repository<UserPoints>,
     @InjectRepository(User)
@@ -59,6 +65,22 @@ export class PointsService implements OnModuleInit {
 
   async onModuleInit(): Promise<void> {
     await this.ensureDefaults();
+    await this.ensureDefaultLevels();
+  }
+
+  async ensureDefaultLevels(): Promise<void> {
+    const existing = await this.levelConfigRepo.find();
+    if (existing.length === 0) {
+      const toInsert = DEFAULT_LEVELS.map((dl) =>
+        this.levelConfigRepo.create({
+          level: dl.level,
+          minPoints: dl.minPoints,
+          name: dl.name,
+        }),
+      );
+      await this.levelConfigRepo.save(toInsert);
+      this.logger.log(`Seeded ${toInsert.length} default level configurations.`);
+    }
   }
 
   /**
@@ -344,6 +366,10 @@ export class PointsService implements OnModuleInit {
       points: number;
       count: number;
     }>;
+    level: number;
+    levelName: string | null;
+    nextLevelPoints: number | null;
+    levelProgress: number;
   }> {
     const total = await this.userPointsRepo.findOne({ where: { userId } });
     const rows = await this.eventRepo
@@ -363,7 +389,15 @@ export class PointsService implements OnModuleInit {
       points: Number(r.points ?? 0),
       count: Number(r.count ?? 0),
     }));
-    return { totalPoints: total?.totalPoints ?? 0, perEvent };
+
+    const totalPoints = total?.totalPoints ?? 0;
+    const levelData = await this.calculateLevel(totalPoints);
+
+    return {
+      totalPoints,
+      perEvent,
+      ...levelData,
+    };
   }
 
   /** Recent point-award timeline for a user (newest first). */
@@ -545,5 +579,69 @@ export class PointsService implements OnModuleInit {
       row.label = patch.label.trim();
     if (patch.enabled != null) row.enabled = patch.enabled;
     return this.configRepo.save(row);
+  }
+
+  async calculateLevel(points: number): Promise<{
+    level: number;
+    levelName: string | null;
+    nextLevelPoints: number | null;
+    levelProgress: number;
+  }> {
+    const configs = await this.levelConfigRepo.find({ order: { minPoints: 'ASC' } });
+    if (configs.length === 0) {
+      return {
+        level: 1,
+        levelName: 'Bronze',
+        nextLevelPoints: 10,
+        levelProgress: Math.min(1, points / 10),
+      };
+    }
+    let currentConfig = configs[0];
+    let nextConfig = null;
+    for (let i = 0; i < configs.length; i++) {
+      if (points >= configs[i].minPoints) {
+        currentConfig = configs[i];
+        nextConfig = configs[i + 1] || null;
+      } else {
+        break;
+      }
+    }
+    let progress = 0;
+    if (nextConfig) {
+      const range = nextConfig.minPoints - currentConfig.minPoints;
+      if (range > 0) {
+        progress = (points - currentConfig.minPoints) / range;
+      }
+    } else {
+      progress = 1.0;
+    }
+    return {
+      level: currentConfig.level,
+      levelName: currentConfig.name || `Level ${currentConfig.level}`,
+      nextLevelPoints: nextConfig ? nextConfig.minPoints : null,
+      levelProgress: Math.min(1.0, Math.max(0.0, progress)),
+    };
+  }
+
+  async listLevels(): Promise<LevelConfig[]> {
+    return this.levelConfigRepo.find({ order: { level: 'ASC' } });
+  }
+
+  async createOrUpdateLevel(
+    level: number,
+    minPoints: number,
+    name?: string,
+  ): Promise<LevelConfig> {
+    let row = await this.levelConfigRepo.findOne({ where: { level } });
+    if (!row) {
+      row = this.levelConfigRepo.create({ level });
+    }
+    row.minPoints = minPoints;
+    if (name !== undefined) row.name = name.trim();
+    return this.levelConfigRepo.save(row);
+  }
+
+  async deleteLevel(level: number): Promise<void> {
+    await this.levelConfigRepo.delete({ level });
   }
 }

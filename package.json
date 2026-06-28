@@ -106,6 +106,7 @@
     "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
+    "@aws-sdk/client-cloudwatch-logs": "^3.1067.0",
     "@nestjs/cli": "^10.0.0",
     "@nestjs/schematics": "^10.0.0",
     "@nestjs/swagger": "^7.4.2",

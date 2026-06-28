@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { PointEvent } from './entities/point-event.entity';
 import { UserPoints } from './entities/user-points.entity';
 import { PointConfig } from './entities/point-config.entity';
+import { LevelConfig } from './entities/level-config.entity';
 import { PointsService } from './points.service';
 import { PointsController } from './points.controller';
 import { AdminModule } from 'src/admin/admin.module';
@@ -30,6 +31,7 @@ import { NotificationEntity } from 'src/notification/entities/notification.entit
       PointEvent,
       UserPoints,
       PointConfig,
+      LevelConfig,
       User,
       NotificationEntity,
     ]),
