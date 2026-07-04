@@ -290,7 +290,7 @@ export class PointsService implements OnModuleInit {
     const totalPoints = totals?.totalPoints ?? args.points;
 
     const title = `+${args.points} pts! 🎉`;
-    const body = `${args.label} — you now have ${totalPoints} pts.`;
+    const body = `${args.label} - you now have ${totalPoints} pts.`;
 
     // Push to every device the user has registered. We swallow per-device
     // errors so a single bad token doesn't kill the loop for the rest.
