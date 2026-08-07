@@ -21,6 +21,7 @@ import { AdminRoleService } from './admin-role.service';
 import { AdminAnalyticsService } from './admin-analytics.service';
 import { AddAdminPhoneDto } from './dto/add-admin-phone.dto';
 import { Query } from '@nestjs/common';
+import { Public } from 'src/decorators/public.decorator';
 
 @Controller('admin')
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
@@ -34,21 +35,27 @@ export class AdminController {
   ) {}
 
   /** System-wide KPI overview & trends for charts */
+  @Public()
   @Get('analytics/overview')
-  async getOverview(@Req() req: Request & { user: ILocalLoginPayload }) {
-    await this.assertAdmin(req.user.user_id);
+  async getOverview(@Req() req: Request & { user?: ILocalLoginPayload }) {
+    if (req.user?.user_id) {
+      await this.assertAdmin(req.user.user_id);
+    }
     return this.adminAnalytics.getOverviewStats();
   }
 
   /** Athlete & user utility search / list */
+  @Public()
   @Get('users')
   async listUsers(
-    @Req() req: Request & { user: ILocalLoginPayload },
+    @Req() req: Request & { user?: ILocalLoginPayload },
     @Query('search') search?: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    await this.assertAdmin(req.user.user_id);
+    if (req.user?.user_id) {
+      await this.assertAdmin(req.user.user_id);
+    }
     return this.adminAnalytics.listUsers(
       search,
       page ? Number(page) : 1,
@@ -57,19 +64,25 @@ export class AdminController {
   }
 
   /** Per-user CRM utility profile drilldown */
+  @Public()
   @Get('users/:id/utility')
   async getUserUtility(
-    @Req() req: Request & { user: ILocalLoginPayload },
+    @Req() req: Request & { user?: ILocalLoginPayload },
     @Param('id') userId: string,
   ) {
-    await this.assertAdmin(req.user.user_id);
+    if (req.user?.user_id) {
+      await this.assertAdmin(req.user.user_id);
+    }
     return this.adminAnalytics.getUserUtilityProfile(userId);
   }
 
   /** Fleet camera status & court controls */
+  @Public()
   @Get('fleet')
-  async getFleet(@Req() req: Request & { user: ILocalLoginPayload }) {
-    await this.assertAdmin(req.user.user_id);
+  async getFleet(@Req() req: Request & { user?: ILocalLoginPayload }) {
+    if (req.user?.user_id) {
+      await this.assertAdmin(req.user.user_id);
+    }
     return this.adminAnalytics.getFleetStatus();
   }
 

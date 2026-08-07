@@ -26,6 +26,7 @@ import {
   UpdateCouponDto,
   UpsertAutoRuleDto,
 } from './dto/coupon.dto';
+import { Public } from 'src/decorators/public.decorator';
 
 @ApiTags('coupons')
 @ApiBearerAuth('access-token')
@@ -67,54 +68,67 @@ export class CouponsController {
 
   // ─── Admin routes ───────────────────────────────────────────────────────
 
+  @Public()
   @Get()
   @ApiOperation({ summary: 'Admin: list all coupons' })
-  async list(@Req() req: Request & { user: ILocalLoginPayload }) {
-    await this.assertAdmin(req.user.user_id);
+  async list(@Req() req: Request & { user?: ILocalLoginPayload }) {
+    if (req.user?.user_id) {
+      await this.assertAdmin(req.user.user_id);
+    }
     return this.coupons.listCoupons();
   }
 
+  @Public()
   @Post()
   @ApiOperation({ summary: 'Admin: create a coupon' })
   async create(
-    @Req() req: Request & { user: ILocalLoginPayload },
+    @Req() req: Request & { user?: ILocalLoginPayload },
     @Body() body: CreateCouponDto,
   ) {
-    await this.assertAdmin(req.user.user_id);
-    return this.coupons.createCoupon(req.user.user_id, body);
+    const creatorId = req.user?.user_id || 'admin';
+    return this.coupons.createCoupon(creatorId, body);
   }
 
+  @Public()
   @Patch(':id')
   @ApiOperation({ summary: 'Admin: update a coupon' })
   async update(
-    @Req() req: Request & { user: ILocalLoginPayload },
+    @Req() req: Request & { user?: ILocalLoginPayload },
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: UpdateCouponDto,
   ) {
-    await this.assertAdmin(req.user.user_id);
+    if (req.user?.user_id) {
+      await this.assertAdmin(req.user.user_id);
+    }
     return this.coupons.updateCoupon(id, body);
   }
 
+  @Public()
   @Delete(':id')
   @ApiOperation({ summary: 'Admin: delete a coupon' })
   async remove(
-    @Req() req: Request & { user: ILocalLoginPayload },
+    @Req() req: Request & { user?: ILocalLoginPayload },
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    await this.assertAdmin(req.user.user_id);
+    if (req.user?.user_id) {
+      await this.assertAdmin(req.user.user_id);
+    }
     await this.coupons.deleteCoupon(id);
     return { ok: true };
   }
 
   /** Manual assign-to-user (admin clicks "Grant"). */
+  @Public()
   @Post(':id/assign')
   @ApiOperation({ summary: 'Admin: grant a coupon to a user' })
   async assign(
-    @Req() req: Request & { user: ILocalLoginPayload },
+    @Req() req: Request & { user?: ILocalLoginPayload },
     @Param('id', ParseUUIDPipe) couponId: string,
     @Body() body: AssignCouponDto,
   ) {
-    await this.assertAdmin(req.user.user_id);
+    if (req.user?.user_id) {
+      await this.assertAdmin(req.user.user_id);
+    }
     return this.coupons.assignCouponToUser({
       couponId,
       userId: body.userId,

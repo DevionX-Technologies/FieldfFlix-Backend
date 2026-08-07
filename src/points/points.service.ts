@@ -79,7 +79,9 @@ export class PointsService implements OnModuleInit {
         }),
       );
       await this.levelConfigRepo.save(toInsert);
-      this.logger.log(`Seeded ${toInsert.length} default level configurations.`);
+      this.logger.log(
+        `Seeded ${toInsert.length} default level configurations.`,
+      );
     }
   }
 
@@ -290,7 +292,7 @@ export class PointsService implements OnModuleInit {
     const totalPoints = totals?.totalPoints ?? args.points;
 
     const title = `+${args.points} pts! 🎉`;
-    const body = `${args.label} — you now have ${totalPoints} pts.`;
+    const body = `${args.label}, you now have ${totalPoints} pts.`;
 
     // Push to every device the user has registered. We swallow per-device
     // errors so a single bad token doesn't kill the loop for the rest.
@@ -587,7 +589,9 @@ export class PointsService implements OnModuleInit {
     nextLevelPoints: number | null;
     levelProgress: number;
   }> {
-    const configs = await this.levelConfigRepo.find({ order: { minPoints: 'ASC' } });
+    const configs = await this.levelConfigRepo.find({
+      order: { minPoints: 'ASC' },
+    });
     if (configs.length === 0) {
       return {
         level: 1,
