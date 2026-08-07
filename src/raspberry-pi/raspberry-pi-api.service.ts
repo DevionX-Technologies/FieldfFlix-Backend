@@ -1,4 +1,9 @@
-import { Injectable, Logger } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  BadGatewayException,
+  HttpStatus,
+} from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 
@@ -47,7 +52,8 @@ export interface PiHealthResponse {
 @Injectable()
 export class RaspberryPiApiService {
   private readonly logger = new Logger(RaspberryPiApiService.name);
-  private readonly apiKey = process.env.RASPBERRY_PI_API_KEY;
+  private readonly apiKey =
+    process.env.PI_API_KEY || 'fieldflix-pi-secret-key-2024';
 
   constructor(private readonly httpService: HttpService) {}
 
@@ -72,7 +78,7 @@ export class RaspberryPiApiService {
     payload: ExtractSessionPayload,
   ): Promise<ExtractSessionResponse> {
     this.logger.log(
-      `Calling Pi to extract session ${payload.recordingId} (Channel ${payload.channel}, ${payload.startTime} to ${payload.endTime}) via ${raspberryPiBaseUrl}`,
+      `Triggering extraction on Pi (${raspberryPiBaseUrl}) for Recording ${payload.recordingId} (Channel ${payload.channel})`,
     );
     try {
       const response = await firstValueFrom(
@@ -89,11 +95,15 @@ export class RaspberryPiApiService {
         ),
       );
       return response.data as ExtractSessionResponse;
-    } catch (error) {
+    } catch (error: any) {
+      const errMsg =
+        error.response?.data?.message || error.message || 'Network error';
       this.logger.error(
-        `Error extracting session on Pi (${raspberryPiBaseUrl}): ${error.message}`,
+        `Error extracting session on Pi (${raspberryPiBaseUrl}): ${errMsg}`,
       );
-      throw new Error(`Failed to extract session: ${error.message}`);
+      throw new BadGatewayException(
+        `Failed to communicate with Raspberry Pi at ${raspberryPiBaseUrl}: ${errMsg}`,
+      );
     }
   }
 
@@ -114,15 +124,24 @@ export class RaspberryPiApiService {
               'X-API-KEY': this.apiKey,
               'Content-Type': 'application/json',
             },
+            timeout: 10000,
           },
         ),
       );
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
+      const errMsg =
+        error.response?.data?.message || error.message || 'Device unresponsive';
       this.logger.error(
-        `Error starting live stream on Pi (${raspberryPiBaseUrl}): ${error.message}`,
+        `Error starting live stream on Pi (${raspberryPiBaseUrl}): ${errMsg}`,
       );
-      throw new Error(`Failed to start live stream: ${error.message}`);
+      throw new BadGatewayException({
+        statusCode: HttpStatus.BAD_GATEWAY,
+        error: 'Edge Device Unresponsive',
+        message: `Raspberry Pi bridge at ${raspberryPiBaseUrl} is offline or unreachable (${errMsg}). Verify that the court device is powered on and Pinggy tunnel is active.`,
+        piUrl: raspberryPiBaseUrl,
+        channel: payload.channel,
+      });
     }
   }
 
@@ -143,15 +162,24 @@ export class RaspberryPiApiService {
               'X-API-KEY': this.apiKey,
               'Content-Type': 'application/json',
             },
+            timeout: 10000,
           },
         ),
       );
       return response.data;
-    } catch (error) {
+    } catch (error: any) {
+      const errMsg =
+        error.response?.data?.message || error.message || 'Device unresponsive';
       this.logger.error(
-        `Error stopping live stream on Pi (${raspberryPiBaseUrl}): ${error.message}`,
+        `Error stopping live stream on Pi (${raspberryPiBaseUrl}): ${errMsg}`,
       );
-      throw new Error(`Failed to stop live stream: ${error.message}`);
+      throw new BadGatewayException({
+        statusCode: HttpStatus.BAD_GATEWAY,
+        error: 'Edge Device Unresponsive',
+        message: `Raspberry Pi bridge at ${raspberryPiBaseUrl} did not respond: ${errMsg}`,
+        piUrl: raspberryPiBaseUrl,
+        channel: payload.channel,
+      });
     }
   }
 
