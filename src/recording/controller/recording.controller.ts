@@ -190,6 +190,7 @@ export class RecordingController {
   /**
    * Starts a real-time Mux Live Stream for a court camera.
    */
+  @Public()
   @Post('start-live-stream')
   @ApiOperation({ summary: 'Start Mux live streaming for a court camera' })
   @ApiResponse({
@@ -203,6 +204,7 @@ export class RecordingController {
   /**
    * Stops an active Mux Live Stream for a court camera.
    */
+  @Public()
   @Post('stop-live-stream')
   @ApiOperation({ summary: 'Stop Mux live streaming for a court camera' })
   @ApiResponse({
