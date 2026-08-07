@@ -32,6 +32,12 @@ import {
 } from '@nestjs/swagger';
 import { StartRecordingDto } from '../dto/start-recording.dto';
 import {
+  ExtractSessionRequestDto,
+  PiCallbackDto,
+  StartCourtLiveStreamDto,
+  StopCourtLiveStreamDto,
+} from '../dto/extract-session.dto';
+import {
   FindAndClaimRecordingDto,
   FindRecordingsDto,
 } from '../dto/find-claim-recording.dto';
@@ -138,6 +144,73 @@ export class RecordingController {
     console.log('Stop recording requested for ID', recordingId);
     // Call service method to stop recording
     return this.recordingService.stopRecording(recordingId);
+  }
+
+  /**
+   * On-Demand match session extraction from NVR Edge Bridge.
+   */
+  @Post('extract-session')
+  @ApiOperation({
+    summary: 'Request on-demand match video extraction from NVR Edge Bridge',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Extraction dispatched or served from cache',
+  })
+  async requestExtraction(
+    @Body(ValidationPipe) dto: ExtractSessionRequestDto,
+    @Req() req: Request,
+  ) {
+    let userId: string | undefined;
+    try {
+      const tokenData = await this.commonService.extractDataFromToken(req);
+      userId = tokenData?.user_id;
+    } catch {
+      // Allow optional user attribution
+    }
+    return this.recordingService.requestOnDemandExtraction(dto, userId);
+  }
+
+  /**
+   * Webhook callback for Raspberry Pi to notify backend upon upload completion.
+   */
+  @Public()
+  @Post('pi-callback')
+  @ApiOperation({
+    summary: 'Asynchronous webhook callback for Edge Pi upload completion',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Callback processed successfully',
+  })
+  async handlePiCallback(@Body(ValidationPipe) dto: PiCallbackDto) {
+    return this.recordingService.handlePiExtractionCallback(dto);
+  }
+
+  /**
+   * Starts a real-time Mux Live Stream for a court camera.
+   */
+  @Post('start-live-stream')
+  @ApiOperation({ summary: 'Start Mux live streaming for a court camera' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Live stream started successfully',
+  })
+  async startLiveStream(@Body(ValidationPipe) dto: StartCourtLiveStreamDto) {
+    return this.recordingService.startCourtLiveStream(dto);
+  }
+
+  /**
+   * Stops an active Mux Live Stream for a court camera.
+   */
+  @Post('stop-live-stream')
+  @ApiOperation({ summary: 'Stop Mux live streaming for a court camera' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Live stream stopped successfully',
+  })
+  async stopLiveStream(@Body(ValidationPipe) dto: StopCourtLiveStreamDto) {
+    return this.recordingService.stopCourtLiveStream(dto);
   }
 
   /**

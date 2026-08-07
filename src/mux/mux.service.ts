@@ -445,4 +445,63 @@ export class MuxService {
       return null;
     }
   }
+
+  /**
+   * Creates a Mux Live Stream for real-time court match streaming.
+   * Returns the RTMP ingest stream key and public/signed playback ID.
+   */
+  async createLiveStream(): Promise<{
+    liveStreamId: string;
+    streamKey: string;
+    playbackId: string;
+    rtmpUrl: string;
+    playbackUrl: string;
+  }> {
+    try {
+      this.logger.log('Creating new Mux Live Stream');
+      const liveStream = await this.mux.video.liveStreams.create({
+        playback_policy: ['public'],
+        new_asset_settings: {
+          playback_policy: ['public'],
+        },
+        reduced_latency: true,
+      });
+
+      const playbackId = liveStream.playback_ids?.[0]?.id || '';
+      const streamKey = liveStream.stream_key || '';
+      const rtmpUrl = `rtmps://global-live.mux.com:443/app/${streamKey}`;
+      const playbackUrl = `https://stream.mux.com/${playbackId}.m3u8`;
+
+      this.logger.log(
+        `Created Mux Live Stream: ${liveStream.id}, Playback ID: ${playbackId}`,
+      );
+      return {
+        liveStreamId: liveStream.id,
+        streamKey,
+        playbackId,
+        rtmpUrl,
+        playbackUrl,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to create Mux Live Stream: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Disables or closes an active Mux Live Stream.
+   */
+  async disableLiveStream(liveStreamId: string): Promise<void> {
+    try {
+      this.logger.log(`Disabling Mux Live Stream: ${liveStreamId}`);
+      await this.mux.video.liveStreams.disable(liveStreamId);
+    } catch (error) {
+      this.logger.error(
+        `Failed to disable Mux Live Stream ${liveStreamId}: ${error.message}`,
+      );
+    }
+  }
 }

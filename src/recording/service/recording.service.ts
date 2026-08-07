@@ -13,6 +13,12 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, Not, QueryRunner, Repository } from 'typeorm';
 import { StartRecordingDto } from '../dto/start-recording.dto';
 import {
+  ExtractSessionRequestDto,
+  PiCallbackDto,
+  StartCourtLiveStreamDto,
+  StopCourtLiveStreamDto,
+} from '../dto/extract-session.dto';
+import {
   FindAndClaimRecordingDto,
   FindRecordingsDto,
 } from '../dto/find-claim-recording.dto';
@@ -443,7 +449,7 @@ export class RecordingService {
         return savedRecording;
       } else {
         const title = 'Lights, camera, action 🎬';
-        const body = 'Your game is now live - make every move count!';
+        const body = 'Your game is now live, make every move count!';
         const notification_type = NotificationType.RECORDING_START;
         const dbData = [
           {
@@ -2876,5 +2882,245 @@ export class RecordingService {
       }
     }
     return matches;
+  }
+
+  /**
+   * On-Demand match session extraction from NVR Edge Bridge.
+   * 1. Checks if exact match recording is already extracted & uploaded (Cache Hit).
+   * 2. If not, generates an S3 pre-signed upload URL and dispatches extraction to Pi.
+   * 3. Handles immediate synchronous response or async webhook.
+   */
+  async requestOnDemandExtraction(
+    dto: ExtractSessionRequestDto,
+    requestingUserId?: string,
+  ): Promise<any> {
+    const camera = await this.cameraRepository.findOne({
+      where: { id: dto.cameraId },
+    });
+
+    if (!camera) {
+      throw new NotFoundException(`Camera not found with ID: ${dto.cameraId}`);
+    }
+
+    if (!camera.raspberryPiBaseUrl) {
+      throw new BadRequestException(
+        `Camera ${camera.name || camera.id} is not configured with an active Edge Pi Gateway URL.`,
+      );
+    }
+
+    const startDate = new Date(dto.startTime);
+    const endDate = new Date(dto.endTime);
+
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      throw new BadRequestException('Invalid startTime or endTime ISO format.');
+    }
+
+    if (endDate <= startDate) {
+      throw new BadRequestException(
+        'endTime must be strictly after startTime.',
+      );
+    }
+
+    // Check for cached / already completed recording matching this camera & time window
+    const existingRecording = await this.recordingRepositoryForMedia.findOne({
+      where: {
+        cameraId: camera.id,
+        startTime: startDate,
+        endTime: endDate,
+        status: 'completed',
+      },
+    });
+
+    if (existingRecording && existingRecording.mux_media_url) {
+      this.logger.log(
+        `Cache HIT for match extraction: recording ${existingRecording.id} already exists on Mux`,
+      );
+      return {
+        cached: true,
+        recording: existingRecording,
+        playbackUrl: existingRecording.mux_media_url,
+      };
+    }
+
+    // Create a new recording row in database
+    const recording = this.recordingRepositoryForMedia.create({
+      id: uuidv4(),
+      userId: requestingUserId || dto.userId || null,
+      turfId: camera.turfId,
+      cameraId: camera.id,
+      startTime: startDate,
+      endTime: endDate,
+      status: 'extracting',
+    });
+
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/[-:T.]/g, '')
+      .slice(0, 14);
+    const s3Key = `recordings/${recording.id}_${timestamp}.mp4`;
+    const bucketName =
+      process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
+    recording.s3Path = `s3://${bucketName}/${s3Key}`;
+
+    await this.recordingRepositoryForMedia.save(recording);
+
+    // Generate 4-hour pre-signed S3 PUT URL for Pi
+    const uploadUrl =
+      await this.fileServiceService.generateVideoUploadPresignedUrl(
+        s3Key,
+        14400,
+        bucketName,
+      );
+
+    const channelNumber = camera.court_number || 1;
+    const callbackWebhookUrl = `${process.env.APP_BASE_URL || 'https://api.devionx.com'}/recording/pi-callback`;
+
+    this.logger.log(
+      `Dispatching on-demand extraction for Recording ${recording.id} to Pi (${camera.raspberryPiBaseUrl}) on Channel ${channelNumber}`,
+    );
+
+    try {
+      const piResponse = await this.raspberryPiApiService.extractSession(
+        camera.raspberryPiBaseUrl,
+        {
+          recordingId: recording.id,
+          channel: channelNumber,
+          startTime: startDate.toISOString(),
+          endTime: endDate.toISOString(),
+          uploadUrl,
+          s3Key,
+          callbackWebhookUrl,
+        },
+      );
+
+      if (piResponse.status === 'SUCCESS') {
+        // Asynchronously trigger Mux asset creation from the uploaded S3 object
+        const s3SignedReadUrl =
+          await this.fileServiceService.getSignedUrlFromS3(s3Key, bucketName);
+        this.muxService
+          .uploadFromS3(s3SignedReadUrl, s3Key, recording.id)
+          .catch((err) => {
+            this.logger.error(
+              `Mux asset creation error for ${recording.id}: ${err.message}`,
+            );
+          });
+
+        await this.recordingRepositoryForMedia.update(recording.id, {
+          status: 'uploaded',
+        });
+      }
+
+      return {
+        cached: false,
+        recordingId: recording.id,
+        status: piResponse.status,
+        s3Path: recording.s3Path,
+        piResponse,
+      };
+    } catch (error) {
+      this.logger.error(`Pi extraction failed: ${error.message}`);
+      await this.recordingRepositoryForMedia.update(recording.id, {
+        status: 'failed',
+      });
+      throw new InternalServerErrorException(
+        `Failed to extract match video from venue NVR: ${error.message}`,
+      );
+    }
+  }
+
+  /**
+   * Handles asynchronous completion notifications from Raspberry Pi.
+   */
+  async handlePiExtractionCallback(
+    dto: PiCallbackDto,
+  ): Promise<{ success: boolean }> {
+    this.logger.log(
+      `Received Pi extraction callback for Recording ${dto.recordingId}: Status=${dto.status}`,
+    );
+
+    const recording = await this.recordingRepositoryForMedia.findOne({
+      where: { id: dto.recordingId },
+    });
+
+    if (!recording) {
+      throw new NotFoundException(`Recording not found: ${dto.recordingId}`);
+    }
+
+    if (dto.status === 'SUCCESS') {
+      const bucketName =
+        process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
+      const key =
+        dto.s3Key || recording.s3Path?.replace(`s3://${bucketName}/`, '');
+
+      if (key) {
+        const s3SignedReadUrl =
+          await this.fileServiceService.getSignedUrlFromS3(key, bucketName);
+        await this.muxService.uploadFromS3(s3SignedReadUrl, key, recording.id);
+      }
+
+      await this.recordingRepositoryForMedia.update(recording.id, {
+        status: 'uploaded',
+      });
+    } else {
+      await this.recordingRepositoryForMedia.update(recording.id, {
+        status: 'failed',
+      });
+    }
+
+    return { success: true };
+  }
+
+  /**
+   * Starts a real-time live stream for a court camera via Mux & Pi NVR relay.
+   */
+  async startCourtLiveStream(dto: StartCourtLiveStreamDto): Promise<any> {
+    const camera = await this.cameraRepository.findOne({
+      where: { id: dto.cameraId },
+    });
+
+    if (!camera || !camera.raspberryPiBaseUrl) {
+      throw new BadRequestException('Camera not found or Pi Base URL missing');
+    }
+
+    // 1. Create Mux Live Stream
+    const muxLive = await this.muxService.createLiveStream();
+
+    // 2. Command Pi to relay RTSP from NVR to Mux RTMP
+    const channelNumber = camera.court_number || 1;
+    await this.raspberryPiApiService.startLiveStream(
+      camera.raspberryPiBaseUrl,
+      {
+        channel: channelNumber,
+        rtmpUrl: muxLive.rtmpUrl,
+      },
+    );
+
+    return {
+      success: true,
+      cameraId: camera.id,
+      courtNumber: channelNumber,
+      liveStreamId: muxLive.liveStreamId,
+      playbackUrl: muxLive.playbackUrl,
+    };
+  }
+
+  /**
+   * Stops an active court live stream.
+   */
+  async stopCourtLiveStream(dto: StopCourtLiveStreamDto): Promise<any> {
+    const camera = await this.cameraRepository.findOne({
+      where: { id: dto.cameraId },
+    });
+
+    if (!camera || !camera.raspberryPiBaseUrl) {
+      throw new BadRequestException('Camera not found or Pi Base URL missing');
+    }
+
+    const channelNumber = camera.court_number || 1;
+    await this.raspberryPiApiService.stopLiveStream(camera.raspberryPiBaseUrl, {
+      channel: channelNumber,
+    });
+
+    return { success: true, cameraId: camera.id };
   }
 }

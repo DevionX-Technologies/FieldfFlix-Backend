@@ -267,4 +267,36 @@ export class FileServiceService {
       throw new BadRequestException(`Failed to upload file: ${error.message}`);
     }
   }
+
+  /**
+   * Generates a pre-signed S3 PUT URL for edge devices (Raspberry Pi / NVR bridge)
+   * to upload extracted match video clips directly to S3.
+   *
+   * @param s3Key The object key in the S3 bucket.
+   * @param expiresInSeconds The validity window (defaults to 4 hours / 14400s).
+   * @param bucketName Target S3 bucket name.
+   */
+  async generateVideoUploadPresignedUrl(
+    s3Key: string,
+    expiresInSeconds: number = 14400,
+    bucketName: string = process.env.AWS_S3_BUCKET_NAME ||
+      'fieldflicks-production-media',
+  ): Promise<string> {
+    try {
+      const command = new PutObjectCommand({
+        Bucket: bucketName,
+        Key: s3Key,
+        ContentType: 'video/mp4',
+      });
+      return await getSignedUrl(this.s3, command, {
+        expiresIn: expiresInSeconds,
+      });
+    } catch (error) {
+      this.logger.error(
+        `Error generating video upload presigned URL for ${s3Key}: ${error.message}`,
+        error.stack,
+      );
+      throw new InternalServerErrorException('Failed to generate upload URL');
+    }
+  }
 }
