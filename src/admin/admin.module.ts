@@ -5,29 +5,36 @@ import { UserModule } from 'src/user/user.module';
 import { AdminPhone } from './entities/admin-phone.entity';
 import { AdminController } from './admin.controller';
 import { AdminRoleService } from './admin-role.service';
+import { AdminAnalyticsService } from './admin-analytics.service';
+import { User } from 'src/user/entities/user.entity';
+import { Recording } from 'src/recording/entities/recording.entity';
+import { PaymentEntity } from 'src/payment/entities/payment.entity';
+import { TurfEntity } from 'src/turfs/entities/turfs.entity';
+import { Camera } from 'src/camera/camera.entity';
+import { Coupon } from 'src/coupons/entities/coupon.entity';
+import { CouponAssignment } from 'src/coupons/entities/coupon-assignment.entity';
+import { UserPoints } from 'src/points/entities/user-points.entity';
+import { PointEvent } from 'src/points/entities/point-event.entity';
 
-/**
- * AdminModule sits inside a cycle now that the gamification modules import
- * AdminRoleService:
- *
- *   RecordingModule → PaymentModule → PointsModule (or CouponsModule)
- *                                      → AdminModule
- *                                        → RecordingModule (← closes the loop)
- *
- * Wrapping `RecordingModule` in `forwardRef` defers the reference so Nest can
- * finish constructing both modules without one being `undefined` at import
- * resolution time. The matching `forwardRef(() => AdminModule)` lives in
- * `PointsModule` and `CouponsModule`. AdminController also injects
- * RecordingService behind a `forwardRef` (see admin.controller.ts).
- */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([AdminPhone]),
+    TypeOrmModule.forFeature([
+      AdminPhone,
+      User,
+      Recording,
+      PaymentEntity,
+      TurfEntity,
+      Camera,
+      Coupon,
+      CouponAssignment,
+      UserPoints,
+      PointEvent,
+    ]),
     UserModule,
     forwardRef(() => RecordingModule),
   ],
   controllers: [AdminController],
-  providers: [AdminRoleService],
-  exports: [AdminRoleService, TypeOrmModule],
+  providers: [AdminRoleService, AdminAnalyticsService],
+  exports: [AdminRoleService, AdminAnalyticsService, TypeOrmModule],
 })
 export class AdminModule {}

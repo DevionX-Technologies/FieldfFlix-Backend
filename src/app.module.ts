@@ -31,6 +31,7 @@ import { AdminModule } from './admin/admin.module';
 import { SupportModule } from './support/support.module';
 import { PointsModule } from './points/points.module';
 import { CouponsModule } from './coupons/coupons.module';
+import { TournamentModule } from './tournament/tournament.module';
 
 @Module({
   imports: [
@@ -71,6 +72,7 @@ import { CouponsModule } from './coupons/coupons.module';
     SupportModule,
     PointsModule,
     CouponsModule,
+    TournamentModule,
   ],
   controllers: [AppController, SharedMediaRootController],
   providers: [

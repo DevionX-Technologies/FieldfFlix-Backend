@@ -18,21 +18,60 @@ import { ILocalLoginPayload } from 'src/auth/strategy/jwt.strategy';
 import { RecordingService } from 'src/recording/service/recording.service';
 import { UserService } from 'src/user/user.service';
 import { AdminRoleService } from './admin-role.service';
+import { AdminAnalyticsService } from './admin-analytics.service';
 import { AddAdminPhoneDto } from './dto/add-admin-phone.dto';
+import { Query } from '@nestjs/common';
 
 @Controller('admin')
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class AdminController {
   constructor(
     private readonly adminRole: AdminRoleService,
+    private readonly adminAnalytics: AdminAnalyticsService,
     private readonly userService: UserService,
-    // `RecordingModule` is imported in `AdminModule` behind `forwardRef` to
-    // break the AdminModule ↔ RecordingModule cycle. The matching forwardRef
-    // here lets Nest resolve `RecordingService` lazily — without it the DI
-    // container sees `undefined` at construction time.
     @Inject(forwardRef(() => RecordingService))
     private readonly recordingService: RecordingService,
   ) {}
+
+  /** System-wide KPI overview & trends for charts */
+  @Get('analytics/overview')
+  async getOverview(@Req() req: Request & { user: ILocalLoginPayload }) {
+    await this.assertAdmin(req.user.user_id);
+    return this.adminAnalytics.getOverviewStats();
+  }
+
+  /** Athlete & user utility search / list */
+  @Get('users')
+  async listUsers(
+    @Req() req: Request & { user: ILocalLoginPayload },
+    @Query('search') search?: string,
+    @Query('page') page?: number,
+    @Query('limit') limit?: number,
+  ) {
+    await this.assertAdmin(req.user.user_id);
+    return this.adminAnalytics.listUsers(
+      search,
+      page ? Number(page) : 1,
+      limit ? Number(limit) : 50,
+    );
+  }
+
+  /** Per-user CRM utility profile drilldown */
+  @Get('users/:id/utility')
+  async getUserUtility(
+    @Req() req: Request & { user: ILocalLoginPayload },
+    @Param('id') userId: string,
+  ) {
+    await this.assertAdmin(req.user.user_id);
+    return this.adminAnalytics.getUserUtilityProfile(userId);
+  }
+
+  /** Fleet camera status & court controls */
+  @Get('fleet')
+  async getFleet(@Req() req: Request & { user: ILocalLoginPayload }) {
+    await this.assertAdmin(req.user.user_id);
+    return this.adminAnalytics.getFleetStatus();
+  }
 
   /** Any authenticated user: whether they have admin UI access. */
   @Get('me')
