@@ -53,7 +53,9 @@ export interface PiHealthResponse {
 export class RaspberryPiApiService {
   private readonly logger = new Logger(RaspberryPiApiService.name);
   private readonly apiKey =
-    process.env.PI_API_KEY || 'fieldflix-pi-secret-key-2024';
+    process.env.PI_API_KEY ||
+    process.env.RASPBERRY_PI_API_KEY ||
+    '9d6bdf976525e1641b6162ebd6c5d13ff9ee13345e7d6cfcd702b18293ebadfd';
 
   constructor(private readonly httpService: HttpService) {}
 

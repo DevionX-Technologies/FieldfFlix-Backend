@@ -193,7 +193,7 @@ export class AdminAnalyticsService {
     const offset = (page - 1) * limit;
 
     let countQuery = `SELECT COUNT(*)::int AS total FROM users u`;
-    let countParams: any[] = [];
+    const countParams: any[] = [];
 
     let usersQuery = `
       SELECT 
@@ -217,7 +217,7 @@ export class AdminAnalyticsService {
       FROM users u
       LEFT JOIN user_points up ON up."userId" = u.id
     `;
-    let userParams: any[] = [];
+    const userParams: any[] = [];
 
     if (search && search.trim()) {
       const s = `%${search.trim()}%`;
