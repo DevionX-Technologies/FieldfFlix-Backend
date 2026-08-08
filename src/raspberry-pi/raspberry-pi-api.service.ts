@@ -66,17 +66,39 @@ export class RaspberryPiApiService {
 
   constructor(private readonly httpService: HttpService) {}
 
+  /**
+   * Live streaming runs on Port 8443 on the Tailscale Funnel.
+   */
+  private getLiveBaseUrl(baseUrl: string): string {
+    const trimmed = (baseUrl || '').trim().replace(/\/+$/, '');
+    if (!trimmed) return trimmed;
+    if (trimmed.includes('.ts.net') && !trimmed.includes(':8443')) {
+      return `${trimmed}:8443`;
+    }
+    return trimmed;
+  }
+
+  /**
+   * Recordings / EVMS NVR extraction runs on standard HTTPS (Port 443).
+   */
+  private getRecordingsBaseUrl(baseUrl: string): string {
+    const trimmed = (baseUrl || '').trim().replace(/\/+$/, '');
+    if (!trimmed) return trimmed;
+    return trimmed.replace(/:8443$/, '').replace(/:8090$/, '');
+  }
+
   async checkHealth(raspberryPiBaseUrl: string): Promise<PiHealthResponse> {
+    const targetUrl = this.getLiveBaseUrl(raspberryPiBaseUrl);
     try {
       const response = await firstValueFrom(
-        this.httpService.get(`${raspberryPiBaseUrl}/health`, {
+        this.httpService.get(`${targetUrl}/health`, {
           timeout: 5000,
         }),
       );
       return response.data as PiHealthResponse;
     } catch (error) {
       this.logger.warn(
-        `Health check failed for ${raspberryPiBaseUrl}: ${error.message}`,
+        `Health check failed for ${targetUrl}: ${error.message}`,
       );
       return { status: 'UNREACHABLE' };
     }
@@ -86,32 +108,36 @@ export class RaspberryPiApiService {
     raspberryPiBaseUrl: string,
     payload: ExtractSessionPayload,
   ): Promise<ExtractSessionResponse> {
+    const targetUrl = this.getRecordingsBaseUrl(raspberryPiBaseUrl);
     this.logger.log(
-      `Triggering extraction on Pi (${raspberryPiBaseUrl}) for Recording ${payload.recordingId} (Channel ${payload.channel})`,
+      `Triggering extraction on Pi Recordings Gateway (${targetUrl}) for Recording ${payload.recordingId} (Channel ${payload.channel})`,
     );
     try {
       const response = await firstValueFrom(
         this.httpService.post(
-          `${raspberryPiBaseUrl}/extract-session`,
+          `${targetUrl}/extract-session`,
           payload,
           {
             headers: {
               'X-API-KEY': this.evmsApiKey,
               'Content-Type': 'application/json',
             },
-            timeout: 180000, // 3 minutes timeout for extraction and upload initiation
+            timeout: 300000, // 5 minutes timeout for slicing and uploading to S3
           },
         ),
       );
       return response.data as ExtractSessionResponse;
     } catch (error: any) {
       const errMsg =
-        error.response?.data?.message || error.message || 'Network error';
+        error.response?.data?.message ||
+        error.response?.data?.error ||
+        error.message ||
+        'Network error';
       this.logger.error(
-        `Error extracting session on Pi (${raspberryPiBaseUrl}): ${errMsg}`,
+        `Error extracting session on Pi (${targetUrl}): ${errMsg}`,
       );
       throw new BadGatewayException(
-        `Failed to communicate with Raspberry Pi at ${raspberryPiBaseUrl}: ${errMsg}`,
+        `Failed to communicate with Raspberry Pi at ${targetUrl}: ${errMsg}`,
       );
     }
   }
@@ -119,9 +145,10 @@ export class RaspberryPiApiService {
   async getLiveStreamStatus(
     raspberryPiBaseUrl: string,
   ): Promise<{ publishing: boolean; streams: any[] }> {
+    const targetUrl = this.getLiveBaseUrl(raspberryPiBaseUrl);
     try {
       const response = await firstValueFrom(
-        this.httpService.get(`${raspberryPiBaseUrl}/live-stream-status`, {
+        this.httpService.get(`${targetUrl}/live-stream-status`, {
           headers: {
             'X-API-KEY': this.liveApiKey,
           },
@@ -131,7 +158,7 @@ export class RaspberryPiApiService {
       return response.data;
     } catch (error: any) {
       this.logger.warn(
-        `Failed to fetch live stream status from ${raspberryPiBaseUrl}: ${error.message}`,
+        `Failed to fetch live stream status from ${targetUrl}: ${error.message}`,
       );
       return { publishing: false, streams: [] };
     }
@@ -141,13 +168,14 @@ export class RaspberryPiApiService {
     raspberryPiBaseUrl: string,
     payload: StartLiveStreamPayload,
   ): Promise<{ status: string }> {
+    const targetUrl = this.getLiveBaseUrl(raspberryPiBaseUrl);
     this.logger.log(
-      `Calling Pi to start live stream on Channel ${payload.channel} via ${raspberryPiBaseUrl}`,
+      `Calling Pi to start live stream on Channel ${payload.channel} via ${targetUrl}`,
     );
     try {
       const response = await firstValueFrom(
         this.httpService.post(
-          `${raspberryPiBaseUrl}/start-live-stream`,
+          `${targetUrl}/start-live-stream`,
           payload,
           {
             headers: {
@@ -163,13 +191,13 @@ export class RaspberryPiApiService {
       const errMsg =
         error.response?.data?.message || error.message || 'Device unresponsive';
       this.logger.error(
-        `Error starting live stream on Pi (${raspberryPiBaseUrl}): ${errMsg}`,
+        `Error starting live stream on Pi (${targetUrl}): ${errMsg}`,
       );
       throw new BadGatewayException({
         statusCode: HttpStatus.BAD_GATEWAY,
         error: 'Edge Device Unresponsive',
-        message: `Raspberry Pi bridge at ${raspberryPiBaseUrl} is offline or unreachable (${errMsg}). Verify that the court device is powered on and Tailscale tunnel is active.`,
-        piUrl: raspberryPiBaseUrl,
+        message: `Raspberry Pi bridge at ${targetUrl} is offline or unreachable (${errMsg}). Verify that the court device is powered on and Tailscale tunnel is active.`,
+        piUrl: targetUrl,
         channel: payload.channel,
       });
     }
@@ -179,13 +207,14 @@ export class RaspberryPiApiService {
     raspberryPiBaseUrl: string,
     payload: StopLiveStreamPayload,
   ): Promise<{ status: string }> {
+    const targetUrl = this.getLiveBaseUrl(raspberryPiBaseUrl);
     this.logger.log(
-      `Calling Pi to stop live stream on Channel ${payload.channel} via ${raspberryPiBaseUrl}`,
+      `Calling Pi to stop live stream on Channel ${payload.channel} via ${targetUrl}`,
     );
     try {
       const response = await firstValueFrom(
         this.httpService.post(
-          `${raspberryPiBaseUrl}/stop-live-stream`,
+          `${targetUrl}/stop-live-stream`,
           payload,
           {
             headers: {
@@ -201,13 +230,13 @@ export class RaspberryPiApiService {
       const errMsg =
         error.response?.data?.message || error.message || 'Device unresponsive';
       this.logger.error(
-        `Error stopping live stream on Pi (${raspberryPiBaseUrl}): ${errMsg}`,
+        `Error stopping live stream on Pi (${targetUrl}): ${errMsg}`,
       );
       throw new BadGatewayException({
         statusCode: HttpStatus.BAD_GATEWAY,
         error: 'Edge Device Unresponsive',
-        message: `Raspberry Pi bridge at ${raspberryPiBaseUrl} did not respond: ${errMsg}`,
-        piUrl: raspberryPiBaseUrl,
+        message: `Raspberry Pi bridge at ${targetUrl} did not respond: ${errMsg}`,
+        piUrl: targetUrl,
         channel: payload.channel,
       });
     }
