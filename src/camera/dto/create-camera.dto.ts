@@ -9,6 +9,10 @@ export class CreateCameraDto {
   turfId: string;
 
   @IsOptional()
+  @IsString()
+  raspberryPiBaseUrl?: string;
+
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)

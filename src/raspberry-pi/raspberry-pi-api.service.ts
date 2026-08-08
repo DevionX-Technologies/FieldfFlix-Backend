@@ -52,10 +52,17 @@ export interface PiHealthResponse {
 @Injectable()
 export class RaspberryPiApiService {
   private readonly logger = new Logger(RaspberryPiApiService.name);
-  private readonly apiKey =
+
+  private readonly liveApiKey =
+    process.env.PI_LIVE_API_KEY ||
     process.env.PI_API_KEY ||
     process.env.RASPBERRY_PI_API_KEY ||
     '9d6bdf976525e1641b6162ebd6c5d13ff9ee13345e7d6cfcd702b18293ebadfd';
+
+  private readonly evmsApiKey =
+    process.env.PI_EVMS_API_KEY ||
+    process.env.EVMS_API_KEY ||
+    'b0967580ef4fe425b2336c25b0a9d19d06a9f3800a422ecd5785ddfd261172a6';
 
   constructor(private readonly httpService: HttpService) {}
 
@@ -89,10 +96,10 @@ export class RaspberryPiApiService {
           payload,
           {
             headers: {
-              'X-API-KEY': this.apiKey,
+              'X-API-KEY': this.evmsApiKey,
               'Content-Type': 'application/json',
             },
-            timeout: 120000, // 2 minutes timeout for extraction and upload initiation
+            timeout: 180000, // 3 minutes timeout for extraction and upload initiation
           },
         ),
       );
@@ -106,6 +113,27 @@ export class RaspberryPiApiService {
       throw new BadGatewayException(
         `Failed to communicate with Raspberry Pi at ${raspberryPiBaseUrl}: ${errMsg}`,
       );
+    }
+  }
+
+  async getLiveStreamStatus(
+    raspberryPiBaseUrl: string,
+  ): Promise<{ publishing: boolean; streams: any[] }> {
+    try {
+      const response = await firstValueFrom(
+        this.httpService.get(`${raspberryPiBaseUrl}/live-stream-status`, {
+          headers: {
+            'X-API-KEY': this.liveApiKey,
+          },
+          timeout: 8000,
+        }),
+      );
+      return response.data;
+    } catch (error: any) {
+      this.logger.warn(
+        `Failed to fetch live stream status from ${raspberryPiBaseUrl}: ${error.message}`,
+      );
+      return { publishing: false, streams: [] };
     }
   }
 
@@ -123,7 +151,7 @@ export class RaspberryPiApiService {
           payload,
           {
             headers: {
-              'X-API-KEY': this.apiKey,
+              'X-API-KEY': this.liveApiKey,
               'Content-Type': 'application/json',
             },
             timeout: 10000,
@@ -140,7 +168,7 @@ export class RaspberryPiApiService {
       throw new BadGatewayException({
         statusCode: HttpStatus.BAD_GATEWAY,
         error: 'Edge Device Unresponsive',
-        message: `Raspberry Pi bridge at ${raspberryPiBaseUrl} is offline or unreachable (${errMsg}). Verify that the court device is powered on and Pinggy tunnel is active.`,
+        message: `Raspberry Pi bridge at ${raspberryPiBaseUrl} is offline or unreachable (${errMsg}). Verify that the court device is powered on and Tailscale tunnel is active.`,
         piUrl: raspberryPiBaseUrl,
         channel: payload.channel,
       });
@@ -161,7 +189,7 @@ export class RaspberryPiApiService {
           payload,
           {
             headers: {
-              'X-API-KEY': this.apiKey,
+              'X-API-KEY': this.liveApiKey,
               'Content-Type': 'application/json',
             },
             timeout: 10000,
@@ -198,7 +226,7 @@ export class RaspberryPiApiService {
           {},
           {
             headers: {
-              'X-API-KEY': this.apiKey,
+              'X-API-KEY': this.evmsApiKey,
             },
           },
         ),
@@ -228,7 +256,7 @@ export class RaspberryPiApiService {
           },
           {
             headers: {
-              'X-API-KEY': this.apiKey,
+              'X-API-KEY': this.evmsApiKey,
             },
           },
         ),

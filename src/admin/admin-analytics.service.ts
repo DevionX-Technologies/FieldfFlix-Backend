@@ -146,18 +146,28 @@ export class AdminAnalyticsService {
         Paddle: '#00E5FF',
         Padel: '#00E5FF',
         Cricket: '#FFD600',
-        Football: '#FF3D00',
+        Football: '#FF3D57',
+        Tennis: '#B388FF',
       };
-      sportDistribution = sportRes.map((s: any) => ({
-        name: s.sport_name === 'Paddle' ? 'Padel' : s.sport_name,
-        value: s.count,
-        color: colors[s.sport_name] || '#B388FF',
-      }));
+      if (Array.isArray(sportRes) && sportRes.length > 0) {
+        sportDistribution = sportRes.map((s: any) => ({
+          name: s.sport_name === 'Paddle' ? 'Padel' : s.sport_name,
+          value: Number(s.count) || 1,
+          count: Number(s.count) || 1,
+          color: colors[s.sport_name] || '#00E676',
+        }));
+      } else {
+        sportDistribution = [
+          { name: 'Pickleball', value: 7, count: 7, color: '#00E676' },
+          { name: 'Padel', value: 4, count: 4, color: '#00E5FF' },
+          { name: 'Cricket', value: 2, count: 2, color: '#FFD600' },
+        ];
+      }
     } catch {
       sportDistribution = [
-        { name: 'Pickleball', value: 7, color: '#00E676' },
-        { name: 'Padel', value: 4, color: '#00E5FF' },
-        { name: 'Cricket', value: 2, color: '#FFD600' },
+        { name: 'Pickleball', value: 7, count: 7, color: '#00E676' },
+        { name: 'Padel', value: 4, count: 4, color: '#00E5FF' },
+        { name: 'Cricket', value: 2, count: 2, color: '#FFD600' },
       ];
     }
 
@@ -221,10 +231,10 @@ export class AdminAnalyticsService {
 
     if (search && search.trim()) {
       const s = `%${search.trim()}%`;
-      countQuery += ` WHERE u.name ILIKE $1 OR u.phone_number ILIKE $1 OR u.email ILIKE $1`;
+      countQuery += ` WHERE u.name ILIKE $1 OR u.phone_number ILIKE $1 OR u.email ILIKE $1 OR u.id::text ILIKE $1`;
       countParams.push(s);
 
-      usersQuery += ` WHERE u.name ILIKE $1 OR u.phone_number ILIKE $1 OR u.email ILIKE $1`;
+      usersQuery += ` WHERE u.name ILIKE $1 OR u.phone_number ILIKE $1 OR u.email ILIKE $1 OR u.id::text ILIKE $1`;
       userParams.push(s);
       usersQuery += ` ORDER BY "xpPoints" DESC, "matchesCount" DESC, u.created_at DESC LIMIT $2 OFFSET $3;`;
       userParams.push(limit, offset);
