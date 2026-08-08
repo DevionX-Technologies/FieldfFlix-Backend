@@ -112,10 +112,31 @@ export class FileServiceService {
   }
 
   async getSignedUrlFromS3(
-    bucket: string,
-    key: string,
+    param1: string,
+    param2?: string,
     expiresInSeconds = 604800,
   ): Promise<string> {
+    const defaultBucket =
+      process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
+
+    let bucket = defaultBucket;
+    let key = param1 || '';
+
+    if (param1 && param2) {
+      if (param1.includes('/') || (!param2.includes('/') && param2.length > 0)) {
+        // param1 is Key (has path slashes), param2 is Bucket
+        key = param1;
+        bucket = param2;
+      } else {
+        // param1 is Bucket, param2 is Key
+        bucket = param1;
+        key = param2;
+      }
+    } else if (param1 && !param2) {
+      key = param1;
+      bucket = defaultBucket;
+    }
+
     const cmd = new GetObjectCommand({
       Bucket: bucket,
       Key: key,
