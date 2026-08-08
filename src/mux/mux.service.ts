@@ -458,7 +458,7 @@ export class MuxService {
     playbackUrl: string;
   }> {
     try {
-      this.logger.log('Creating new Mux Live Stream');
+      this.logger.log('Creating new low-latency Mux Live Stream');
       const liveStream = await this.mux.video.liveStreams.create({
         playback_policy: ['public'],
         new_asset_settings: {
@@ -469,11 +469,12 @@ export class MuxService {
 
       const playbackId = liveStream.playback_ids?.[0]?.id || '';
       const streamKey = liveStream.stream_key || '';
-      const rtmpUrl = `rtmps://global-live.mux.com:443/app/${streamKey}`;
+      // Use standard RTMP port 5222 for fast, sub-second FFmpeg connection without TLS handshake lag
+      const rtmpUrl = `rtmp://global-live.mux.com:5222/app/${streamKey}`;
       const playbackUrl = `https://stream.mux.com/${playbackId}.m3u8`;
 
       this.logger.log(
-        `Created Mux Live Stream: ${liveStream.id}, Playback ID: ${playbackId}`,
+        `Created Mux Live Stream: ${liveStream.id}, Playback ID: ${playbackId}, Ingest: ${rtmpUrl}`,
       );
       return {
         liveStreamId: liveStream.id,
