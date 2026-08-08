@@ -9,6 +9,7 @@ import {
   NotFoundException,
   Param,
   Post,
+  Put,
   Req,
   UsePipes,
   ValidationPipe,
@@ -41,34 +42,34 @@ export class AdminController {
     if (req.user?.user_id) {
       await this.assertAdmin(req.user.user_id);
     }
-    return this.adminAnalytics.getOverviewStats();
+    return this.adminAnalytics.getOverview();
   }
 
-  /** Athlete & user utility search / list */
+  /** Athlete CRM search & paginated directory */
   @Public()
   @Get('users')
-  async listUsers(
+  async getUsers(
+    @Query('page') page: string,
+    @Query('limit') limit: string,
+    @Query('search') search: string,
     @Req() req: Request & { user?: ILocalLoginPayload },
-    @Query('search') search?: string,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
   ) {
     if (req.user?.user_id) {
       await this.assertAdmin(req.user.user_id);
     }
-    return this.adminAnalytics.listUsers(
+    return this.adminAnalytics.getUsers({
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
       search,
-      page ? Number(page) : 1,
-      limit ? Number(limit) : 50,
-    );
+    });
   }
 
-  /** Per-user CRM utility profile drilldown */
+  /** Complete 360 profile for an athlete */
   @Public()
-  @Get('users/:id/utility')
-  async getUserUtility(
-    @Req() req: Request & { user?: ILocalLoginPayload },
+  @Get('users/:id')
+  async getUserProfile(
     @Param('id') userId: string,
+    @Req() req: Request & { user?: ILocalLoginPayload },
   ) {
     if (req.user?.user_id) {
       await this.assertAdmin(req.user.user_id);
@@ -84,6 +85,46 @@ export class AdminController {
       await this.assertAdmin(req.user.user_id);
     }
     return this.adminAnalytics.getFleetStatus();
+  }
+
+  /** Update court device mapping */
+  @Public()
+  @Put('cameras/:id')
+  async updateCameraMapping(
+    @Param('id') id: string,
+    @Body() body: { name?: string; court_number?: number; raspberryPiBaseUrl?: string },
+    @Req() req: Request & { user?: ILocalLoginPayload },
+  ) {
+    if (req.user?.user_id) {
+      await this.assertAdmin(req.user.user_id);
+    }
+    return this.adminAnalytics.updateCameraMapping(id, body);
+  }
+
+  /** Create/Add new court device mapping */
+  @Public()
+  @Post('cameras')
+  async createCameraMapping(
+    @Body() body: { turfId: string; name?: string; court_number?: number; raspberryPiBaseUrl?: string },
+    @Req() req: Request & { user?: ILocalLoginPayload },
+  ) {
+    if (req.user?.user_id) {
+      await this.assertAdmin(req.user.user_id);
+    }
+    return this.adminAnalytics.createCameraMapping(body);
+  }
+
+  /** Test Raspberry Pi health & connectivity */
+  @Public()
+  @Post('cameras/test-connectivity')
+  async testConnectivity(
+    @Body() body: { url: string },
+    @Req() req: Request & { user?: ILocalLoginPayload },
+  ) {
+    if (req.user?.user_id) {
+      await this.assertAdmin(req.user.user_id);
+    }
+    return this.adminAnalytics.testPiConnectivity(body.url);
   }
 
   /** Any authenticated user: whether they have admin UI access. */

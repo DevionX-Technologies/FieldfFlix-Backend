@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
+import axios from 'axios';
 import { User } from 'src/user/entities/user.entity';
 import { Recording } from 'src/recording/entities/recording.entity';
 import { PaymentEntity } from 'src/payment/entities/payment.entity';
@@ -394,11 +395,6 @@ export class AdminAnalyticsService {
 
     // Attach cameras to respective venue
     for (const c of cameras) {
-      // Filter out invalid/empty camera stubs without URL and without court_number
-      if (!c.raspberryPiBaseUrl && c.court_number === null) {
-        continue;
-      }
-
       const turf = turfs.find((t) => t.id === c.turfId);
       if (!turf) continue;
 
@@ -407,12 +403,14 @@ export class AdminAnalyticsService {
         // Prevent duplicate camera IDs
         const exists = venue.courts.some((ex: any) => ex.cameraId === c.id);
         if (!exists) {
+          const isConfigured = !!(c.raspberryPiBaseUrl && c.raspberryPiBaseUrl.trim().length > 0);
           venue.courts.push({
             cameraId: c.id,
             courtNumber: c.court_number ?? 1,
             name: c.name || `Court ${c.court_number || 1}`,
-            raspberryPiBaseUrl: c.raspberryPiBaseUrl,
-            status: c.raspberryPiBaseUrl ? 'ONLINE' : 'OFFLINE',
+            raspberryPiBaseUrl: c.raspberryPiBaseUrl || null,
+            isConfigured,
+            status: isConfigured ? 'ONLINE' : 'UNCONFIGURED',
           });
         }
       }
@@ -422,5 +420,67 @@ export class AdminAnalyticsService {
     return Array.from(venueMap.values()).filter(
       (v) => v.courts && v.courts.length > 0,
     );
+  }
+
+  async updateCameraMapping(
+    cameraId: string,
+    dto: { name?: string; court_number?: number; raspberryPiBaseUrl?: string },
+  ) {
+    const camera = await this.cameraRepo.findOne({ where: { id: cameraId } });
+    if (!camera) {
+      throw new NotFoundException(`Camera ${cameraId} not found`);
+    }
+
+    if (dto.name !== undefined) camera.name = dto.name;
+    if (dto.court_number !== undefined) camera.court_number = dto.court_number;
+    if (dto.raspberryPiBaseUrl !== undefined) {
+      camera.raspberryPiBaseUrl = dto.raspberryPiBaseUrl ? dto.raspberryPiBaseUrl.trim() : null;
+    }
+
+    return this.cameraRepo.save(camera);
+  }
+
+  async createCameraMapping(dto: {
+    turfId: string;
+    name?: string;
+    court_number?: number;
+    raspberryPiBaseUrl?: string;
+  }) {
+    const turf = await this.turfRepo.findOne({ where: { id: dto.turfId } });
+    if (!turf) {
+      throw new NotFoundException(`Turf ${dto.turfId} not found`);
+    }
+
+    const newCam = this.cameraRepo.create({
+      turfId: dto.turfId,
+      name: dto.name || `Court ${dto.court_number || 1}`,
+      court_number: dto.court_number ?? 1,
+      raspberryPiBaseUrl: dto.raspberryPiBaseUrl ? dto.raspberryPiBaseUrl.trim() : null,
+    });
+
+    return this.cameraRepo.save(newCam);
+  }
+
+  async testPiConnectivity(url: string): Promise<{ success: boolean; message: string; data?: any }> {
+    if (!url || !url.startsWith('http')) {
+      return { success: false, message: 'Invalid URL scheme. Must start with http:// or https://' };
+    }
+
+    const cleanUrl = url.trim().replace(/\/+$/, '');
+    const startTime = Date.now();
+    try {
+      const resp = await axios.get(`${cleanUrl}/health`, { timeout: 6000 });
+      const latency = Date.now() - startTime;
+      return {
+        success: true,
+        message: `Device responded in ${latency}ms (HTTP ${resp.status})`,
+        data: resp.data,
+      };
+    } catch (err: any) {
+      return {
+        success: false,
+        message: err.response?.data?.message || err.message || 'Device unreachable or timed out',
+      };
+    }
   }
 }
