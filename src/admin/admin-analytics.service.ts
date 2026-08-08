@@ -1,7 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import axios from 'axios';
+import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { User } from 'src/user/entities/user.entity';
 import { Recording } from 'src/recording/entities/recording.entity';
 import { PaymentEntity } from 'src/payment/entities/payment.entity';
@@ -482,5 +484,215 @@ export class AdminAnalyticsService {
         message: err.response?.data?.message || err.message || 'Device unreachable or timed out',
       };
     }
+  }
+
+  /**
+   * List recent recordings with playable video URLs for Admin review.
+   */
+  async listRecordings(page = 1, limit = 50, status?: string): Promise<any> {
+    const where: any = {};
+    if (status && status !== 'all') {
+      where.status = status;
+    }
+
+    const [recordings, total] = await this.recordingRepo.findAndCount({
+      where,
+      relations: ['turf', 'camera', 'user'],
+      order: { startTime: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    const s3Client = new S3Client({
+      region: process.env.AWS_REGION || 'ap-south-1',
+      credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+      },
+    });
+
+    const items = await Promise.all(
+      recordings.map(async (rec) => {
+        let playableUrl = rec.mux_media_url || null;
+        if (!playableUrl && rec.mux_playback_id) {
+          playableUrl = `https://stream.mux.com/${rec.mux_playback_id}.m3u8`;
+        }
+
+        // If no Mux URL yet, generate pre-signed direct S3 download/play URL if S3 path exists
+        if (!playableUrl && rec.s3Path) {
+          try {
+            const bucket = process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
+            let key = rec.s3Path;
+            if (key.startsWith('s3://')) {
+              key = key.replace(/^s3:\/\/[^\/]+\//, '');
+            }
+            const cmd = new GetObjectCommand({ Bucket: bucket, Key: key });
+            playableUrl = await getSignedUrl(s3Client, cmd, { expiresIn: 3600 * 4 });
+          } catch {
+            // ignore
+          }
+        }
+
+        const durationMinutes =
+          rec.startTime && rec.endTime
+            ? Math.max(1, Math.round((new Date(rec.endTime).getTime() - new Date(rec.startTime).getTime()) / 60000))
+            : null;
+
+        return {
+          id: rec.id,
+          venueName: rec.turf?.name || 'Unknown Venue',
+          turfId: rec.turfId,
+          courtName: rec.camera?.name || `Court ${rec.camera?.court_number || 1}`,
+          courtNumber: rec.camera?.court_number || 1,
+          cameraId: rec.cameraId,
+          userName: rec.user?.name || 'FieldFlix Athlete',
+          userPhone: rec.user?.phone_number || '—',
+          status: rec.status,
+          startTime: rec.startTime,
+          endTime: rec.endTime,
+          durationMinutes,
+          playableUrl,
+          muxPlaybackId: rec.mux_playback_id,
+          s3Path: rec.s3Path,
+          createdAt: rec.startTime || rec.updated_at,
+        };
+      }),
+    );
+
+    return {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      recordings: items,
+    };
+  }
+
+  /**
+   * Trigger on-demand test match extraction from Dahua NVR via Raspberry Pi EVMS Gateway.
+   */
+  async triggerTestExtraction(
+    recordingService: any,
+    dto: {
+      cameraId: string;
+      durationMinutes?: number;
+      startTime?: string;
+      endTime?: string;
+    },
+  ): Promise<any> {
+    const camera = await this.cameraRepo.findOne({
+      where: { id: dto.cameraId },
+      relations: ['turf'],
+    });
+
+    if (!camera) {
+      throw new NotFoundException(`Camera ${dto.cameraId} not found`);
+    }
+
+    if (!camera.raspberryPiBaseUrl) {
+      throw new BadRequestException(
+        `Camera ${camera.name || camera.id} is not configured with an active Edge Pi Gateway URL.`,
+      );
+    }
+
+    let startIso: string;
+    let endIso: string;
+
+    if (dto.startTime && dto.endTime) {
+      startIso = new Date(dto.startTime).toISOString();
+      endIso = new Date(dto.endTime).toISOString();
+    } else {
+      // Default to 1-minute clip from 15 minutes ago to 14 minutes ago (closed file on NVR disk)
+      const duration = dto.durationMinutes ? Math.min(dto.durationMinutes, 5) : 1;
+      const now = new Date();
+      const end = new Date(now.getTime() - 14 * 60 * 1000);
+      const start = new Date(end.getTime() - duration * 60 * 1000);
+      startIso = start.toISOString();
+      endIso = end.toISOString();
+    }
+
+    this.logger.log(
+      `Triggering test extraction for Camera ${camera.id} (Court ${camera.court_number || 1}) from ${startIso} to ${endIso}`,
+    );
+
+    const result = await recordingService.requestOnDemandExtraction({
+      cameraId: camera.id,
+      startTime: startIso,
+      endTime: endIso,
+    });
+
+    // Generate immediate playable S3 URL for instant preview
+    let playableUrl = result.playbackUrl || null;
+    const s3Path = result.s3Path || result.recording?.s3Path;
+    if (!playableUrl && s3Path) {
+      try {
+        const s3Client = new S3Client({
+          region: process.env.AWS_REGION || 'ap-south-1',
+          credentials: {
+            accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+          },
+        });
+        const bucket = process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
+        let key = s3Path;
+        if (key.startsWith('s3://')) {
+          key = key.replace(/^s3:\/\/[^\/]+\//, '');
+        }
+        const cmd = new GetObjectCommand({ Bucket: bucket, Key: key });
+        playableUrl = await getSignedUrl(s3Client, cmd, { expiresIn: 3600 * 4 });
+      } catch {
+        // ignore
+      }
+    }
+
+    return {
+      success: true,
+      cached: result.cached || false,
+      recordingId: result.recordingId || result.recording?.id,
+      status: result.status || 'SUCCESS',
+      venueName: camera.turf?.name || 'Venue',
+      courtName: camera.name || `Court ${camera.court_number || 1}`,
+      startTime: startIso,
+      endTime: endIso,
+      playableUrl,
+      s3Path,
+    };
+  }
+
+  /**
+   * Get fresh signed playable URL for a recording.
+   */
+  async getRecordingPlaybackUrl(recordingId: string): Promise<{ playableUrl: string }> {
+    const rec = await this.recordingRepo.findOne({ where: { id: recordingId } });
+    if (!rec) {
+      throw new NotFoundException(`Recording ${recordingId} not found`);
+    }
+
+    if (rec.mux_media_url) {
+      return { playableUrl: rec.mux_media_url };
+    }
+    if (rec.mux_playback_id) {
+      return { playableUrl: `https://stream.mux.com/${rec.mux_playback_id}.m3u8` };
+    }
+
+    if (rec.s3Path) {
+      const s3Client = new S3Client({
+        region: process.env.AWS_REGION || 'ap-south-1',
+        credentials: {
+          accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+        },
+      });
+      const bucket = process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
+      let key = rec.s3Path;
+      if (key.startsWith('s3://')) {
+        key = key.replace(/^s3:\/\/[^\/]+\//, '');
+      }
+      const cmd = new GetObjectCommand({ Bucket: bucket, Key: key });
+      const signedUrl = await getSignedUrl(s3Client, cmd, { expiresIn: 3600 * 4 });
+      return { playableUrl: signedUrl };
+    }
+
+    throw new NotFoundException('No playable media found for this recording');
   }
 }

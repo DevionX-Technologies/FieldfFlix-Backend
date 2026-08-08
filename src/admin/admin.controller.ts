@@ -206,6 +206,46 @@ export class AdminController {
     return { ok: true };
   }
 
+  /** List recent recordings with playable video streams */
+  @Public()
+  @Get('recordings')
+  async listRecordings(
+    @Query('page') page: string,
+    @Query('limit') limit: string,
+    @Query('status') status: string,
+  ) {
+    return this.adminAnalytics.listRecordings(
+      page ? parseInt(page, 10) : 1,
+      limit ? parseInt(limit, 10) : 50,
+      status,
+    );
+  }
+
+  /** Trigger on-demand test match extraction from Dahua NVR */
+  @Public()
+  @Post('recordings/test-extract')
+  async triggerTestExtraction(
+    @Body()
+    body: {
+      cameraId: string;
+      durationMinutes?: number;
+      startTime?: string;
+      endTime?: string;
+    },
+  ) {
+    return this.adminAnalytics.triggerTestExtraction(
+      this.recordingService,
+      body,
+    );
+  }
+
+  /** Get fresh playable stream URL for a recording */
+  @Public()
+  @Get('recordings/:id/playback-url')
+  async getRecordingPlaybackUrl(@Param('id') id: string) {
+    return this.adminAnalytics.getRecordingPlaybackUrl(id);
+  }
+
   private async assertAdmin(userId: string): Promise<void> {
     const u = await this.userService.findOne(userId);
     if (!(await this.adminRole.isAdminByPhone(u.phone_number))) {
