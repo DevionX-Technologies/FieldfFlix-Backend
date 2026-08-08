@@ -42,7 +42,7 @@ export class AdminController {
     if (req.user?.user_id) {
       await this.assertAdmin(req.user.user_id);
     }
-    return this.adminAnalytics.getOverview();
+    return this.adminAnalytics.getOverviewStats();
   }
 
   /** Athlete CRM search & paginated directory */
@@ -57,11 +57,11 @@ export class AdminController {
     if (req.user?.user_id) {
       await this.assertAdmin(req.user.user_id);
     }
-    return this.adminAnalytics.getUsers({
-      page: page ? parseInt(page, 10) : 1,
-      limit: limit ? parseInt(limit, 10) : 20,
+    return this.adminAnalytics.listUsers(
       search,
-    });
+      page ? parseInt(page, 10) : 1,
+      limit ? parseInt(limit, 10) : 50,
+    );
   }
 
   /** Complete 360 profile for an athlete */
