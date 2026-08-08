@@ -615,11 +615,23 @@ export class AdminAnalyticsService {
       `Triggering test extraction for Camera ${camera.id} (Court ${camera.court_number || 1}) from ${startIso} to ${endIso}`,
     );
 
-    const result = await recordingService.requestOnDemandExtraction({
-      cameraId: camera.id,
-      startTime: startIso,
-      endTime: endIso,
-    });
+    let adminUserId: string | undefined;
+    try {
+      const u = await this.userRepo.findOne({ order: { created_at: 'ASC' } });
+      if (u) adminUserId = u.id;
+    } catch {
+      // ignore
+    }
+
+    const result = await recordingService.requestOnDemandExtraction(
+      {
+        cameraId: camera.id,
+        startTime: startIso,
+        endTime: endIso,
+        userId: adminUserId,
+      },
+      adminUserId,
+    );
 
     // Generate immediate playable S3 URL for instant preview
     let playableUrl = result.playbackUrl || null;
