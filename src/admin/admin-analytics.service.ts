@@ -866,8 +866,13 @@ export class AdminAnalyticsService {
     const activeChannels = channels || ['PUSH', 'IN_APP']; // Default backward comp
 
     if (targetAudience === 'SPECIFIC_NUMBER' && specificNumber) {
+      const cleanNumber = specificNumber.replace(/\D/g, '');
       const user = await this.userRepo.findOne({
-        where: { phone_number: specificNumber.replace(/\D/g, '') },
+        where: [
+          { phone_number: cleanNumber },
+          { phone_number: `+91${cleanNumber.slice(-10)}` },
+          { phone_number: `+${cleanNumber}` },
+        ],
         relations: ['user_devices_token'],
       });
       if (user) users.push(user);
