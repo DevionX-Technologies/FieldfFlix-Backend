@@ -883,7 +883,7 @@ export class AdminAnalyticsService {
 
     for (const user of users) {
       const tokens = user.user_devices_token ?? [];
-      let sentToUser = false;
+      let pushSuccess = false;
 
       for (const t of tokens) {
         const token = (t as { devices_id?: string })?.devices_id;
@@ -898,27 +898,26 @@ export class AdminAnalyticsService {
             },
             user.id,
           );
-          sentToUser = true;
+          pushSuccess = true;
         } catch (err) {
           this.logger.warn(`Broadcast FCM fail for user=${user.id}: ${err}`);
         }
       }
 
-      if (sentToUser) {
-        recipientCount++;
-        try {
-          await this.notificationRepo.save({
-            user_id: user.id,
-            title,
-            body,
-            data: [],
-            message_status: MessageStatus.UNREAD,
-            notification_type: NotificationType.ADMIN_BROADCAST,
-            is_soft_delete: false,
-          } as unknown as Partial<NotificationEntity>);
-        } catch (err) {
-          this.logger.warn(`Broadcast DB save fail user=${user.id}: ${err}`);
-        }
+      // Always save an in-app notification regardless of push success
+      recipientCount++;
+      try {
+        await this.notificationRepo.save({
+          user_id: user.id,
+          title,
+          body,
+          data: [],
+          message_status: MessageStatus.UNREAD,
+          notification_type: NotificationType.ADMIN_BROADCAST,
+          is_soft_delete: false,
+        } as unknown as Partial<NotificationEntity>);
+      } catch (err) {
+        this.logger.warn(`Broadcast DB save fail user=${user.id}: ${err}`);
       }
     }
 
