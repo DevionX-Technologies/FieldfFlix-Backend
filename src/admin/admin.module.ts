@@ -16,6 +16,9 @@ import { CouponAssignment } from 'src/coupons/entities/coupon-assignment.entity'
 import { UserPoints } from 'src/points/entities/user-points.entity';
 import { PointEvent } from 'src/points/entities/point-event.entity';
 
+import { NotificationEntity } from 'src/notification/entities/notification.entity';
+import { CommonModule } from 'src/common/common.module';
+
 @Module({
   imports: [
     TypeOrmModule.forFeature([
@@ -29,9 +32,11 @@ import { PointEvent } from 'src/points/entities/point-event.entity';
       CouponAssignment,
       UserPoints,
       PointEvent,
+      NotificationEntity,
     ]),
     UserModule,
     forwardRef(() => RecordingModule),
+    CommonModule,
   ],
   controllers: [AdminController],
   providers: [AdminRoleService, AdminAnalyticsService],

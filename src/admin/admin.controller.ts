@@ -92,7 +92,8 @@ export class AdminController {
   @Put('cameras/:id')
   async updateCameraMapping(
     @Param('id') id: string,
-    @Body() body: { name?: string; court_number?: number; raspberryPiBaseUrl?: string },
+    @Body()
+    body: { name?: string; court_number?: number; raspberryPiBaseUrl?: string },
     @Req() req: Request & { user?: ILocalLoginPayload },
   ) {
     if (req.user?.user_id) {
@@ -105,7 +106,13 @@ export class AdminController {
   @Public()
   @Post('cameras')
   async createCameraMapping(
-    @Body() body: { turfId: string; name?: string; court_number?: number; raspberryPiBaseUrl?: string },
+    @Body()
+    body: {
+      turfId: string;
+      name?: string;
+      court_number?: number;
+      raspberryPiBaseUrl?: string;
+    },
     @Req() req: Request & { user?: ILocalLoginPayload },
   ) {
     if (req.user?.user_id) {
@@ -244,6 +251,27 @@ export class AdminController {
   @Get('recordings/:id/playback-url')
   async getRecordingPlaybackUrl(@Param('id') id: string) {
     return this.adminAnalytics.getRecordingPlaybackUrl(id);
+  }
+
+  /** Broadcast Push Notifications */
+  @Post('notifications/broadcast')
+  async broadcastNotification(
+    @Body()
+    body: {
+      title: string;
+      body: string;
+      targetAudience: string;
+      specificNumber?: string;
+    },
+    @Req() req: Request & { user: ILocalLoginPayload },
+  ) {
+    await this.assertAdmin(req.user.user_id);
+    return this.adminAnalytics.broadcastNotification(
+      body.title,
+      body.body,
+      body.targetAudience,
+      body.specificNumber,
+    );
   }
 
   private async assertAdmin(userId: string): Promise<void> {

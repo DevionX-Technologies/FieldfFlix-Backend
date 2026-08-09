@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import axios from 'axios';
@@ -13,6 +18,9 @@ import { Coupon } from 'src/coupons/entities/coupon.entity';
 import { CouponAssignment } from 'src/coupons/entities/coupon-assignment.entity';
 import { UserPoints } from 'src/points/entities/user-points.entity';
 import { PointEvent } from 'src/points/entities/point-event.entity';
+import { FireBaseNotificationService } from 'src/common/service/fire-base.service';
+import { NotificationEntity } from 'src/notification/entities/notification.entity';
+import { MessageStatus, NotificationType } from 'src/constant/enum';
 
 function calculateLevel(xp: number): { level: number; levelName: string } {
   if (xp >= 100) return { level: 5, levelName: 'Legend' };
@@ -45,6 +53,9 @@ export class AdminAnalyticsService {
     private readonly userPointsRepo: Repository<UserPoints>,
     @InjectRepository(PointEvent)
     private readonly pointEventRepo: Repository<PointEvent>,
+    @InjectRepository(NotificationEntity)
+    private readonly notificationRepo: Repository<NotificationEntity>,
+    private readonly fireBaseNotificationService: FireBaseNotificationService,
     @InjectDataSource()
     private readonly dataSource: DataSource,
   ) {}
@@ -405,7 +416,9 @@ export class AdminAnalyticsService {
         // Prevent duplicate camera IDs
         const exists = venue.courts.some((ex: any) => ex.cameraId === c.id);
         if (!exists) {
-          const isConfigured = !!(c.raspberryPiBaseUrl && c.raspberryPiBaseUrl.trim().length > 0);
+          const isConfigured = !!(
+            c.raspberryPiBaseUrl && c.raspberryPiBaseUrl.trim().length > 0
+          );
           venue.courts.push({
             cameraId: c.id,
             courtNumber: c.court_number ?? 1,
@@ -436,7 +449,9 @@ export class AdminAnalyticsService {
     if (dto.name !== undefined) camera.name = dto.name;
     if (dto.court_number !== undefined) camera.court_number = dto.court_number;
     if (dto.raspberryPiBaseUrl !== undefined) {
-      camera.raspberryPiBaseUrl = dto.raspberryPiBaseUrl ? dto.raspberryPiBaseUrl.trim() : null;
+      camera.raspberryPiBaseUrl = dto.raspberryPiBaseUrl
+        ? dto.raspberryPiBaseUrl.trim()
+        : null;
     }
 
     return this.cameraRepo.save(camera);
@@ -457,15 +472,22 @@ export class AdminAnalyticsService {
       turfId: dto.turfId,
       name: dto.name || `Court ${dto.court_number || 1}`,
       court_number: dto.court_number ?? 1,
-      raspberryPiBaseUrl: dto.raspberryPiBaseUrl ? dto.raspberryPiBaseUrl.trim() : null,
+      raspberryPiBaseUrl: dto.raspberryPiBaseUrl
+        ? dto.raspberryPiBaseUrl.trim()
+        : null,
     });
 
     return this.cameraRepo.save(newCam);
   }
 
-  async testPiConnectivity(url: string): Promise<{ success: boolean; message: string; data?: any }> {
+  async testPiConnectivity(
+    url: string,
+  ): Promise<{ success: boolean; message: string; data?: any }> {
     if (!url || !url.startsWith('http')) {
-      return { success: false, message: 'Invalid URL scheme. Must start with http:// or https://' };
+      return {
+        success: false,
+        message: 'Invalid URL scheme. Must start with http:// or https://',
+      };
     }
 
     const cleanUrl = url.trim().replace(/\/+$/, '');
@@ -481,7 +503,10 @@ export class AdminAnalyticsService {
     } catch (err: any) {
       return {
         success: false,
-        message: err.response?.data?.message || err.message || 'Device unreachable or timed out',
+        message:
+          err.response?.data?.message ||
+          err.message ||
+          'Device unreachable or timed out',
       };
     }
   }
@@ -514,20 +539,52 @@ export class AdminAnalyticsService {
     const items = await Promise.all(
       recordings.map(async (rec) => {
         let playableUrl = rec.mux_media_url || null;
-        if (!playableUrl && rec.mux_playback_id) {
-          playableUrl = `https://stream.mux.com/${rec.mux_playback_id}.m3u8`;
+        let downloadUrl: string | null = null;
+
+        if (rec.mux_playback_id) {
+          if (!playableUrl) {
+            playableUrl = `https://stream.mux.com/${rec.mux_playback_id}.m3u8`;
+          }
+          downloadUrl = `https://stream.mux.com/${rec.mux_playback_id}/high.mp4`;
         }
 
-        // If no Mux URL yet, generate pre-signed direct S3 download/play URL if S3 path exists
-        if (!playableUrl && rec.s3Path) {
+        // Generate pre-signed direct S3 download & inline streaming URLs if S3 path exists
+        if (rec.s3Path) {
           try {
-            const bucket = process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
+            const bucket =
+              process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
             let key = rec.s3Path;
             if (key.startsWith('s3://')) {
               key = key.replace(/^s3:\/\/[^\/]+\//, '');
             }
-            const cmd = new GetObjectCommand({ Bucket: bucket, Key: key });
-            playableUrl = await getSignedUrl(s3Client, cmd, { expiresIn: 3600 * 4 });
+
+            // Inline stream URL
+            const playCmd = new GetObjectCommand({
+              Bucket: bucket,
+              Key: key,
+              ResponseContentType: 'video/mp4',
+              ResponseContentDisposition: 'inline',
+            });
+            const s3PlayUrl = await getSignedUrl(s3Client, playCmd, {
+              expiresIn: 3600 * 4,
+            });
+
+            // Attachment download URL
+            const filename = `fieldflicks_${key.split('/').pop() || 'match_recording.mp4'}`;
+            const downloadCmd = new GetObjectCommand({
+              Bucket: bucket,
+              Key: key,
+              ResponseContentType: 'video/mp4',
+              ResponseContentDisposition: `attachment; filename="${filename}"`,
+            });
+            const s3DownloadUrl = await getSignedUrl(s3Client, downloadCmd, {
+              expiresIn: 3600 * 4,
+            });
+
+            downloadUrl = s3DownloadUrl;
+            if (!playableUrl) {
+              playableUrl = s3PlayUrl;
+            }
           } catch {
             // ignore
           }
@@ -535,14 +592,22 @@ export class AdminAnalyticsService {
 
         const durationMinutes =
           rec.startTime && rec.endTime
-            ? Math.max(1, Math.round((new Date(rec.endTime).getTime() - new Date(rec.startTime).getTime()) / 60000))
+            ? Math.max(
+                1,
+                Math.round(
+                  (new Date(rec.endTime).getTime() -
+                    new Date(rec.startTime).getTime()) /
+                    60000,
+                ),
+              )
             : null;
 
         return {
           id: rec.id,
           venueName: rec.turf?.name || 'Unknown Venue',
           turfId: rec.turfId,
-          courtName: rec.camera?.name || `Court ${rec.camera?.court_number || 1}`,
+          courtName:
+            rec.camera?.name || `Court ${rec.camera?.court_number || 1}`,
           courtNumber: rec.camera?.court_number || 1,
           cameraId: rec.cameraId,
           userName: rec.user?.name || 'FieldFlix Athlete',
@@ -552,6 +617,7 @@ export class AdminAnalyticsService {
           endTime: rec.endTime,
           durationMinutes,
           playableUrl,
+          downloadUrl,
           muxPlaybackId: rec.mux_playback_id,
           s3Path: rec.s3Path,
           createdAt: rec.startTime || rec.updated_at,
@@ -603,7 +669,9 @@ export class AdminAnalyticsService {
       endIso = new Date(dto.endTime).toISOString();
     } else {
       // Default to 1-minute clip from 15 minutes ago to 14 minutes ago (closed file on NVR disk)
-      const duration = dto.durationMinutes ? Math.min(dto.durationMinutes, 5) : 1;
+      const duration = dto.durationMinutes
+        ? Math.min(dto.durationMinutes, 5)
+        : 1;
       const now = new Date();
       const end = new Date(now.getTime() - 14 * 60 * 1000);
       const start = new Date(end.getTime() - duration * 60 * 1000);
@@ -633,10 +701,12 @@ export class AdminAnalyticsService {
       adminUserId,
     );
 
-    // Generate immediate playable S3 URL for instant preview
+    // Generate immediate playable and downloadable S3 URLs
     let playableUrl = result.playbackUrl || null;
+    let downloadUrl: string | null = null;
     const s3Path = result.s3Path || result.recording?.s3Path;
-    if (!playableUrl && s3Path) {
+
+    if (s3Path) {
       try {
         const s3Client = new S3Client({
           region: process.env.AWS_REGION || 'ap-south-1',
@@ -645,15 +715,42 @@ export class AdminAnalyticsService {
             secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
           },
         });
-        const bucket = process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
+        const bucket =
+          process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
         let key = s3Path;
         if (key.startsWith('s3://')) {
           key = key.replace(/^s3:\/\/[^\/]+\//, '');
         }
-        const cmd = new GetObjectCommand({ Bucket: bucket, Key: key });
-        playableUrl = await getSignedUrl(s3Client, cmd, { expiresIn: 3600 * 4 });
-      } catch {
-        // ignore
+
+        // Inline MP4 streaming URL
+        const playCmd = new GetObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          ResponseContentType: 'video/mp4',
+          ResponseContentDisposition: 'inline',
+        });
+        const s3PlayUrl = await getSignedUrl(s3Client, playCmd, {
+          expiresIn: 3600 * 4,
+        });
+
+        // Direct MP4 attachment download URL
+        const filename = `fieldflicks_match_${key.split('/').pop() || 'recording.mp4'}`;
+        const downloadCmd = new GetObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          ResponseContentType: 'video/mp4',
+          ResponseContentDisposition: `attachment; filename="${filename}"`,
+        });
+        const s3DownloadUrl = await getSignedUrl(s3Client, downloadCmd, {
+          expiresIn: 3600 * 4,
+        });
+
+        downloadUrl = s3DownloadUrl;
+        if (!playableUrl) {
+          playableUrl = s3PlayUrl;
+        }
+      } catch (err) {
+        this.logger.warn(`Error generating S3 signed URLs: ${err.message}`);
       }
     }
 
@@ -667,6 +764,7 @@ export class AdminAnalyticsService {
       startTime: startIso,
       endTime: endIso,
       playableUrl,
+      downloadUrl,
       s3Path,
     };
   }
@@ -674,37 +772,156 @@ export class AdminAnalyticsService {
   /**
    * Get fresh signed playable URL for a recording.
    */
-  async getRecordingPlaybackUrl(recordingId: string): Promise<{ playableUrl: string }> {
-    const rec = await this.recordingRepo.findOne({ where: { id: recordingId } });
+  async getRecordingPlaybackUrl(
+    recordingId: string,
+  ): Promise<{ playableUrl: string; downloadUrl?: string }> {
+    const rec = await this.recordingRepo.findOne({
+      where: { id: recordingId },
+    });
     if (!rec) {
       throw new NotFoundException(`Recording ${recordingId} not found`);
     }
 
-    if (rec.mux_media_url) {
-      return { playableUrl: rec.mux_media_url };
-    }
-    if (rec.mux_playback_id) {
-      return { playableUrl: `https://stream.mux.com/${rec.mux_playback_id}.m3u8` };
-    }
+    let downloadUrl: string | undefined;
+    let playableUrl: string | undefined;
 
     if (rec.s3Path) {
-      const s3Client = new S3Client({
-        region: process.env.AWS_REGION || 'ap-south-1',
-        credentials: {
-          accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
-          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
-        },
-      });
-      const bucket = process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
-      let key = rec.s3Path;
-      if (key.startsWith('s3://')) {
-        key = key.replace(/^s3:\/\/[^\/]+\//, '');
+      try {
+        const s3Client = new S3Client({
+          region: process.env.AWS_REGION || 'ap-south-1',
+          credentials: {
+            accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
+            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+          },
+        });
+        const bucket =
+          process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
+        let key = rec.s3Path;
+        if (key.startsWith('s3://')) {
+          key = key.replace(/^s3:\/\/[^\/]+\//, '');
+        }
+
+        const filename = `fieldflicks_match_${key.split('/').pop() || 'recording.mp4'}`;
+        const downloadCmd = new GetObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          ResponseContentType: 'video/mp4',
+          ResponseContentDisposition: `attachment; filename="${filename}"`,
+        });
+        downloadUrl = await getSignedUrl(s3Client, downloadCmd, {
+          expiresIn: 3600 * 4,
+        });
+
+        const playCmd = new GetObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          ResponseContentType: 'video/mp4',
+          ResponseContentDisposition: 'inline',
+        });
+        playableUrl = await getSignedUrl(s3Client, playCmd, {
+          expiresIn: 3600 * 4,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Error generating S3 URLs for ${recordingId}: ${err.message}`,
+        );
       }
-      const cmd = new GetObjectCommand({ Bucket: bucket, Key: key });
-      const signedUrl = await getSignedUrl(s3Client, cmd, { expiresIn: 3600 * 4 });
-      return { playableUrl: signedUrl };
     }
 
-    throw new NotFoundException('No playable media found for this recording');
+    if (rec.mux_playback_id) {
+      if (!downloadUrl) {
+        downloadUrl = `https://stream.mux.com/${rec.mux_playback_id}/high.mp4`;
+      }
+    }
+
+    if (rec.mux_media_url) {
+      return { playableUrl: rec.mux_media_url, downloadUrl };
+    }
+    if (rec.mux_playback_id) {
+      return {
+        playableUrl: `https://stream.mux.com/${rec.mux_playback_id}.m3u8`,
+        downloadUrl,
+      };
+    }
+
+    if (playableUrl) {
+      return { playableUrl, downloadUrl };
+    }
+
+    throw new NotFoundException('Playback URL not ready yet');
+  }
+
+  /**
+   * Broadcast a push notification to users
+   */
+  async broadcastNotification(
+    title: string,
+    body: string,
+    targetAudience: string,
+    specificNumber?: string,
+  ): Promise<{ success: boolean; recipientCount: number }> {
+    let users: User[] = [];
+
+    if (targetAudience === 'SPECIFIC_NUMBER' && specificNumber) {
+      const user = await this.userRepo.findOne({
+        where: { phone_number: specificNumber.replace(/\D/g, '') },
+        relations: ['user_devices_token'],
+      });
+      if (user) users.push(user);
+    } else {
+      // For ALL_USERS or others, fetch all users with tokens
+      users = await this.userRepo.find({
+        relations: ['user_devices_token'],
+      });
+    }
+
+    if (users.length === 0) {
+      return { success: false, recipientCount: 0 };
+    }
+
+    let recipientCount = 0;
+
+    for (const user of users) {
+      const tokens = user.user_devices_token ?? [];
+      let sentToUser = false;
+
+      for (const t of tokens) {
+        const token = (t as { devices_id?: string })?.devices_id;
+        if (!token) continue;
+
+        try {
+          await this.fireBaseNotificationService.sendNotification(
+            {
+              notification: { title, body },
+              token,
+              data: { click_action: 'ADMIN_BROADCAST' },
+            },
+            user.id,
+          );
+          sentToUser = true;
+        } catch (err) {
+          this.logger.warn(`Broadcast FCM fail for user=${user.id}: ${err}`);
+        }
+      }
+
+      if (sentToUser) {
+        recipientCount++;
+        try {
+          await this.notificationRepo.save({
+            user_id: user.id,
+            title,
+            body,
+            data: [],
+            message_status: MessageStatus.UNREAD,
+            notification_type: NotificationType.GENERAL,
+            is_soft_delete: false,
+          } as unknown as Partial<NotificationEntity>);
+        } catch (err) {
+          this.logger.warn(`Broadcast DB save fail user=${user.id}: ${err}`);
+        }
+      }
+    }
+
+    return { success: true, recipientCount };
   }
 }
