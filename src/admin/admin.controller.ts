@@ -262,6 +262,7 @@ export class AdminController {
       body: string;
       targetAudience: string;
       specificNumber?: string;
+      channels?: string[];
     },
     @Req() req: Request & { user: ILocalLoginPayload },
   ) {
@@ -271,6 +272,7 @@ export class AdminController {
       body.body,
       body.targetAudience,
       body.specificNumber,
+      body.channels,
     );
   }
 
