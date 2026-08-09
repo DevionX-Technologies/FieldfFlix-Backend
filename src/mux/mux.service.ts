@@ -68,10 +68,10 @@ export class MuxService {
       // When `MUX_SIGNING_KEY_ID` is configured we issue assets with the `signed` policy so
       // playback URLs only work in-app (the app obtains a short-lived JWT from the backend).
       // Otherwise we keep the original `public` policy for backwards compatibility.
-      const usesSignedPolicy = !!process.env.MUX_SIGNING_KEY_ID;
       const data = {
         input: cleanUrl,
-        playback_policy: [usesSignedPolicy ? 'signed' : 'public'],
+        playback_policy: ['public'],
+        mp4_support: 'standard',
         encoding_tier: 'smart',
       };
 

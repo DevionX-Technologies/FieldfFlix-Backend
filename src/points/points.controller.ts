@@ -108,15 +108,6 @@ export class PointsController {
     };
   }
 
-  /** Public/User: get the global leaderboard */
-  @Get('leaderboard')
-  @ApiOperation({ summary: 'Get the global leaderboard' })
-  async getLeaderboard(
-    @Query('period') period?: 'weekly' | 'monthly' | 'all',
-    @Query('limit') limit?: number,
-  ) {
-    return this.points.getLeaderboard(period || 'weekly', Number(limit) || 50);
-  }
 
   /** Admin/User: list all level configs. */
   @Get('levels')

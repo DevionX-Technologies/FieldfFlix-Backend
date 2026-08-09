@@ -913,7 +913,7 @@ export class AdminAnalyticsService {
             body,
             data: [],
             message_status: MessageStatus.UNREAD,
-            notification_type: NotificationType.GENERAL,
+            notification_type: NotificationType.ADMIN_BROADCAST,
             is_soft_delete: false,
           } as unknown as Partial<NotificationEntity>);
         } catch (err) {

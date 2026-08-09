@@ -18,4 +18,5 @@ export enum NotificationType {
    *  so the mobile app can render a celebration toast and refresh the
    *  Profile points pill without a refetch. */
   POINTS_AWARDED = 'POINTS_AWARDED',
+  ADMIN_BROADCAST = 'ADMIN_BROADCAST',
 }
