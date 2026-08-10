@@ -69,4 +69,8 @@ report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
 !.elasticbeanstalk/*.global.yml
 test-payment.html
 lambda-layers/*
-npm-layer.zip
+npm-layer.zipscripts/
+logs/
+LOGS_AUDIT_PLAYBOOK.md
+recording-logs.txt
+test-db.js
