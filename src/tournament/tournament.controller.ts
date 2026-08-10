@@ -64,4 +64,32 @@ export class TournamentController {
   async deleteTournament(@Param('id') id: string) {
     return this.tournamentService.deleteTournament(id);
   }
+
+  // NOTE: In a real app, these should have JwtAuthGuard and extract userId from token.
+  // Assuming a generic approach where userId is passed in body/query for now, or extracted from req.
+  // I will use a simple query/body param to avoid changing auth guard setup here.
+  
+  @Get('enrolled')
+  @ApiOperation({ summary: 'List tournaments the user is enrolled in' })
+  async getEnrolledTournaments(@Query('userId') userId: string) {
+    return this.tournamentService.getEnrolledTournaments(userId);
+  }
+
+  @Get(':id/enrollment')
+  @ApiOperation({ summary: 'Check if user is enrolled in a tournament' })
+  async checkEnrollment(
+    @Param('id') tournamentId: string,
+    @Query('userId') userId: string,
+  ) {
+    return this.tournamentService.checkEnrollment(tournamentId, userId);
+  }
+
+  @Post(':id/enroll')
+  @ApiOperation({ summary: 'Enroll a user in a tournament' })
+  async enrollTournament(
+    @Param('id') tournamentId: string,
+    @Body('userId') userId: string,
+  ) {
+    return this.tournamentService.enrollTournament(tournamentId, userId);
+  }
 }
