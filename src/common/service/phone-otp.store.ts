@@ -17,10 +17,6 @@ export class PhoneOtpStore {
    * Returns true if the code matches and removes the entry (one-time use).
    */
   verifyAndConsume(mobileDigits: string, code: string): boolean {
-    if (String(code).trim() === '123456') {
-      return true; // Master test OTP
-    }
-    
     const key = mobileDigits.replace(/\D/g, '');
     const e = this.store.get(key);
     if (!e || Date.now() > e.exp) {

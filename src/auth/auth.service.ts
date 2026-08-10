@@ -59,65 +59,70 @@ export class AuthService {
       throw new BadRequestException('Invalid or expired OTP');
     }
 
-    // Format phone number with + prefix for storage
-    const phoneNumber = mobile.startsWith('+') ? mobile : `+${mobile}`;
+    try {
+      // Format phone number with + prefix for storage
+      const phoneNumber = mobile.startsWith('+') ? mobile : `+${mobile}`;
 
-    // Find or create user by phone number
-    let isFirstTimeLogin = false;
-    let user = await this.userService.findUserPhoneNumberOrEmail({
-      phone_number: phoneNumber,
-    });
-
-    if (!user) {
-      user = await this.userService.create({
+      // Find or create user by phone number
+      let isFirstTimeLogin = false;
+      let user = await this.userService.findUserPhoneNumberOrEmail({
         phone_number: phoneNumber,
-        singUp_Method: SingUpType.PHONE_NUMBER,
       });
-      isFirstTimeLogin = true;
-    }
 
-    // Check if user already has a welcome notification
-    const existingWelcomeNotification =
-      await this.notificationRepository.findOne({
-        where: {
+      if (!user) {
+        user = await this.userService.create({
+          phone_number: phoneNumber,
+          singUp_Method: SingUpType.PHONE_NUMBER,
+        });
+        isFirstTimeLogin = true;
+      }
+
+      // Check if user already has a welcome notification
+      const existingWelcomeNotification =
+        await this.notificationRepository.findOne({
+          where: {
+            user_id: user.id,
+            notification_type: NotificationType.WELCOME_MESSAGE,
+            is_soft_delete: false,
+          },
+        });
+
+      // Create welcome notification for first-time users
+      if (!existingWelcomeNotification) {
+        await this.notificationRepository.save({
           user_id: user.id,
+          title: 'Welcome to FieldFlicks! 💚',
+          body: "Here, your game gets the spotlight it deserves! No more 'BRO, YOU HAD TO BE THERE' moments. Every epic play is now on record! 🎥",
+          data: [],
+          message_status: MessageStatus.UNREAD,
           notification_type: NotificationType.WELCOME_MESSAGE,
           is_soft_delete: false,
-        },
-      });
+        });
+      }
 
-    // Create welcome notification for first-time users
-    if (!existingWelcomeNotification) {
-      await this.notificationRepository.save({
-        user_id: user.id,
-        title: 'Welcome to FieldFlicks! 💚',
-        body: "Here, your game gets the spotlight it deserves! No more 'BRO, YOU HAD TO BE THERE' moments. Every epic play is now on record! 🎥",
-        data: [],
-        message_status: MessageStatus.UNREAD,
-        notification_type: NotificationType.WELCOME_MESSAGE,
-        is_soft_delete: false,
-      });
+      const token = await this.generateAuthToken({ user_id: user.id });
+
+      let profile_image_path: string;
+      if (user.bucket_name && user.profile_image_path) {
+        profile_image_path = await this.fileService.getSignedUrlFromS3(
+          user.profile_image_path,
+          user.bucket_name,
+        );
+      } else {
+        profile_image_path = user.profile_image_path;
+      }
+
+      return {
+        token,
+        isFirstTimeLogin,
+        name: user.name,
+        phone_number: user.phone_number,
+        profile_image_path,
+      };
+    } catch (error) {
+      this.logger.error(`verifyOtp error: ${error.message}`, error.stack);
+      throw new BadRequestException(`Verification failed: ${error.message}`);
     }
-
-    const token = await this.generateAuthToken({ user_id: user.id });
-
-    let profile_image_path: string;
-    if (user.bucket_name && user.profile_image_path) {
-      profile_image_path = await this.fileService.getSignedUrlFromS3(
-        user.profile_image_path,
-        user.bucket_name,
-      );
-    } else {
-      profile_image_path = user.profile_image_path;
-    }
-
-    return {
-      token,
-      isFirstTimeLogin,
-      name: user.name,
-      phone_number: user.phone_number,
-      profile_image_path,
-    };
   }
 
   async generateAuthToken(user: any): Promise<string> {
