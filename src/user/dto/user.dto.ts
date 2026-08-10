@@ -7,6 +7,7 @@ import {
   IsEnum,
   IsPhoneNumber,
   ValidateIf,
+  IsArray,
 } from 'class-validator';
 import { SingUpType } from 'src/auth/enum/auth.enum';
 
@@ -111,4 +112,22 @@ export class UpdateUserDto {
   @IsOptional()
   @IsString()
   phone_number?: string;
+
+  @ApiPropertyOptional({
+    example: 'Mumbai',
+    description: 'User city',
+  })
+  @IsOptional()
+  @IsString()
+  city?: string;
+
+  @ApiPropertyOptional({
+    example: ['Pickleball', 'Badminton'],
+    description: 'User preferred sports',
+    type: [String],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  preferred_sports?: string[];
 }

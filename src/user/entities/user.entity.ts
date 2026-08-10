@@ -32,6 +32,12 @@ export class User {
   @Column({ nullable: true })
   phone_number: string;
 
+  @Column({ type: 'varchar', length: 100, nullable: true })
+  city: string;
+
+  @Column({ type: 'jsonb', nullable: true, default: [] })
+  preferred_sports: string[];
+
   @Column({
     type: 'enum',
     enum: SingUpType,
