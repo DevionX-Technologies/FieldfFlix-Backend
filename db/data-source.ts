@@ -41,7 +41,7 @@ export const dataSourceOptions: DataSourceOptions = {
   //   : {}),
   ssl: { rejectUnauthorized: false },
   logging: process.env.ENVIRONMENT === 'development',
-  synchronize: true, // Temporarily true to sync missing columns
+  synchronize: false,
   extra: {
     options: '-c timezone=Asia/Kolkata',
   },
