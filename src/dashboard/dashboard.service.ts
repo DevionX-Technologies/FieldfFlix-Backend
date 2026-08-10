@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from 'src/user/entities/user.entity';
-import { RecordingEntity } from 'src/recording/entities/recording.entity';
+import { Recording } from 'src/recording/entities/recording.entity';
 import { TurfEntity } from 'src/turfs/entities/turfs.entity';
 import { PointsService } from 'src/points/points.service';
 
@@ -13,8 +13,8 @@ export class DashboardService {
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
-    @InjectRepository(RecordingEntity)
-    private readonly recordingRepo: Repository<RecordingEntity>,
+    @InjectRepository(Recording)
+    private readonly recordingRepo: Repository<Recording>,
     @InjectRepository(TurfEntity)
     private readonly turfRepo: Repository<TurfEntity>,
     private readonly pointsService: PointsService,
@@ -59,12 +59,12 @@ export class DashboardService {
       recommendedCourts: recommendedCourts.map(t => ({
         id: t.id,
         name: t.name,
-        location: t.address || 'Unknown',
+        location: t.address_line || t.location || 'Unknown',
         distance: 'Local',
         rating: 4.5,
         availableCourts: 1,
-        imageUrl: t.banner_image || '',
-        pricePerHour: t.price_per_hour || 0,
+        imageUrl: 'https://images.unsplash.com/photo-1552667466-07770ae110d0?auto=format&fit=crop&w=800&q=80',
+        pricePerHour: t.hourly_rate || 0,
       })),
     };
   }
