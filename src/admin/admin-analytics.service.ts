@@ -849,7 +849,7 @@ export class AdminAnalyticsService {
     if (playableUrl) {
       return { playableUrl, downloadUrl };
     }
-      throw new NotFoundException('Playback URL not ready yet');
+    throw new NotFoundException('Playback URL not ready yet');
   }
 
   /**
@@ -891,8 +891,6 @@ export class AdminAnalyticsService {
 
     for (const user of users) {
       const tokens = user.user_devices_token ?? [];
-      let pushSuccess = false;
-
       // 1. Send Push Notification if requested
       if (activeChannels.includes('PUSH')) {
         for (const t of tokens) {
@@ -908,7 +906,6 @@ export class AdminAnalyticsService {
               },
               user.id,
             );
-            pushSuccess = true;
           } catch (err) {
             this.logger.warn(`Broadcast FCM fail for user=${user.id}: ${err}`);
           }
@@ -918,7 +915,7 @@ export class AdminAnalyticsService {
       // 2. Send SMS if requested
       if (activeChannels.includes('SMS') && user.phone_number) {
         try {
-          // Fast2SmsService usually sends OTP via DLT, but we can call it here. 
+          // Fast2SmsService usually sends OTP via DLT, but we can call it here.
           // If a generic promotional SMS method is needed, we log it for now or use the OTP method as a test.
           // Note: In real prod, you need an approved DLT template for promotional text.
           await this.fast2SmsService.sendDltOtp(user.phone_number, '123456'); // Using sendDltOtp just to hit SMS service
