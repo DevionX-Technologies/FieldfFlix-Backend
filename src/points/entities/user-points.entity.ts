@@ -33,6 +33,26 @@ export class UserPoints {
   @Column({ type: 'integer', default: 0 })
   totalPoints: number;
 
+  // Streak tracking
+  @Column({ type: 'integer', default: 0 })
+  currentStreak: number;
+
+  @Column({ type: 'integer', default: 0 })
+  longestStreak: number;
+
+  @Column({ type: 'date', nullable: true })
+  lastActivityDate: Date | null;
+
+  // Accuracy tracking
+  @Column({ type: 'integer', default: 0 })
+  totalSessions: number;
+
+  @Column({ type: 'integer', default: 0 })
+  successfulSessions: number;
+
+  @Column({ type: 'numeric', precision: 5, scale: 2, default: 0 })
+  accuracyPercent: number;
+
   @UpdateDateColumn({ type: 'timestamp' })
   updatedAt: Date;
 }

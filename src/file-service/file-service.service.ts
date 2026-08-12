@@ -123,7 +123,10 @@ export class FileServiceService {
     let key = param1 || '';
 
     if (param1 && param2) {
-      if (param1.includes('/') || (!param2.includes('/') && param2.length > 0)) {
+      if (
+        param1.includes('/') ||
+        (!param2.includes('/') && param2.length > 0)
+      ) {
         // param1 is Key (has path slashes), param2 is Bucket
         key = param1;
         bucket = param2;

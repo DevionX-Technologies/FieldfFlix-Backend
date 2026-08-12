@@ -23,7 +23,7 @@ export class DashboardService {
   async getHomeDashboard(userId: string) {
     // 1. Get user profile for greeting
     const user = await this.userRepo.findOne({ where: { id: userId } });
-    
+
     // 2. Total Sessions (Count of recordings for this user)
     const totalSessions = await this.recordingRepo.count({
       where: { user: { id: userId } }, // assuming user relation is set
@@ -31,7 +31,7 @@ export class DashboardService {
 
     // 3. XP / Streaks / Level
     const pointsData = await this.pointsService.getMyTotals(userId);
-    
+
     // 4. Fetch recommended courts (random or top rated)
     const recommendedCourts = await this.turfRepo.find({
       take: 2, // just grab 2 for now
@@ -56,14 +56,15 @@ export class DashboardService {
         circleAvatars: [],
         circleMoreCount: 0,
       },
-      recommendedCourts: recommendedCourts.map(t => ({
+      recommendedCourts: recommendedCourts.map((t) => ({
         id: t.id,
         name: t.name,
         location: t.address_line || t.location || 'Unknown',
         distance: 'Local',
         rating: 4.5,
         availableCourts: 1,
-        imageUrl: 'https://images.unsplash.com/photo-1552667466-07770ae110d0?auto=format&fit=crop&w=800&q=80',
+        imageUrl:
+          'https://images.unsplash.com/photo-1552667466-07770ae110d0?auto=format&fit=crop&w=800&q=80',
         pricePerHour: t.hourly_rate || 0,
       })),
     };
@@ -91,7 +92,12 @@ export class DashboardService {
         { day: 'Thu', sessionsCount: 0, accuracy: 0, xpEarned: 0 },
         { day: 'Fri', sessionsCount: 0, accuracy: 0, xpEarned: 0 },
         { day: 'Sat', sessionsCount: 0, accuracy: 0, xpEarned: 0 },
-        { day: 'Sun', sessionsCount: totalSessions, accuracy: 0, xpEarned: pointsData.totalPoints }, // Dump everything into today for demo
+        {
+          day: 'Sun',
+          sessionsCount: totalSessions,
+          accuracy: 0,
+          xpEarned: pointsData.totalPoints,
+        }, // Dump everything into today for demo
       ],
       recentAchievements: [],
       userGoals: [],
@@ -109,8 +115,12 @@ export class DashboardService {
       },
       coachRecommendations: [],
       insights: [
-        { id: '1', text: `You've completed ${totalSessions} sessions so far.`, type: 'neutral' }
-      ]
+        {
+          id: '1',
+          text: `You've completed ${totalSessions} sessions so far.`,
+          type: 'neutral',
+        },
+      ],
     };
   }
 }

@@ -55,7 +55,7 @@ export class TournamentService implements OnModuleInit {
           CONSTRAINT "PK_tournaments_id" PRIMARY KEY ("id")
         );
       `);
-      
+
       await this.tournamentRepo.query(`
         CREATE TABLE IF NOT EXISTS "tournament_enrollments" (
           "id" uuid NOT NULL DEFAULT uuid_generate_v4(),
@@ -137,7 +137,10 @@ export class TournamentService implements OnModuleInit {
     return { success: (res.affected || 0) > 0 };
   }
 
-  async checkEnrollment(tournamentId: string, userId: string): Promise<{ isEnrolled: boolean }> {
+  async checkEnrollment(
+    tournamentId: string,
+    userId: string,
+  ): Promise<{ isEnrolled: boolean }> {
     const enrollment = await this.enrollmentRepo.findOne({
       where: { tournamentId, userId },
     });
@@ -146,9 +149,11 @@ export class TournamentService implements OnModuleInit {
 
   async enrollTournament(tournamentId: string, userId: string): Promise<any> {
     const tournament = await this.getTournamentById(tournamentId);
-    
+
     // Check if already enrolled
-    const existing = await this.enrollmentRepo.findOne({ where: { tournamentId, userId } });
+    const existing = await this.enrollmentRepo.findOne({
+      where: { tournamentId, userId },
+    });
     if (existing) {
       return { enrolled: true, message: 'Already enrolled' };
     }
@@ -162,10 +167,10 @@ export class TournamentService implements OnModuleInit {
     if (tournament.entryFee > 0) {
       // In a real flow, we would generate a Razorpay order here
       // For now, return a signal that payment is required
-      return { 
-        requiresPayment: true, 
+      return {
+        requiresPayment: true,
         entryFee: tournament.entryFee,
-        message: 'Payment required to enroll' 
+        message: 'Payment required to enroll',
       };
     }
 
@@ -188,6 +193,6 @@ export class TournamentService implements OnModuleInit {
       where: { userId },
       relations: ['tournament'],
     });
-    return enrollments.map(e => e.tournament);
+    return enrollments.map((e) => e.tournament);
   }
 }

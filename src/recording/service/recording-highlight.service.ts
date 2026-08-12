@@ -16,6 +16,7 @@ import { FireBaseNotificationService } from 'src/common/service/fire-base.servic
 import { User } from 'src/user/entities/user.entity';
 import { NotificationEntity } from 'src/notification/entities/notification.entity';
 import { MessageStatus, NotificationType } from 'src/constant/enum';
+import { PointsService } from 'src/points/points.service';
 
 @Injectable()
 export class RecordingHighlightsService {
@@ -26,6 +27,7 @@ export class RecordingHighlightsService {
     private readonly muxService: MuxService,
     private readonly enqueueService: ClipProcessingEnqueueService,
     private readonly fireBaseNotificationService: FireBaseNotificationService,
+    private readonly pointsService: PointsService,
   ) {}
 
   /**
@@ -1133,6 +1135,17 @@ export class RecordingHighlightsService {
         persistedPlaybackId: recordingUpdate.mux_playback_id ?? '(already set)',
       },
     );
+
+    // Update session stats for accuracy tracking (recording completed successfully)
+    if (recording.userId) {
+      try {
+        await this.pointsService.updateSessionStats(recording.userId, true);
+      } catch (err) {
+        this.logger.warn(
+          `Failed to update session stats for user ${recording.userId}: ${(err as Error)?.message}`,
+        );
+      }
+    }
 
     // Notify the owner that the recording is now viewable in-app.
     // Use the playback id from the webhook (more reliable than the DB at this point).

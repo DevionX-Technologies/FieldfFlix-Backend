@@ -6,7 +6,9 @@ import { TournamentService } from './tournament.service';
 import { TournamentController } from './tournament.controller';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([TournamentEntity, TournamentEnrollmentEntity])],
+  imports: [
+    TypeOrmModule.forFeature([TournamentEntity, TournamentEnrollmentEntity]),
+  ],
   controllers: [TournamentController],
   providers: [TournamentService],
   exports: [TournamentService, TypeOrmModule],

@@ -108,7 +108,6 @@ export class PointsController {
     };
   }
 
-
   /** Admin/User: list all level configs. */
   @Get('levels')
   @ApiOperation({ summary: 'Admin/User: list all level configs' })

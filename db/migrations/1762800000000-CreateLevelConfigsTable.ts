@@ -20,7 +20,9 @@ export class CreateLevelConfigsTable1762800000000 implements MigrationInterface 
   }
 
   public async down(queryRunner: QueryRunner): Promise<void> {
-    await queryRunner.query(`DROP INDEX IF EXISTS "IDX_level_configs_minPoints"`);
+    await queryRunner.query(
+      `DROP INDEX IF EXISTS "IDX_level_configs_minPoints"`,
+    );
     await queryRunner.query(`DROP TABLE IF EXISTS "level_configs"`);
   }
 }

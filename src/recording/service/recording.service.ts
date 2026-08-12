@@ -2818,6 +2818,12 @@ export class RecordingService {
   }): void {
     void this.pointsService
       .awardPoints(args)
+      .then((awarded) => {
+        // Update streak when a recording is created
+        if (awarded && args.eventType === PointEventType.RECORDING_CREATE) {
+          return this.pointsService.updateStreak(args.userId);
+        }
+      })
       .catch((err) =>
         this.logger.warn(
           `awardPoints(${args.eventType}, user=${args.userId}, ref=${

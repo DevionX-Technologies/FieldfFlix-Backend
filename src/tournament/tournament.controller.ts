@@ -68,7 +68,7 @@ export class TournamentController {
   // NOTE: In a real app, these should have JwtAuthGuard and extract userId from token.
   // Assuming a generic approach where userId is passed in body/query for now, or extracted from req.
   // I will use a simple query/body param to avoid changing auth guard setup here.
-  
+
   @Get('enrolled')
   @ApiOperation({ summary: 'List tournaments the user is enrolled in' })
   async getEnrolledTournaments(@Query('userId') userId: string) {

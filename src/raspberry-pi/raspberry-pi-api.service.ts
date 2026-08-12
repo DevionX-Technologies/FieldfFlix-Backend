@@ -114,17 +114,13 @@ export class RaspberryPiApiService {
     );
     try {
       const response = await firstValueFrom(
-        this.httpService.post(
-          `${targetUrl}/extract-session`,
-          payload,
-          {
-            headers: {
-              'X-API-KEY': this.evmsApiKey,
-              'Content-Type': 'application/json',
-            },
-            timeout: 300000, // 5 minutes timeout for slicing and uploading to S3
+        this.httpService.post(`${targetUrl}/extract-session`, payload, {
+          headers: {
+            'X-API-KEY': this.evmsApiKey,
+            'Content-Type': 'application/json',
           },
-        ),
+          timeout: 300000, // 5 minutes timeout for slicing and uploading to S3
+        }),
       );
       return response.data as ExtractSessionResponse;
     } catch (error: any) {
@@ -174,17 +170,13 @@ export class RaspberryPiApiService {
     );
     try {
       const response = await firstValueFrom(
-        this.httpService.post(
-          `${targetUrl}/start-live-stream`,
-          payload,
-          {
-            headers: {
-              'X-API-KEY': this.liveApiKey,
-              'Content-Type': 'application/json',
-            },
-            timeout: 10000,
+        this.httpService.post(`${targetUrl}/start-live-stream`, payload, {
+          headers: {
+            'X-API-KEY': this.liveApiKey,
+            'Content-Type': 'application/json',
           },
-        ),
+          timeout: 10000,
+        }),
       );
       return response.data;
     } catch (error: any) {
@@ -213,17 +205,13 @@ export class RaspberryPiApiService {
     );
     try {
       const response = await firstValueFrom(
-        this.httpService.post(
-          `${targetUrl}/stop-live-stream`,
-          payload,
-          {
-            headers: {
-              'X-API-KEY': this.liveApiKey,
-              'Content-Type': 'application/json',
-            },
-            timeout: 10000,
+        this.httpService.post(`${targetUrl}/stop-live-stream`, payload, {
+          headers: {
+            'X-API-KEY': this.liveApiKey,
+            'Content-Type': 'application/json',
           },
-        ),
+          timeout: 10000,
+        }),
       );
       return response.data;
     } catch (error: any) {

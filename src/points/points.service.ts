@@ -506,6 +506,8 @@ export class PointsService implements OnModuleInit {
       name: string | null;
       profileImagePath: string | null;
       points: number;
+      streak: number;
+      accuracy: number;
     }>;
   }> {
     const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
@@ -514,13 +516,18 @@ export class PointsService implements OnModuleInit {
     const qb = this.eventRepo
       .createQueryBuilder('e')
       .innerJoin('users', 'u', 'u.id = e."userId"')
+      .leftJoin('user_points', 'up', 'up."userId" = e."userId"')
       .select('e."userId"', 'userId')
       .addSelect('u.name', 'name')
       .addSelect('u.profile_image_path', 'profileImagePath')
       .addSelect('SUM(e.points)', 'points')
+      .addSelect('COALESCE(up."currentStreak", 0)', 'streak')
+      .addSelect('COALESCE(up."accuracyPercent", 0)', 'accuracy')
       .groupBy('e."userId"')
       .addGroupBy('u.name')
       .addGroupBy('u.profile_image_path')
+      .addGroupBy('up."currentStreak"')
+      .addGroupBy('up."accuracyPercent"')
       .orderBy('points', 'DESC')
       .addOrderBy('e."userId"', 'ASC')
       .limit(safeLimit);
@@ -533,6 +540,8 @@ export class PointsService implements OnModuleInit {
       name: string | null;
       profileImagePath: string | null;
       points: string;
+      streak: string;
+      accuracy: string;
     }>();
 
     // Competition ranking: same points → same rank; next distinct points
@@ -551,6 +560,8 @@ export class PointsService implements OnModuleInit {
         name: r.name,
         profileImagePath: r.profileImagePath,
         points: pts,
+        streak: Number(r.streak ?? 0),
+        accuracy: Number(r.accuracy ?? 0),
       };
     });
 
@@ -647,5 +658,121 @@ export class PointsService implements OnModuleInit {
 
   async deleteLevel(level: number): Promise<void> {
     await this.levelConfigRepo.delete({ level });
+  }
+
+  /**
+   * Update user's streak based on activity date.
+   * Call this whenever a user completes a recording/session.
+   */
+  async updateStreak(userId: string): Promise<void> {
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    
+    let userPoints = await this.userPointsRepo.findOne({ where: { userId } });
+    if (!userPoints) {
+      userPoints = this.userPointsRepo.create({
+        userId,
+        totalPoints: 0,
+        currentStreak: 1,
+        longestStreak: 1,
+        lastActivityDate: new Date(today),
+        totalSessions: 0,
+        successfulSessions: 0,
+        accuracyPercent: 0,
+      });
+      await this.userPointsRepo.save(userPoints);
+      return;
+    }
+
+    const lastActivity = userPoints.lastActivityDate
+      ? new Date(userPoints.lastActivityDate).toISOString().split('T')[0]
+      : null;
+
+    if (lastActivity === today) {
+      // Already counted today — no change
+      return;
+    }
+
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000)
+      .toISOString()
+      .split('T')[0];
+
+    if (lastActivity === yesterday) {
+      // Consecutive day — increment streak
+      userPoints.currentStreak += 1;
+      if (userPoints.currentStreak > userPoints.longestStreak) {
+        userPoints.longestStreak = userPoints.currentStreak;
+      }
+    } else {
+      // Streak broken — reset to 1
+      userPoints.currentStreak = 1;
+    }
+
+    userPoints.lastActivityDate = new Date(today);
+    await this.userPointsRepo.save(userPoints);
+  }
+
+  /**
+   * Update session stats for accuracy calculation.
+   * Call this when a recording is completed.
+   * 
+   * @param userId - User ID
+   * @param wasSuccessful - Whether the session was successful (e.g., no errors, proper completion)
+   */
+  async updateSessionStats(userId: string, wasSuccessful: boolean): Promise<void> {
+    let userPoints = await this.userPointsRepo.findOne({ where: { userId } });
+    if (!userPoints) {
+      userPoints = this.userPointsRepo.create({
+        userId,
+        totalPoints: 0,
+        currentStreak: 0,
+        longestStreak: 0,
+        lastActivityDate: null,
+        totalSessions: 1,
+        successfulSessions: wasSuccessful ? 1 : 0,
+        accuracyPercent: wasSuccessful ? 100 : 0,
+      });
+      await this.userPointsRepo.save(userPoints);
+      return;
+    }
+
+    userPoints.totalSessions += 1;
+    if (wasSuccessful) {
+      userPoints.successfulSessions += 1;
+    }
+
+    // Calculate accuracy percentage
+    userPoints.accuracyPercent =
+      userPoints.totalSessions > 0
+        ? (userPoints.successfulSessions / userPoints.totalSessions) * 100
+        : 0;
+
+    await this.userPointsRepo.save(userPoints);
+  }
+
+  /**
+   * Get user's streak and accuracy stats
+   */
+  async getStreakAndAccuracy(userId: string): Promise<{
+    currentStreak: number;
+    longestStreak: number;
+    accuracy: number;
+    totalSessions: number;
+  }> {
+    const userPoints = await this.userPointsRepo.findOne({ where: { userId } });
+    if (!userPoints) {
+      return {
+        currentStreak: 0,
+        longestStreak: 0,
+        accuracy: 0,
+        totalSessions: 0,
+      };
+    }
+
+    return {
+      currentStreak: userPoints.currentStreak,
+      longestStreak: userPoints.longestStreak,
+      accuracy: Number(userPoints.accuracyPercent),
+      totalSessions: userPoints.totalSessions,
+    };
   }
 }
