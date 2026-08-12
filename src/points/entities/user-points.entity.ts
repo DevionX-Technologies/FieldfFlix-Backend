@@ -53,6 +53,6 @@ export class UserPoints {
   @Column({ name: 'accuracy_percent', type: 'numeric', precision: 5, scale: 2, default: 0 })
   accuracyPercent: number;
 
-  @UpdateDateColumn({ name: 'updated_at', type: 'timestamp' })
+  @UpdateDateColumn({ type: 'timestamp' })
   updatedAt: Date;
 }
