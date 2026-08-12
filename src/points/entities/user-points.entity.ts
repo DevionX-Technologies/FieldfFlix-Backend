@@ -34,25 +34,25 @@ export class UserPoints {
   totalPoints: number;
 
   // Streak tracking
-  @Column({ type: 'integer', default: 0 })
+  @Column({ name: 'current_streak', type: 'integer', default: 0 })
   currentStreak: number;
 
-  @Column({ type: 'integer', default: 0 })
+  @Column({ name: 'longest_streak', type: 'integer', default: 0 })
   longestStreak: number;
 
-  @Column({ type: 'date', nullable: true })
+  @Column({ name: 'last_activity_date', type: 'date', nullable: true })
   lastActivityDate: Date | null;
 
   // Accuracy tracking
-  @Column({ type: 'integer', default: 0 })
+  @Column({ name: 'total_sessions', type: 'integer', default: 0 })
   totalSessions: number;
 
-  @Column({ type: 'integer', default: 0 })
+  @Column({ name: 'successful_sessions', type: 'integer', default: 0 })
   successfulSessions: number;
 
-  @Column({ type: 'numeric', precision: 5, scale: 2, default: 0 })
+  @Column({ name: 'accuracy_percent', type: 'numeric', precision: 5, scale: 2, default: 0 })
   accuracyPercent: number;
 
-  @UpdateDateColumn({ type: 'timestamp' })
+  @UpdateDateColumn({ name: 'updated_at', type: 'timestamp' })
   updatedAt: Date;
 }
