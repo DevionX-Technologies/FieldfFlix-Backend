@@ -32,6 +32,13 @@ export class TournamentController {
   }
 
   @Public()
+  @Get('enrolled')
+  @ApiOperation({ summary: 'List tournaments the user is enrolled in' })
+  async getEnrolledTournaments(@Query('userId') userId: string) {
+    return this.tournamentService.getEnrolledTournaments(userId);
+  }
+
+  @Public()
   @Get(':id')
   @ApiOperation({ summary: 'Get tournament details by ID' })
   async getTournamentDetails(@Param('id') id: string) {
@@ -69,11 +76,7 @@ export class TournamentController {
   // Assuming a generic approach where userId is passed in body/query for now, or extracted from req.
   // I will use a simple query/body param to avoid changing auth guard setup here.
 
-  @Get('enrolled')
-  @ApiOperation({ summary: 'List tournaments the user is enrolled in' })
-  async getEnrolledTournaments(@Query('userId') userId: string) {
-    return this.tournamentService.getEnrolledTournaments(userId);
-  }
+
 
   @Get(':id/enrollment')
   @ApiOperation({ summary: 'Check if user is enrolled in a tournament' })
