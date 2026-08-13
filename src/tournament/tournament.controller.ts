@@ -12,6 +12,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from 'src/decorators/public.decorator';
 import { TournamentService } from './tournament.service';
 import { TournamentStatus } from './entities/tournament.entity';
+import { TournamentEntity } from './entities/tournament.entity';
 
 @ApiTags('tournaments')
 @Controller('tournaments')
@@ -92,7 +93,33 @@ export class TournamentController {
   async enrollTournament(
     @Param('id') tournamentId: string,
     @Body('userId') userId: string,
+    @Body('razorpayOrderId') razorpayOrderId?: string,
   ) {
-    return this.tournamentService.enrollTournament(tournamentId, userId);
+    return this.tournamentService.enrollTournament(
+      tournamentId,
+      userId,
+      razorpayOrderId,
+    );
+  }
+
+  @Post(':id/create-payment')
+  @ApiOperation({ summary: 'Create Razorpay order for paid tournament entry' })
+  async createTournamentPayment(
+    @Param('id') tournamentId: string,
+    @Body('userId') userId: string,
+  ) {
+    return this.tournamentService.createTournamentPaymentOrder(
+      tournamentId,
+      userId,
+    );
+  }
+
+  @Patch(':id/live-streams')
+  @ApiOperation({ summary: 'Update tournament live stream state (admin)' })
+  async updateLiveStreams(
+    @Param('id') tournamentId: string,
+    @Body('liveStreams') liveStreams: TournamentEntity['liveStreams'],
+  ) {
+    return this.tournamentService.updateLiveStreams(tournamentId, liveStreams);
   }
 }

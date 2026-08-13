@@ -78,17 +78,19 @@ export class UserService {
 
     // Check if the user has an existing profile pic and delete it
 
-    const bucketName = userProfile.bucket_name
-      ? userProfile.bucket_name
-      : AWS_BUCKET_NAME;
+    const bucketName = AWS_BUCKET_NAME;
 
-    if (userProfile.bucket_name) {
-      // Delete the existing profile pic from S3
-
-      await this.fileService.deleteFileFormS3(
-        userProfile.bucket_name,
-        userProfile.profile_image_path,
-      );
+    if (userProfile.bucket_name && userProfile.profile_image_path) {
+      try {
+        await this.fileService.deleteFileFormS3(
+          userProfile.bucket_name,
+          userProfile.profile_image_path,
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Could not delete previous profile image: ${(err as Error).message}`,
+        );
+      }
     }
 
     // 2. Generate a unique file path for the uploaded file

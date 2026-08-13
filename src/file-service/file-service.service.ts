@@ -197,7 +197,6 @@ export class FileServiceService {
       Bucket: bucketName,
       Key: key,
       Body: body,
-      ACL: ObjectCannedACL.private,
       ContentType: mimetype,
       ContentDisposition: 'inline',
     };

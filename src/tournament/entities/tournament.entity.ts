@@ -36,6 +36,23 @@ export class TournamentEntity {
   @Column({ type: 'varchar', length: 255, default: 'Venue Stadium' })
   venue: string;
 
+  @Column({ type: 'uuid', nullable: true })
+  turfId: string;
+
+  /** Camera IDs assigned to this tournament (from admin fleet). */
+  @Column({ type: 'jsonb', nullable: true })
+  cameraIds: string[];
+
+  /** Active / configured live streams for tournament viewers. */
+  @Column({ type: 'jsonb', nullable: true })
+  liveStreams: Array<{
+    cameraId: string;
+    cameraName: string;
+    courtNumber?: number;
+    playbackUrl?: string;
+    isLive: boolean;
+  }>;
+
   @Column({ type: 'varchar', length: 100, default: 'Mumbai' })
   city: string;
 

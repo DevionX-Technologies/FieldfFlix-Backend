@@ -348,6 +348,7 @@ export class PaymentService {
         status: PaymentStatus.PENDING,
         payment_type: createPaymentDto.payment_type,
         description: createPaymentDto.description,
+        metadata: createPaymentDto.metadata ?? null,
       });
 
       const savedPayment = await this.paymentRepository.save(payment);

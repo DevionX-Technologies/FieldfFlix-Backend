@@ -12,6 +12,12 @@ import {
   TournamentStatus,
 } from './entities/tournament.entity';
 import { TournamentEnrollmentEntity } from './entities/tournament-enrollment.entity';
+import { PaymentService } from '../payment/payment.service';
+import {
+  PaymentEntity,
+  PaymentStatus,
+  PaymentType,
+} from '../payment/entities/payment.entity';
 
 @Injectable()
 export class TournamentService implements OnModuleInit {
@@ -22,6 +28,9 @@ export class TournamentService implements OnModuleInit {
     private readonly tournamentRepo: Repository<TournamentEntity>,
     @InjectRepository(TournamentEnrollmentEntity)
     private readonly enrollmentRepo: Repository<TournamentEnrollmentEntity>,
+    @InjectRepository(PaymentEntity)
+    private readonly paymentRepo: Repository<PaymentEntity>,
+    private readonly paymentService: PaymentService,
   ) {}
 
   async onModuleInit() {
@@ -68,6 +77,24 @@ export class TournamentService implements OnModuleInit {
         );
       `);
       this.logger.log('Verified tournaments schema in PostgreSQL.');
+
+      await this.tournamentRepo.query(`
+        ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "turfId" uuid;
+      `);
+      await this.tournamentRepo.query(`
+        ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "cameraIds" jsonb;
+      `);
+      await this.tournamentRepo.query(`
+        ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "liveStreams" jsonb;
+      `);
+
+      await this.tournamentRepo.query(`
+        DO $$ BEGIN
+          ALTER TYPE "payments_payment_type_enum" ADD VALUE IF NOT EXISTS 'tournament_entry';
+        EXCEPTION
+          WHEN duplicate_object THEN null;
+        END $$;
+      `);
     } catch (err: any) {
       this.logger.warn(
         `Could not verify tournaments table on startup: ${err.message}`,
@@ -147,10 +174,13 @@ export class TournamentService implements OnModuleInit {
     return { isEnrolled: !!enrollment };
   }
 
-  async enrollTournament(tournamentId: string, userId: string): Promise<any> {
+  async enrollTournament(
+    tournamentId: string,
+    userId: string,
+    razorpayOrderId?: string,
+  ): Promise<any> {
     const tournament = await this.getTournamentById(tournamentId);
 
-    // Check if already enrolled
     const existing = await this.enrollmentRepo.findOne({
       where: { tournamentId, userId },
     });
@@ -158,34 +188,85 @@ export class TournamentService implements OnModuleInit {
       return { enrolled: true, message: 'Already enrolled' };
     }
 
-    // Check capacity
     if (tournament.participantsCount >= tournament.maxParticipants) {
       throw new BadRequestException('Tournament is fully booked');
     }
 
-    // If entry is paid, require payment flow first
+    let paymentId: string | null = null;
+
     if (tournament.entryFee > 0) {
-      // In a real flow, we would generate a Razorpay order here
-      // For now, return a signal that payment is required
-      return {
-        requiresPayment: true,
-        entryFee: tournament.entryFee,
-        message: 'Payment required to enroll',
-      };
+      if (!razorpayOrderId) {
+        return {
+          requiresPayment: true,
+          entryFee: tournament.entryFee,
+          message: 'Payment required to enroll',
+        };
+      }
+
+      const payment = await this.paymentRepo.findOne({
+        where: {
+          razorpay_order_id: razorpayOrderId,
+          user_id: userId,
+          status: PaymentStatus.COMPLETED,
+          payment_type: PaymentType.TOURNAMENT_ENTRY,
+        },
+      });
+
+      if (!payment || payment.metadata?.tournamentId !== tournamentId) {
+        throw new BadRequestException(
+          'A completed tournament entry payment is required before enrolling.',
+        );
+      }
+
+      paymentId = payment.razorpay_payment_id || payment.razorpay_order_id;
     }
 
-    // Free tournament: enroll directly
     const enrollment = this.enrollmentRepo.create({
       tournamentId,
       userId,
+      paymentId,
     });
     await this.enrollmentRepo.save(enrollment);
 
-    // Update participants count
     tournament.participantsCount += 1;
     await this.tournamentRepo.save(tournament);
 
     return { enrolled: true, message: 'Successfully enrolled' };
+  }
+
+  async createTournamentPaymentOrder(
+    tournamentId: string,
+    userId: string,
+  ): Promise<any> {
+    const tournament = await this.getTournamentById(tournamentId);
+
+    if (tournament.entryFee <= 0) {
+      throw new BadRequestException('This tournament is free to join');
+    }
+
+    const existing = await this.enrollmentRepo.findOne({
+      where: { tournamentId, userId },
+    });
+    if (existing) {
+      throw new BadRequestException('Already enrolled in this tournament');
+    }
+
+    return this.paymentService.createPaymentOrder(userId, {
+      amount: tournament.entryFee,
+      payment_type: PaymentType.TOURNAMENT_ENTRY,
+      description: `Tournament entry: ${tournament.name}`,
+      base_amount: tournament.entryFee,
+      metadata: { tournamentId },
+    });
+  }
+
+  async updateLiveStreams(
+    tournamentId: string,
+    liveStreams: TournamentEntity['liveStreams'],
+  ): Promise<TournamentEntity> {
+    const tournament = await this.getTournamentById(tournamentId);
+    tournament.liveStreams = liveStreams;
+    return this.tournamentRepo.save(tournament);
   }
 
   async getEnrolledTournaments(userId: string): Promise<TournamentEntity[]> {

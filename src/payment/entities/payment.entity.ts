@@ -29,6 +29,7 @@ export enum PaymentType {
   RECORDING_ACCESS = 'recording_access',
   HIGHLIGHT_ACCESS = 'highlight_access',
   MEDIA_ACCESS = 'media_access',
+  TOURNAMENT_ENTRY = 'tournament_entry',
 }
 
 /**

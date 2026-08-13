@@ -70,6 +70,12 @@ export class CreatePaymentOrderDto {
   @Min(0)
   @Max(10000)
   base_amount?: number;
+
+  @ApiPropertyOptional({
+    description: 'Optional metadata (e.g. tournamentId for tournament entry payments)',
+  })
+  @IsOptional()
+  metadata?: Record<string, unknown>;
 }
 
 /** Premium / plan checkout — amounts match mobile `ProfilePremium` copy. */
