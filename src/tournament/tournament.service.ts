@@ -88,13 +88,6 @@ export class TournamentService implements OnModuleInit {
         ALTER TABLE "tournaments" ADD COLUMN IF NOT EXISTS "liveStreams" jsonb;
       `);
 
-      await this.tournamentRepo.query(`
-        DO $$ BEGIN
-          ALTER TYPE "payments_payment_type_enum" ADD VALUE IF NOT EXISTS 'tournament_entry';
-        EXCEPTION
-          WHEN duplicate_object THEN null;
-        END $$;
-      `);
     } catch (err: any) {
       this.logger.warn(
         `Could not verify tournaments table on startup: ${err.message}`,
