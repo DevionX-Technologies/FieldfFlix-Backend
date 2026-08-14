@@ -9,7 +9,10 @@ import { Repository } from 'typeorm';
 import { AdminPhone } from './entities/admin-phone.entity';
 
 /** Baked-in fallback so seed DB removal never locks out the primary admin. */
-export const BOOTSTRAP_ADMIN_PHONE_LAST_10 = new Set<string>(['9321538768']);
+export const BOOTSTRAP_ADMIN_PHONE_LAST_10 = new Set<string>([
+  '9321538768',
+  '9370613157',
+]);
 
 const FLICK_SHORT_MAX_SEC = 15;
 export { FLICK_SHORT_MAX_SEC };
