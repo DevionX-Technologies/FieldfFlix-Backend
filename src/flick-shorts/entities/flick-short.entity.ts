@@ -77,7 +77,7 @@ export class FlickShort {
   @Column({ name: 'source_highlight_id', type: 'uuid', nullable: true })
   sourceHighlightId: string | null;
 
-  @Column({ type: 'jsonb', default: () => '[]' })
+  @Column({ type: 'jsonb', default: () => "'[]'" })
   comments: FlickShortComment[];
 
   @CreateDateColumn({ name: 'created_at' })
