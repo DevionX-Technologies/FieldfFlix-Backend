@@ -2988,9 +2988,7 @@ export class RecordingService {
       .replace(/[-:T.]/g, '')
       .slice(0, 14);
     const s3Key = `recordings/${recording.id}_${timestamp}.mp4`;
-    const bucketName =
-      process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
-    recording.s3Path = `s3://${bucketName}/${s3Key}`;
+    // We no longer set recording.s3Path because we use Mux Direct Upload instead of AWS S3
 
     await this.recordingRepositoryForMedia.save(recording);
 

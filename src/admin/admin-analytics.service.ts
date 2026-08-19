@@ -7,8 +7,7 @@ import {
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import axios from 'axios';
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
-import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+// S3 SDK imports removed as we migrated to Mux
 import { User } from 'src/user/entities/user.entity';
 import { Recording } from 'src/recording/entities/recording.entity';
 import { PaymentEntity } from 'src/payment/entities/payment.entity';
@@ -530,13 +529,7 @@ export class AdminAnalyticsService {
       take: limit,
     });
 
-    const s3Client = new S3Client({
-      region: process.env.AWS_REGION || 'ap-south-1',
-      credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
-      },
-    });
+    // We migrated to Mux, so we no longer need S3Client
 
     const items = await Promise.all(
       recordings.map(async (rec) => {
@@ -552,44 +545,8 @@ export class AdminAnalyticsService {
 
         // Generate pre-signed direct S3 download & inline streaming URLs if S3 path exists
         if (rec.s3Path) {
-          try {
-            const bucket =
-              process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
-            let key = rec.s3Path;
-            if (key.startsWith('s3://')) {
-              key = key.replace(/^s3:\/\/[^\/]+\//, '');
-            }
-
-            // Inline stream URL
-            const playCmd = new GetObjectCommand({
-              Bucket: bucket,
-              Key: key,
-              ResponseContentType: 'video/mp4',
-              ResponseContentDisposition: 'inline',
-            });
-            const s3PlayUrl = await getSignedUrl(s3Client, playCmd, {
-              expiresIn: 3600 * 4,
-            });
-
-            // Attachment download URL
-            const filename = `fieldflicks_${key.split('/').pop() || 'match_recording.mp4'}`;
-            const downloadCmd = new GetObjectCommand({
-              Bucket: bucket,
-              Key: key,
-              ResponseContentType: 'video/mp4',
-              ResponseContentDisposition: `attachment; filename="${filename}"`,
-            });
-            const s3DownloadUrl = await getSignedUrl(s3Client, downloadCmd, {
-              expiresIn: 3600 * 4,
-            });
-
-            downloadUrl = s3DownloadUrl;
-            if (!playableUrl) {
-              playableUrl = s3PlayUrl;
-            }
-          } catch {
-            // ignore
-          }
+          // AWS S3 is deprecated. We no longer generate S3 playback URLs.
+          // Everything is routed through Mux.
         }
 
         const durationMinutes =
@@ -704,56 +661,13 @@ export class AdminAnalyticsService {
     );
 
     // Generate immediate playable and downloadable S3 URLs
-    let playableUrl = result.playbackUrl || null;
-    let downloadUrl: string | null = null;
+    const playableUrl = result.playbackUrl || null;
+    const downloadUrl: string | null = null;
     const s3Path = result.s3Path || result.recording?.s3Path;
 
     if (s3Path) {
-      try {
-        const s3Client = new S3Client({
-          region: process.env.AWS_REGION || 'ap-south-1',
-          credentials: {
-            accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
-            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
-          },
-        });
-        const bucket =
-          process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
-        let key = s3Path;
-        if (key.startsWith('s3://')) {
-          key = key.replace(/^s3:\/\/[^\/]+\//, '');
-        }
-
-        // Inline MP4 streaming URL
-        const playCmd = new GetObjectCommand({
-          Bucket: bucket,
-          Key: key,
-          ResponseContentType: 'video/mp4',
-          ResponseContentDisposition: 'inline',
-        });
-        const s3PlayUrl = await getSignedUrl(s3Client, playCmd, {
-          expiresIn: 3600 * 4,
-        });
-
-        // Direct MP4 attachment download URL
-        const filename = `fieldflicks_match_${key.split('/').pop() || 'recording.mp4'}`;
-        const downloadCmd = new GetObjectCommand({
-          Bucket: bucket,
-          Key: key,
-          ResponseContentType: 'video/mp4',
-          ResponseContentDisposition: `attachment; filename="${filename}"`,
-        });
-        const s3DownloadUrl = await getSignedUrl(s3Client, downloadCmd, {
-          expiresIn: 3600 * 4,
-        });
-
-        downloadUrl = s3DownloadUrl;
-        if (!playableUrl) {
-          playableUrl = s3PlayUrl;
-        }
-      } catch (err) {
-        this.logger.warn(`Error generating S3 signed URLs: ${err.message}`);
-      }
+      // AWS S3 is deprecated. We no longer generate S3 playback URLs.
+      // Everything is routed through Mux.
     }
 
     return {
@@ -788,46 +702,8 @@ export class AdminAnalyticsService {
     let playableUrl: string | undefined;
 
     if (rec.s3Path) {
-      try {
-        const s3Client = new S3Client({
-          region: process.env.AWS_REGION || 'ap-south-1',
-          credentials: {
-            accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
-            secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
-          },
-        });
-        const bucket =
-          process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
-        let key = rec.s3Path;
-        if (key.startsWith('s3://')) {
-          key = key.replace(/^s3:\/\/[^\/]+\//, '');
-        }
-
-        const filename = `fieldflicks_match_${key.split('/').pop() || 'recording.mp4'}`;
-        const downloadCmd = new GetObjectCommand({
-          Bucket: bucket,
-          Key: key,
-          ResponseContentType: 'video/mp4',
-          ResponseContentDisposition: `attachment; filename="${filename}"`,
-        });
-        downloadUrl = await getSignedUrl(s3Client, downloadCmd, {
-          expiresIn: 3600 * 4,
-        });
-
-        const playCmd = new GetObjectCommand({
-          Bucket: bucket,
-          Key: key,
-          ResponseContentType: 'video/mp4',
-          ResponseContentDisposition: 'inline',
-        });
-        playableUrl = await getSignedUrl(s3Client, playCmd, {
-          expiresIn: 3600 * 4,
-        });
-      } catch (err) {
-        this.logger.warn(
-          `Error generating S3 URLs for ${recordingId}: ${err.message}`,
-        );
-      }
+      // AWS S3 is deprecated. We no longer generate S3 playback URLs.
+      // Everything is routed through Mux.
     }
 
     if (rec.mux_playback_id) {
