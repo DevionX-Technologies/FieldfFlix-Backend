@@ -180,8 +180,18 @@ export class RaspberryPiApiService {
       );
       return response.data;
     } catch (error: any) {
+      if (error.response?.status === 409) {
+        this.logger.log(
+          `Channel ${payload.channel} is already streaming on ${targetUrl}. Returning success.`,
+        );
+        return { status: 'LIVE_STREAM_STARTED', channel: payload.channel };
+      }
+
       const errMsg =
-        error.response?.data?.message || error.message || 'Device unresponsive';
+        error.response?.data?.detail ||
+        error.response?.data?.message ||
+        error.message ||
+        'Device unresponsive';
       this.logger.error(
         `Error starting live stream on Pi (${targetUrl}): ${errMsg}`,
       );
