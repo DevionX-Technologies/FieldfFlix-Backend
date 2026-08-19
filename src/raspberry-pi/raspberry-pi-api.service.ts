@@ -1,3 +1,4 @@
+import * as https from 'https';
 import {
   Injectable,
   Logger,
@@ -179,6 +180,10 @@ export class RaspberryPiApiService {
               'Content-Type': 'application/json',
             },
             timeout: 10000,
+            httpsAgent: new https.Agent({
+              keepAlive: true,
+              keepAliveMsecs: 15000,
+            }),
           }),
         );
         return response.data;
