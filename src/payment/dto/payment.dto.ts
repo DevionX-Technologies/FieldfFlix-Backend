@@ -72,7 +72,8 @@ export class CreatePaymentOrderDto {
   base_amount?: number;
 
   @ApiPropertyOptional({
-    description: 'Optional metadata (e.g. tournamentId for tournament entry payments)',
+    description:
+      'Optional metadata (e.g. tournamentId for tournament entry payments)',
   })
   @IsOptional()
   metadata?: Record<string, unknown>;

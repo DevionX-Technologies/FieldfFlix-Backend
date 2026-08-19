@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import { IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class ExtractSessionRequestDto {
@@ -78,6 +79,13 @@ export class StartCourtLiveStreamDto {
   @IsNotEmpty()
   @IsString()
   cameraId: string;
+
+  /** NVR/Pi RTSP channel (defaults to camera court_number when omitted). */
+  @ApiPropertyOptional({ description: 'Pi NVR channel override (1-based)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  channel?: number;
 }
 
 export class StopCourtLiveStreamDto {
@@ -85,4 +93,10 @@ export class StopCourtLiveStreamDto {
   @IsNotEmpty()
   @IsString()
   cameraId: string;
+
+  @ApiPropertyOptional({ description: 'Pi NVR channel override (1-based)' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  channel?: number;
 }

@@ -505,4 +505,91 @@ export class MuxService {
       );
     }
   }
+
+  /**
+   * Creates a Mux Direct Upload URL.
+   * The returned URL expects an HTTP PUT request with the video binary.
+   */
+  async createDirectUpload(
+    recordingId: string,
+  ): Promise<{ uploadUrl: string; uploadId: string }> {
+    try {
+      this.logger.log(
+        `Creating Mux Direct Upload for recordingId: ${recordingId}`,
+      );
+      const upload = await this.mux.video.uploads.create({
+        new_asset_settings: {
+          playback_policy: ['public'],
+          mp4_support: 'standard',
+          passthrough: recordingId,
+        },
+        cors_origin: '*',
+      });
+
+      this.logger.log(
+        `Generated Direct Upload URL successfully for recordingId: ${recordingId}`,
+      );
+      return {
+        uploadUrl: upload.url,
+        uploadId: upload.id,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Failed to create Mux Direct Upload: ${error.message}`,
+        error.stack,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Handles Mux Webhook Events (e.g. video.asset.ready)
+   */
+  async handleWebhookEvent(event: any): Promise<void> {
+    this.logger.log(`Received Mux webhook event: ${event.type}`);
+
+    if (event.type === 'video.asset.ready') {
+      const asset = event.data;
+      const recordingId = asset.passthrough;
+
+      if (!recordingId) {
+        this.logger.warn(
+          `Received video.asset.ready for asset ${asset.id} but no passthrough (recordingId) was found.`,
+        );
+        return;
+      }
+
+      this.logger.log(
+        `Processing video.asset.ready for recordingId: ${recordingId}`,
+      );
+
+      const recording = await this.recordingRepository.findOne({
+        where: { id: recordingId },
+      });
+
+      if (recording) {
+        recording.mux_asset_id = asset.id;
+
+        if (asset.playback_ids && asset.playback_ids.length > 0) {
+          const playbackId = asset.playback_ids[0].id;
+          recording.mux_playback_id = playbackId;
+          recording.mux_media_url = `https://stream.mux.com/${playbackId}.m3u8`;
+          this.logger.log(
+            `Updated mux_media_url to ${recording.mux_media_url} from webhook for recordingId: ${recordingId}`,
+          );
+        }
+
+        recording.status = 'completed';
+
+        await this.recordingRepository.save(recording);
+        this.logger.log(
+          `Successfully completed Mux direct upload for recordingId: ${recordingId}`,
+        );
+      } else {
+        this.logger.warn(
+          `Recording record not found for passthrough ID: ${recordingId}`,
+        );
+      }
+    }
+  }
 }

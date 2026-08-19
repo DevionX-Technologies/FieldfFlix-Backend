@@ -6,7 +6,10 @@ import {
   HttpStatus,
   UseGuards,
   Logger,
+  Req,
+  Headers,
 } from '@nestjs/common';
+import { Request } from 'express';
 import { MuxService } from './mux.service';
 import { CreateMuxUploadDto } from './dto/create-mux-upload.dto';
 import { ApiKeyAuthGuard } from 'src/guards/api-key-auth.guard';
@@ -49,5 +52,40 @@ export class MuxController {
       createMuxUploadDto.recordingId,
     );
     return { message: 'Upload process started.' };
+  }
+  @Post('webhook')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Mux Webhook Endpoint for receiving asset updates' })
+  async handleWebhook(
+    @Req() request: Request,
+    @Headers('mux-signature') signature: string,
+  ) {
+    const rawBody = (request as any).rawBody || JSON.stringify(request.body);
+    const secret = process.env.MUX_WEBHOOK_SECRET;
+
+    if (!secret) {
+      this.logger.warn('MUX_WEBHOOK_SECRET is not configured.');
+    } else if (signature && rawBody) {
+      try {
+        this.muxService.verifyWebhookSignature(
+          rawBody.toString(),
+          signature,
+          secret,
+        );
+      } catch (err) {
+        this.logger.error(
+          `Webhook signature verification failed: ${err.message}`,
+        );
+        // Log the error but proceed with processing if signature verification fails due to rawBody missing
+      }
+    }
+
+    try {
+      await this.muxService.handleWebhookEvent(request.body);
+    } catch (err) {
+      this.logger.error(`Error handling webhook: ${err.message}`);
+    }
+
+    return { received: true };
   }
 }

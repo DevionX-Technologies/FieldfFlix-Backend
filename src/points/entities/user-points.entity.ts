@@ -50,7 +50,13 @@ export class UserPoints {
   @Column({ name: 'successful_sessions', type: 'integer', default: 0 })
   successfulSessions: number;
 
-  @Column({ name: 'accuracy_percent', type: 'numeric', precision: 5, scale: 2, default: 0 })
+  @Column({
+    name: 'accuracy_percent',
+    type: 'numeric',
+    precision: 5,
+    scale: 2,
+    default: 0,
+  })
   accuracyPercent: number;
 
   @UpdateDateColumn({ type: 'timestamp' })

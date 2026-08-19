@@ -1,6 +1,7 @@
 # Backend Stats Implementation
 
 ## Overview
+
 Added streak and accuracy tracking to the FieldFlicks backend to support leaderboard and analytics features.
 
 ## Database Changes
@@ -24,7 +25,9 @@ accuracy_percent NUMERIC(5,2) DEFAULT 0
 ## Entity Updates
 
 ### `user-points.entity.ts`
+
 Added properties:
+
 - `currentStreak: number` - Current consecutive days streak
 - `longestStreak: number` - Best streak achieved
 - `lastActivityDate: Date | null` - Last activity date for streak calculation
@@ -37,6 +40,7 @@ Added properties:
 ### `PointsService` - New Methods
 
 #### `updateStreak(userId: string): Promise<void>`
+
 - Called when a user completes a recording
 - Checks last activity date
 - Increments streak if activity was yesterday
@@ -44,12 +48,15 @@ Added properties:
 - Updates longest streak if current exceeds it
 
 #### `updateSessionStats(userId: string, wasSuccessful: boolean): Promise<void>`
+
 - Tracks total sessions and successful completions
 - Calculates accuracy percentage
 - Called when recording status changes to 'ready'
 
 #### `getStreakAndAccuracy(userId: string)`
+
 Returns:
+
 ```typescript
 {
   currentStreak: number;
@@ -60,7 +67,9 @@ Returns:
 ```
 
 #### Updated `getLeaderboard()`
+
 Now includes in response:
+
 - `streak: number` - User's current streak
 - `accuracy: number` - User's accuracy percentage
 
@@ -69,13 +78,17 @@ Query joins `user_points` table to fetch these values.
 ## Recording Service Updates
 
 ### `recording.service.ts`
+
 Modified `awardPointsBestEffort()`:
+
 - After awarding points for RECORDING_CREATE
 - Calls `pointsService.updateStreak(userId)`
 - Updates user's activity streak automatically
 
 ### `recording-highlight.service.ts`
+
 Modified `handleAssetReady()`:
+
 - When recording status → 'ready'
 - Calls `pointsService.updateSessionStats(userId, true)`
 - Tracks successful session completion
@@ -87,6 +100,7 @@ Modified `handleAssetReady()`:
 One-time backfill script for existing users:
 
 **What it does:**
+
 1. Finds all users with recordings
 2. For each user:
    - Counts total sessions
@@ -96,11 +110,13 @@ One-time backfill script for existing users:
    - Updates or creates user_points record
 
 **How to run:**
+
 ```bash
 npx ts-node scripts/calculate-user-stats.ts
 ```
 
 **Output example:**
+
 ```
 ✅ User abc123... - Streak: 5/12, Accuracy: 94.2%, Sessions: 17
 ```
@@ -110,42 +126,50 @@ npx ts-node scripts/calculate-user-stats.ts
 ### GET `/points/leaderboard`
 
 **Before:**
+
 ```json
 {
-  "rows": [{
-    "userId": "...",
-    "rank": 1,
-    "name": "John",
-    "points": 150
-  }]
+  "rows": [
+    {
+      "userId": "...",
+      "rank": 1,
+      "name": "John",
+      "points": 150
+    }
+  ]
 }
 ```
 
 **After:**
+
 ```json
 {
-  "rows": [{
-    "userId": "...",
-    "rank": 1,
-    "name": "John",
-    "points": 150,
-    "streak": 7,
-    "accuracy": 92.5
-  }]
+  "rows": [
+    {
+      "userId": "...",
+      "rank": 1,
+      "name": "John",
+      "points": 150,
+      "streak": 7,
+      "accuracy": 92.5
+    }
+  ]
 }
 ```
 
 ## Frontend Integration
 
 ### Updated `leaderboard.api.ts`
+
 - Now maps backend `streak` and `accuracy` fields
 - No longer returns null for these values
 - Shows real calculated data
 
 ### LeaderboardUser Type
+
 ```typescript
 {
-  accuracy: number | null;  // Shows 0-100 or null
+  accuracy: number | null; // Shows 0-100 or null
   streakDays: number | null; // Shows current streak or null
 }
 ```
@@ -153,11 +177,13 @@ npx ts-node scripts/calculate-user-stats.ts
 ## Deployment Steps
 
 1. **Run migration:**
+
    ```bash
    npm run migration:run
    ```
 
 2. **Backfill existing data:**
+
    ```bash
    npx ts-node scripts/calculate-user-stats.ts
    ```
@@ -175,12 +201,14 @@ npx ts-node scripts/calculate-user-stats.ts
 ## What Gets Tracked
 
 ### Streak Logic
+
 - ✅ Activity = creating a recording
 - ✅ Consecutive days maintain streak
 - ✅ Miss 1 day = streak resets to 1
 - ✅ Longest streak is preserved
 
 ### Accuracy Logic
+
 - ✅ Total sessions = all recordings created
 - ✅ Successful = recordings that reached 'ready' status
 - ✅ Accuracy = (successful / total) × 100
@@ -189,8 +217,9 @@ npx ts-node scripts/calculate-user-stats.ts
 ## Monitoring
 
 Check streak/accuracy data:
+
 ```sql
-SELECT 
+SELECT
   u.name,
   up.current_streak,
   up.longest_streak,
@@ -207,6 +236,7 @@ LIMIT 20;
 ## Future Enhancements
 
 Potential additions:
+
 - Track recording duration for "active minutes"
 - Add weekly/monthly accuracy trends
 - Streak freeze items (maintain streak when missing a day)

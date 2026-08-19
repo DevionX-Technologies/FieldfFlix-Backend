@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner, TableColumn } from 'typeorm';
 
-export class AddStreakAndAccuracyToUserPoints1763100000000
-  implements MigrationInterface
-{
+export class AddStreakAndAccuracyToUserPoints1763100000000 implements MigrationInterface {
   public async up(queryRunner: QueryRunner): Promise<void> {
     // Add streak tracking columns
     await queryRunner.addColumn(

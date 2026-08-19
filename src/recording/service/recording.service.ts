@@ -2994,13 +2994,10 @@ export class RecordingService {
 
     await this.recordingRepositoryForMedia.save(recording);
 
-    // Generate 4-hour pre-signed S3 PUT URL for Pi
-    const uploadUrl =
-      await this.fileServiceService.generateVideoUploadPresignedUrl(
-        s3Key,
-        14400,
-        bucketName,
-      );
+    // Generate Mux Direct Upload URL for Pi
+    const { uploadUrl } = await this.muxService.createDirectUpload(
+      recording.id,
+    );
 
     const channelNumber = camera.court_number || 1;
     const callbackWebhookUrl = `${process.env.APP_BASE_URL || 'https://api.devionx.com'}/recording/pi-callback`;
@@ -3024,19 +3021,12 @@ export class RecordingService {
       );
 
       if (piResponse.status === 'SUCCESS') {
-        // Asynchronously trigger Mux asset creation from the uploaded S3 object
-        const s3SignedReadUrl =
-          await this.fileServiceService.getSignedUrlFromS3(s3Key, bucketName);
-        this.muxService
-          .uploadFromS3(s3SignedReadUrl, s3Key, recording.id)
-          .catch((err) => {
-            this.logger.error(
-              `Mux asset creation error for ${recording.id}: ${err.message}`,
-            );
-          });
+        // The Pi has successfully uploaded to the Mux Direct Upload URL.
+        // We do not need to trigger Mux manually from S3 anymore. Mux will process the upload
+        // asynchronously and send a webhook to our server when the asset is ready.
 
         await this.recordingRepositoryForMedia.update(recording.id, {
-          status: 'uploaded',
+          status: 'uploaded', // This signals it's waiting for Mux processing
         });
       }
 
@@ -3116,7 +3106,7 @@ export class RecordingService {
     const muxLive = await this.muxService.createLiveStream();
 
     // 2. Command Pi to relay RTSP from NVR to Mux RTMP
-    const channelNumber = camera.court_number || 1;
+    const channelNumber = dto.channel ?? camera.court_number ?? 1;
     await this.raspberryPiApiService.startLiveStream(
       camera.raspberryPiBaseUrl,
       {
@@ -3128,7 +3118,8 @@ export class RecordingService {
     return {
       success: true,
       cameraId: camera.id,
-      courtNumber: channelNumber,
+      courtNumber: camera.court_number ?? channelNumber,
+      nvrChannel: channelNumber,
       liveStreamId: muxLive.liveStreamId,
       playbackUrl: muxLive.playbackUrl,
     };
@@ -3146,11 +3137,11 @@ export class RecordingService {
       throw new BadRequestException('Camera not found or Pi Base URL missing');
     }
 
-    const channelNumber = camera.court_number || 1;
+    const channelNumber = dto.channel ?? camera.court_number ?? 1;
     await this.raspberryPiApiService.stopLiveStream(camera.raspberryPiBaseUrl, {
       channel: channelNumber,
     });
 
-    return { success: true, cameraId: camera.id };
+    return { success: true, cameraId: camera.id, nvrChannel: channelNumber };
   }
 }

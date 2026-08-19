@@ -77,8 +77,6 @@ export class TournamentController {
   // Assuming a generic approach where userId is passed in body/query for now, or extracted from req.
   // I will use a simple query/body param to avoid changing auth guard setup here.
 
-
-
   @Get(':id/enrollment')
   @ApiOperation({ summary: 'Check if user is enrolled in a tournament' })
   async checkEnrollment(

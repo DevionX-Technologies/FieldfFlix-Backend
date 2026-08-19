@@ -1,0 +1,49 @@
+#!/usr/bin/expect -f
+
+set timeout 20
+set ip "100.119.221.109"
+set user "admin"
+set password "1234"
+
+spawn ssh -o StrictHostKeyChecking=no -o PreferredAuthentications=password -o PubkeyAuthentication=no $user@$ip
+
+expect {
+    "*password:" {
+        send "$password\r"
+        exp_continue
+    }
+    "*Permission denied*" {
+        send_user "\n\\\[ERROR\\\] SSH Password authentication failed.\n"
+        exit 1
+    }
+    -re "admin@.*\[\\\$#\]" {
+        send_user "\n\\\[INFO\\\] Successfully logged in!\n"
+    }
+    timeout {
+        send_user "\n\\\[ERROR\\\] Connection timed out.\n"
+        exit 1
+    }
+}
+
+# Read service definition
+send "cat /home/admin/fieldflicks-delhi/fieldflicksservicefile.txt\r"
+expect -re "admin@.*\[\\\$#\]"
+
+# Read local env variables on Pi
+send "cat /home/admin/fieldflicks-delhi/.env\r"
+expect -re "admin@.*\[\\\$#\]"
+
+# Check active service status and determine unit name
+send "sudo systemctl status fieldflicks 2>/dev/null || sudo systemctl status gunicorn 2>/dev/null || true\r"
+expect -re "admin@.*\[\\\$#\]"
+
+# Read application logs of gunicorn/fieldflicks service
+send "sudo journalctl -u fieldflicks --no-pager -n 150 2>/dev/null || sudo journalctl -u gunicorn --no-pager -n 150 2>/dev/null || true\r"
+expect -re "admin@.*\[\\\$#\]"
+
+# Check for any log files in project directory
+send "find /home/admin/fieldflicks-delhi -name '*.log' -o -name '*.txt'\r"
+expect -re "admin@.*\[\\\$#\]"
+
+send "exit\r"
+expect eof

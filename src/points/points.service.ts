@@ -666,7 +666,7 @@ export class PointsService implements OnModuleInit {
    */
   async updateStreak(userId: string): Promise<void> {
     const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    
+
     let userPoints = await this.userPointsRepo.findOne({ where: { userId } });
     if (!userPoints) {
       userPoints = this.userPointsRepo.create({
@@ -714,11 +714,14 @@ export class PointsService implements OnModuleInit {
   /**
    * Update session stats for accuracy calculation.
    * Call this when a recording is completed.
-   * 
+   *
    * @param userId - User ID
    * @param wasSuccessful - Whether the session was successful (e.g., no errors, proper completion)
    */
-  async updateSessionStats(userId: string, wasSuccessful: boolean): Promise<void> {
+  async updateSessionStats(
+    userId: string,
+    wasSuccessful: boolean,
+  ): Promise<void> {
     let userPoints = await this.userPointsRepo.findOne({ where: { userId } });
     if (!userPoints) {
       userPoints = this.userPointsRepo.create({
