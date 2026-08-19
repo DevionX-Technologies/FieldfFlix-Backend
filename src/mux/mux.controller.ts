@@ -14,6 +14,7 @@ import { MuxService } from './mux.service';
 import { CreateMuxUploadDto } from './dto/create-mux-upload.dto';
 import { ApiKeyAuthGuard } from 'src/guards/api-key-auth.guard';
 import { ApiTags, ApiOperation, ApiResponse, ApiHeader } from '@nestjs/swagger';
+import { Public } from 'src/decorators/public.decorator';
 
 /**
  * Controller for handling Mux-related operations, such as video uploads.
@@ -53,6 +54,7 @@ export class MuxController {
     );
     return { message: 'Upload process started.' };
   }
+  @Public()
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Mux Webhook Endpoint for receiving asset updates' })
