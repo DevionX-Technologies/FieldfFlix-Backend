@@ -168,41 +168,56 @@ export class RaspberryPiApiService {
     this.logger.log(
       `Calling Pi to start live stream on Channel ${payload.channel} via ${targetUrl}`,
     );
-    try {
-      const response = await firstValueFrom(
-        this.httpService.post(`${targetUrl}/start-live-stream`, payload, {
-          headers: {
-            'X-API-KEY': this.liveApiKey,
-            'Content-Type': 'application/json',
-          },
-          timeout: 10000,
-        }),
-      );
-      return response.data;
-    } catch (error: any) {
-      if (error.response?.status === 409) {
-        this.logger.log(
-          `Channel ${payload.channel} is already streaming on ${targetUrl}. Returning success.`,
-        );
-        return { status: 'LIVE_STREAM_STARTED' };
-      }
 
-      const errMsg =
-        error.response?.data?.detail ||
-        error.response?.data?.message ||
-        error.message ||
-        'Device unresponsive';
-      this.logger.error(
-        `Error starting live stream on Pi (${targetUrl}): ${errMsg}`,
-      );
-      throw new BadGatewayException({
-        statusCode: HttpStatus.BAD_GATEWAY,
-        error: 'Edge Device Unresponsive',
-        message: `Raspberry Pi bridge at ${targetUrl} is offline or unreachable (${errMsg}). Verify that the court device is powered on and Tailscale tunnel is active.`,
-        piUrl: targetUrl,
-        channel: payload.channel,
-      });
+    let retries = 2;
+    while (retries >= 0) {
+      try {
+        const response = await firstValueFrom(
+          this.httpService.post(`${targetUrl}/start-live-stream`, payload, {
+            headers: {
+              'X-API-KEY': this.liveApiKey,
+              'Content-Type': 'application/json',
+            },
+            timeout: 10000,
+          }),
+        );
+        return response.data;
+      } catch (error: any) {
+        if (error.response?.status === 409) {
+          this.logger.log(
+            `Channel ${payload.channel} is already streaming on ${targetUrl}. Returning success.`,
+          );
+          return { status: 'LIVE_STREAM_STARTED' };
+        }
+
+        if (error.code === 'ENOTFOUND' && retries > 0) {
+          this.logger.warn(
+            `DNS resolution failed (ENOTFOUND) for ${targetUrl}. Retrying... (${retries} retries left)`,
+          );
+          retries--;
+          await new Promise((resolve) => setTimeout(resolve, 800)); // wait 800ms before retrying
+          continue;
+        }
+
+        const errMsg =
+          error.response?.data?.detail ||
+          error.response?.data?.message ||
+          error.message ||
+          'Device unresponsive';
+        this.logger.error(
+          `Error starting live stream on Pi (${targetUrl}): ${errMsg}`,
+        );
+        throw new BadGatewayException({
+          statusCode: HttpStatus.BAD_GATEWAY,
+          error: 'Edge Device Unresponsive',
+          message: `Raspberry Pi bridge at ${targetUrl} is offline or unreachable (${errMsg}). Verify that the court device is powered on and Tailscale tunnel is active.`,
+          piUrl: targetUrl,
+          channel: payload.channel,
+        });
+      }
     }
+
+    return { status: 'ERROR' };
   }
 
   async stopLiveStream(
