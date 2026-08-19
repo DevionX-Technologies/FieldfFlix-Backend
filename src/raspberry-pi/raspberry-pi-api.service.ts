@@ -184,7 +184,7 @@ export class RaspberryPiApiService {
         this.logger.log(
           `Channel ${payload.channel} is already streaming on ${targetUrl}. Returning success.`,
         );
-        return { status: 'LIVE_STREAM_STARTED', channel: payload.channel };
+        return { status: 'LIVE_STREAM_STARTED' };
       }
 
       const errMsg =
