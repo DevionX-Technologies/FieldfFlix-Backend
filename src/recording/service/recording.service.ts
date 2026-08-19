@@ -3007,9 +3007,11 @@ export class RecordingService {
     );
 
     try {
-      const piResponse = await this.raspberryPiApiService.extractSession(
-        camera.raspberryPiBaseUrl,
-        {
+      // Fire and forget - do NOT await this request!
+      // The Pi can take minutes or even hours to extract and upload a 4K video.
+      // If we await this, the NestJS HTTP client will throw a 500 Timeout Error after 5 minutes.
+      this.raspberryPiApiService
+        .extractSession(camera.raspberryPiBaseUrl, {
           recordingId: recording.id,
           channel: channelNumber,
           startTime: startDate.toISOString(),
@@ -3017,31 +3019,41 @@ export class RecordingService {
           uploadUrl,
           s3Key,
           callbackWebhookUrl,
-        },
-      );
-
-      if (piResponse.status === 'SUCCESS') {
-        // The Pi has successfully uploaded to the Mux Direct Upload URL.
-        // We do not need to trigger Mux manually from S3 anymore. Mux will process the upload
-        // asynchronously and send a webhook to our server when the asset is ready.
-
-        await this.recordingRepositoryForMedia.update(recording.id, {
-          status: 'uploaded', // This signals it's waiting for Mux processing
+        })
+        .then((piResponse) => {
+          if (piResponse.status === 'SUCCESS') {
+            this.logger.log(
+              `Pi reported initial extraction success for recording ${recording.id}. Waiting for Mux webhook.`,
+            );
+          } else {
+            this.logger.warn(
+              `Pi reported non-success status for recording ${recording.id}: ${piResponse.status}`,
+            );
+          }
+        })
+        .catch((error) => {
+          // We log the error but we do NOT mark the recording as failed!
+          // The Pi's EVMS extraction continues running in the background even if the HTTP connection times out.
+          this.logger.warn(
+            `Pi extraction HTTP request finished with error or timed out, but extraction may still be running: ${error.message}`,
+          );
         });
-      }
+
+      await this.recordingRepositoryForMedia.update(recording.id, {
+        status: 'uploaded', // This signals it's waiting for Mux processing
+      });
 
       return {
         cached: false,
         recordingId: recording.id,
-        status: piResponse.status,
+        status: 'PROCESSING',
         s3Path: recording.s3Path,
-        piResponse,
+        piResponse: { status: 'DISPATCHED_ASYNC', recordingId: recording.id },
       };
     } catch (error) {
-      this.logger.error(`Pi extraction failed: ${error.message}`);
-      await this.recordingRepositoryForMedia.update(recording.id, {
-        status: 'failed',
-      });
+      this.logger.error(
+        `Error during on-demand extraction setup: ${error.message}`,
+      );
       throw new InternalServerErrorException(
         `Failed to extract match video from venue NVR: ${error.message}`,
       );
