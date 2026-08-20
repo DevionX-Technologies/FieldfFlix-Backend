@@ -3335,7 +3335,9 @@ export class RecordingService {
     try {
       const query = `
         SELECT id, "liveStreams" FROM tournaments 
-        WHERE "cameraIds" @> '"${camera.id}"' AND status IN ('Upcoming', 'Live')
+        WHERE (
+          "cameraIds"::text LIKE '%${camera.id}%'
+        ) AND status IN ('Upcoming', 'Live')
       `;
       const activeTournaments = await this.dataSource.query(query);
 
@@ -3392,7 +3394,9 @@ export class RecordingService {
     try {
       const query = `
         SELECT id, "liveStreams" FROM tournaments 
-        WHERE "cameraIds" @> '"${camera.id}"' AND status IN ('Upcoming', 'Live')
+        WHERE (
+          "cameraIds"::text LIKE '%${camera.id}%'
+        ) AND status IN ('Upcoming', 'Live')
       `;
       const activeTournaments = await this.dataSource.query(query);
 
