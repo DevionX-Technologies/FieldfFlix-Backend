@@ -126,10 +126,17 @@ export class RecordingHighlightsService {
 
     try {
       const buttonClickTimestamp = new Date();
-      const recording = await queryRunner.manager.findOne(Recording, {
+      let recording = await queryRunner.manager.findOne(Recording, {
         where: { raspberryPiRecordingId: recordingId },
         relations: ['recordingHighlights'],
       });
+
+      if (!recording) {
+        recording = await queryRunner.manager.findOne(Recording, {
+          where: { id: recordingId },
+          relations: ['recordingHighlights'],
+        });
+      }
 
       if (!recording) {
         throw new HttpException(
