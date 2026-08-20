@@ -32,7 +32,15 @@ export class JwtStrategy extends PassportStrategy(Strategy, Provider.Jwt) {
     if (!payload.user_id) {
       throw new UnauthorizedException(STATUS_MSG.ERROR.INVALID_USER);
     }
-    const user = await this.userService.findOne(payload.user_id);
+    let user;
+    try {
+      user = await this.userService.findOne(payload.user_id);
+    } catch {
+      // If user is not found, userService.findOne throws a BadRequestException.
+      // We must catch it and throw UnauthorizedException so the frontend triggers a logout.
+      throw new UnauthorizedException(STATUS_MSG.ERROR.INVALID_USER);
+    }
+
     if (!user) {
       throw new UnauthorizedException(STATUS_MSG.ERROR.INVALID_USER);
     }
