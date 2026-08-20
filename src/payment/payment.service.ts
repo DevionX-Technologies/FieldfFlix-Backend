@@ -191,8 +191,33 @@ export class PaymentService {
           razorpay_payment_id: null,
           paid_at: new Date(),
           expires_at: null,
+          metadata: couponAssignmentId
+            ? {
+                coupon: {
+                  assignmentId: couponAssignmentId,
+                  discountInr: couponDiscountInr,
+                  label: couponLabel,
+                  undiscountedBase: baseRounded,
+                  undiscountedTotal,
+                },
+              }
+            : null,
         });
         const saved = await this.paymentRepository.save(payment);
+
+        if (couponAssignmentId) {
+          try {
+            await this.couponsService.redeem({
+              userId: tokenData.user_id,
+              assignmentId: couponAssignmentId,
+              paymentId: saved.id,
+              recordingId: recordingId,
+              basePriceInr: baseRounded,
+            });
+          } catch (err) {
+            this.logger.error('Failed to redeem coupon for free order', err);
+          }
+        }
         return {
           id: saved.id,
           razorpay_order_id: saved.razorpay_order_id,

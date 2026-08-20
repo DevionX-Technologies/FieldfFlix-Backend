@@ -245,8 +245,19 @@ export class RaspberryPiApiService {
       );
       return response.data;
     } catch (error: any) {
+      if (error.response?.status === 404) {
+        this.logger.log(
+          `Live stream on Channel ${payload.channel} is already stopped (404 Not Found).`,
+        );
+        return { status: 'ALREADY_STOPPED' };
+      }
+
       const errMsg =
-        error.response?.data?.message || error.message || 'Device unresponsive';
+        error.response?.data?.detail ||
+        error.response?.data?.message ||
+        error.message ||
+        'Device unresponsive';
+
       this.logger.error(
         `Error stopping live stream on Pi (${targetUrl}): ${errMsg}`,
       );

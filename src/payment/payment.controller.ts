@@ -307,7 +307,11 @@ export class PaymentController {
         recordingId,
         body?.couponCode ?? null,
       );
-    } catch (error) {
+    } catch (error: any) {
+      this.paymentService['logger'].error(
+        'Payment order creation failed',
+        error.stack || error,
+      );
       if (error instanceof HttpException) {
         throw error;
       }

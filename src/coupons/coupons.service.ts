@@ -276,14 +276,23 @@ export class CouponsService {
     if (coupon.startsAt && coupon.startsAt > now) return null;
     if (coupon.expiresAt && coupon.expiresAt <= now) return null;
 
-    const assignment = await this.assignmentRepo.findOne({
+    let assignment = await this.assignmentRepo.findOne({
       where: {
         couponId: coupon.id,
         userId,
-        remainingRecordings: MoreThan(0),
       },
     });
-    if (!assignment) return null;
+
+    if (!assignment) {
+      assignment = this.assignmentRepo.create({
+        couponId: coupon.id,
+        userId,
+        remainingRecordings: coupon.maxRecordings,
+      });
+      await this.assignmentRepo.save(assignment);
+    }
+
+    if (assignment.remainingRecordings <= 0) return null;
 
     const discountedPriceInr = Math.max(
       0,
