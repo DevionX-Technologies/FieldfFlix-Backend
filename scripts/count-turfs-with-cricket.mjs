@@ -36,7 +36,9 @@ const listRes = await client.query(`
   ORDER BY name
 `);
 
-console.log(`Database: ${process.env.DB_DATABASE || 'fieldflicks-dev (default)'}`);
+console.log(
+  `Database: ${process.env.DB_DATABASE || 'fieldflicks-dev (default)'}`,
+);
 console.log(`Turfs with Cricket in sports_supported: ${countRes.rows[0].n}`);
 console.log('');
 for (const r of listRes.rows) {

@@ -210,7 +210,8 @@ try {
     databaseRowsMatchingAnyVenuePattern: scopedIds.size,
     databaseRowsOutsideVenuePatterns: globalOther.rows.length,
     locationCoverageAllTurfs: coverage.rows[0],
-    venueBlocksWithMismatch: byVenue.filter((v) => v.countVerdict !== 'MATCH').length,
+    venueBlocksWithMismatch: byVenue.filter((v) => v.countVerdict !== 'MATCH')
+      .length,
   };
 
   console.log(
@@ -229,18 +230,17 @@ try {
             city: row.city,
             location: row.location,
             sports_supported: row.sports_supported,
-            note:
-              'Historic DB anomaly: Balkanji is Pickleball-only in FieldFlix app/API; spreadsheet maps Cricket to Santacruz West venue. Audit cameras/recordings before any DB tidy.',
+            note: 'Historic DB anomaly: Balkanji is Pickleball-only in FieldFlix app/API; spreadsheet maps Cricket to Santacruz West venue. Audit cameras/recordings before any DB tidy.',
           })),
-          possibleDuplicateVenueTurfsSameName:
-            duplicateSantacruzNames.rows.map((row) => ({
+          possibleDuplicateVenueTurfsSameName: duplicateSantacruzNames.rows.map(
+            (row) => ({
               name: row.name,
               turfRowCount: row.turf_rows,
               turfIds: row.turf_ids,
               sportsArrays: row.sports,
-              note:
-                'Two turf rows share the Santacruz display name — usually one cricket and one pickle; consolidate after checking FKs.',
-            })),
+              note: 'Two turf rows share the Santacruz display name — usually one cricket and one pickle; consolidate after checking FKs.',
+            }),
+          ),
         },
       },
       null,

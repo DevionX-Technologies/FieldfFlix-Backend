@@ -29,15 +29,18 @@ import { Request } from 'express';
 import { randomUUID } from 'crypto';
 import { CommonService } from 'src/common/service/common.service';
 import { HOURLY_RATE } from 'src/constant/constant';
-import { RECORDING_UNLOCK_GST_RATE } from 'src/utils/recording-pricing';
+
 import {
   HALF_HOUR_SEC,
-  RECORDING_UNLOCK_BASE_INR,
   recordingUnlockBaseInr,
   recordingUnlockTotalInr,
   parsePlannedDurationSecFromMetadata,
   resolveUnlockTierFromRecording,
+  RecordingUnlockSport,
 } from 'src/utils/recording-pricing';
+import { PricingConfigService } from './pricing-config.service';
+import { PricingConfigEntity } from './entities/pricing-config.entity';
+
 /**
  * Payment service for handling payment operations
  */
@@ -58,22 +61,26 @@ export class PaymentService {
     private readonly commonService: CommonService,
     private readonly pointsService: PointsService,
     private readonly couponsService: CouponsService,
+    private readonly pricingConfigService: PricingConfigService,
   ) {}
 
   /**
    * One recording unlock price from session metadata (preferred) or a single turf sport.
    * Matches mobile Highlights pricing tiers.
    */
-  private unlockTierAndAmounts(recording: Recording): {
-    tier: keyof typeof RECORDING_UNLOCK_BASE_INR;
+  private unlockTierAndAmounts(
+    recording: Recording,
+    config: PricingConfigEntity,
+  ): {
+    tier: RecordingUnlockSport;
     base: number;
     total: number;
   } {
     const tier = resolveUnlockTierFromRecording(recording);
     const plannedSec =
       parsePlannedDurationSecFromMetadata(recording.metadata) ?? HALF_HOUR_SEC;
-    const base = recordingUnlockBaseInr(tier, plannedSec);
-    const total = recordingUnlockTotalInr(base);
+    const base = recordingUnlockBaseInr(tier, plannedSec, config);
+    const total = recordingUnlockTotalInr(base, config);
     return { tier, base, total };
   }
 
@@ -134,11 +141,14 @@ export class PaymentService {
         }
       }
 
+      // Get pricing configuration
+      const config = this.pricingConfigService.getConfig();
+
       const {
         tier,
         base,
         total: undiscountedTotal,
-      } = this.unlockTierAndAmounts(recording);
+      } = this.unlockTierAndAmounts(recording, config);
       const label =
         tier === 'pickleball'
           ? 'Pickleball'
@@ -171,7 +181,7 @@ export class PaymentService {
           couponDiscountInr = Math.max(0, baseRounded - discountedBase);
           // Re-apply GST on the discounted base for the Razorpay order
           // total. Same rounding rule the rest of the pricing layer uses.
-          total = Math.round(discountedBase * (1 + RECORDING_UNLOCK_GST_RATE));
+          total = Math.round(discountedBase * (1 + config.gst_rate));
           couponAssignmentId = preview.assignmentId;
           couponLabel = preview.label;
         }

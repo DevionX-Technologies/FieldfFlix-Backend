@@ -172,7 +172,9 @@ async function main() {
 
     for (const court of venue.courts) {
       const camName = court.name || `Court ${court.courtNumber}`;
-      console.log(`  [camera] ${camName} → ${court.id}${court.piUrl ? ' (Pi linked)' : ''}`);
+      console.log(
+        `  [camera] ${camName} → ${court.id}${court.piUrl ? ' (Pi linked)' : ''}`,
+      );
 
       if (APPLY) {
         await client.query(
@@ -198,7 +200,9 @@ async function main() {
 
   await client.end();
 
-  console.log(`\n${APPLY ? 'Applied' : 'Dry run'}: ${turfCount} venues, ${cameraCount} cameras`);
+  console.log(
+    `\n${APPLY ? 'Applied' : 'Dry run'}: ${turfCount} venues, ${cameraCount} cameras`,
+  );
   if (!APPLY) console.log('Re-run with --apply to write to Neon.');
 }
 

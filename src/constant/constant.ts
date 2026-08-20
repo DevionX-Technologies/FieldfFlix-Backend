@@ -8,12 +8,7 @@ export const DURATION_TO_BACKTRACK_SECONDS = 30;
 export const MUX_API_BASE_URL = 'https://api.mux.com';
 export const HOURLY_RATE = 240;
 
-export {
-  RECORDING_UNLOCK_GST_RATE,
-  RECORDING_UNLOCK_BASE_INR,
-  SPORT_HOURLY_RATE_INR,
-  HALF_HOUR_SEC,
-} from 'src/utils/recording-pricing';
+export { HALF_HOUR_SEC } from 'src/utils/recording-pricing';
 
 export const CLIP_PROCESSING = {
   MAX_CONCURRENCY: 5,

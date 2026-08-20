@@ -149,12 +149,14 @@ function matchTurfName(turfName, rules) {
   const name = turfName || '';
   if (rules.noneOf?.length) {
     for (const re of rules.noneOf) {
-      if (re.test(name)) return { ok: false, reason: `forbidden pattern ${re}` };
+      if (re.test(name))
+        return { ok: false, reason: `forbidden pattern ${re}` };
     }
   }
   if (rules.allOf?.length) {
     for (const re of rules.allOf) {
-      if (!re.test(name)) return { ok: false, reason: `missing required ${re}` };
+      if (!re.test(name))
+        return { ok: false, reason: `missing required ${re}` };
     }
   }
   if (rules.anyOf?.length) {
@@ -232,7 +234,9 @@ const cameraToTurfSql = `
 
 const cameraToTurf = await client.query(cameraToTurfSql);
 
-const sheetIdToRow = Object.fromEntries(cameraToTurf.rows.map((r) => [r.camera_id, r]));
+const sheetIdToRow = Object.fromEntries(
+  cameraToTurf.rows.map((r) => [r.camera_id, r]),
+);
 
 const uuidAudit = [];
 for (const exp of SPREADSHEET_CAMERAS) {
@@ -252,7 +256,8 @@ for (const exp of SPREADSHEET_CAMERAS) {
   if (!nameCheck.ok) issues.push(`turf_name_mismatch: ${nameCheck.reason}`);
   if (hasCourtNumberColumn) {
     const courtOk = courtNum === exp.court || courtNum == null;
-    if (!courtOk) issues.push(`court_number DB=${courtNum} expected=${exp.court}`);
+    if (!courtOk)
+      issues.push(`court_number DB=${courtNum} expected=${exp.court}`);
   }
 
   uuidAudit.push({
@@ -277,10 +282,15 @@ const notOnSheet = cameraToTurf.rows.filter((r) => !SHEET_IDS.has(r.camera_id));
 function duplicateTurfNameClusters(turfs) {
   const buckets = new Map();
   for (const t of turfs) {
-    const nk = String(t.turf_name ?? '').trim().toLowerCase();
+    const nk = String(t.turf_name ?? '')
+      .trim()
+      .toLowerCase();
     if (!nk) continue;
     if (!buckets.has(nk))
-      buckets.set(nk, { displayName: String(t.turf_name ?? '').trim(), ids: [] });
+      buckets.set(nk, {
+        displayName: String(t.turf_name ?? '').trim(),
+        ids: [],
+      });
     buckets.get(nk).ids.push(t.turf_id);
   }
   const out = [];
@@ -300,8 +310,11 @@ const summary = {
   turf_count: byTurf.size,
   camera_count_in_db: cameraToTurf.rows.length,
   sheet_camera_count: SPREADSHEET_CAMERAS.length,
-  sheet_uuid_missing_in_db: uuidAudit.filter((x) => x.status === 'MISSING_IN_DB').length,
-  sheet_uuid_discrepancy: uuidAudit.filter((x) => x.status === 'DISCREPANCY').length,
+  sheet_uuid_missing_in_db: uuidAudit.filter(
+    (x) => x.status === 'MISSING_IN_DB',
+  ).length,
+  sheet_uuid_discrepancy: uuidAudit.filter((x) => x.status === 'DISCREPANCY')
+    .length,
   sheet_uuid_ok: uuidAudit.filter((x) => x.status === 'OK').length,
   db_cameras_not_on_sheet: notOnSheet.length,
   cameras_court_number_column_present: hasCourtNumberColumn,
@@ -343,7 +356,9 @@ if (ARG_PRETTY) {
   if (summary.duplicate_turf_name_clusters.length) {
     console.log('\n=== Duplicate turf names (multiple UUIDs) ===');
     for (const c of summary.duplicate_turf_name_clusters)
-      console.log(`  "${c.turf_name}" → ${c.turf_id_count} rows: ${c.turf_ids.join(', ')}`);
+      console.log(
+        `  "${c.turf_name}" → ${c.turf_id_count} rows: ${c.turf_ids.join(', ')}`,
+      );
   }
 
   console.log('\n=== Turf → cameras (readable) ===');
@@ -364,11 +379,16 @@ if (ARG_PRETTY) {
   for (const x of uuidAudit) {
     if (x.status !== 'OK' || ARG_ALL_OK) {
       const tag = x.status === 'OK' ? '[√]' : '[!]';
-      console.log(`${tag} ${x.status} ${x.camera_id}`, x.sheet_note ?? '', JSON.stringify(x));
+      console.log(
+        `${tag} ${x.status} ${x.camera_id}`,
+        x.sheet_note ?? '',
+        JSON.stringify(x),
+      );
     }
   }
   const okN = uuidAudit.filter((x) => x.status === 'OK').length;
-  if (!ARG_ALL_OK && okN > 0) console.log(`(omit ${okN} OK rows); pass --all-ok to print them`);
+  if (!ARG_ALL_OK && okN > 0)
+    console.log(`(omit ${okN} OK rows); pass --all-ok to print them`);
 
   if (notOnSheet.length) {
     console.log('\n=== DB cameras not on spreadsheet list (FYI) ===');

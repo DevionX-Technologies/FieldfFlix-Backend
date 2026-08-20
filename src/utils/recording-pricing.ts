@@ -1,48 +1,46 @@
 /**
  * Recording unlock pricing — hourly rate, billed in 30-minute blocks.
- * Keep aligned with mobile `utils/sportPlanPricing.ts`.
+ * Fetches configuration from the database via PricingConfigService.
  */
 
 import { ESportsSupported } from 'src/turfs/enum/turfs.enum';
+import { PricingConfigEntity } from 'src/payment/entities/pricing-config.entity';
 
-export const RECORDING_UNLOCK_GST_RATE = 0.18;
-
-export const SPORT_HOURLY_RATE_INR = {
-  cricket: 300,
-  pickleball: 200,
-  padel: 250,
-} as const;
-
-export type RecordingUnlockSport = keyof typeof SPORT_HOURLY_RATE_INR;
+export type RecordingUnlockSport = 'cricket' | 'pickleball' | 'padel';
 
 export const HALF_HOUR_SEC = 30 * 60;
-
-/** Pre-GST price for one 30-min block (cricket unlock free for now). */
-export const RECORDING_UNLOCK_BASE_INR = {
-  cricket: 0,
-  pickleball: SPORT_HOURLY_RATE_INR.pickleball / 2,
-  padel: SPORT_HOURLY_RATE_INR.padel / 2,
-} as const;
 
 export function halfHourBlocksFromDuration(plannedDurationSec: number): number {
   const sec = Math.max(HALF_HOUR_SEC, Math.floor(plannedDurationSec));
   return Math.max(1, Math.round(sec / HALF_HOUR_SEC));
 }
 
-/** Pre-tax total. Cricket unlock is free for now. */
+/** Pre-tax total. */
 export function recordingUnlockBaseInr(
   tier: RecordingUnlockSport,
   plannedDurationSec: number,
+  config: PricingConfigEntity,
 ): number {
-  if (tier === 'cricket') return 0;
-  const halfHourRate = SPORT_HOURLY_RATE_INR[tier] / 2;
+  let hourlyRate = config.default_hourly_rate;
+  if (tier === 'cricket') {
+    hourlyRate = config.cricket_hourly_rate;
+  } else if (tier === 'pickleball') {
+    hourlyRate = config.pickleball_hourly_rate;
+  } else if (tier === 'padel') {
+    hourlyRate = config.padel_hourly_rate;
+  }
+
+  const halfHourRate = hourlyRate / 2;
   const blocks = halfHourBlocksFromDuration(plannedDurationSec);
   return Math.round(blocks * halfHourRate);
 }
 
-export function recordingUnlockTotalInr(base: number): number {
+export function recordingUnlockTotalInr(
+  base: number,
+  config: PricingConfigEntity,
+): number {
   if (base <= 0) return 0;
-  return Math.round(base * (1 + RECORDING_UNLOCK_GST_RATE));
+  return Math.round(base * (1 + config.gst_rate));
 }
 
 export function parsePlannedDurationSecFromMetadata(

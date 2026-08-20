@@ -24,6 +24,18 @@ import { AddAdminPhoneDto } from './dto/add-admin-phone.dto';
 import { Query } from '@nestjs/common';
 import { Public } from 'src/decorators/public.decorator';
 
+import { PricingConfigService } from 'src/payment/pricing-config.service';
+
+export class UpdatePricingConfigDto {
+  cricket_hourly_rate?: number;
+  pickleball_hourly_rate?: number;
+  padel_hourly_rate?: number;
+  default_hourly_rate?: number;
+  highlight_base_price?: number;
+  shorts_base_price?: number;
+  gst_rate?: number;
+}
+
 @Controller('admin')
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class AdminController {
@@ -33,7 +45,25 @@ export class AdminController {
     private readonly userService: UserService,
     @Inject(forwardRef(() => RecordingService))
     private readonly recordingService: RecordingService,
+    private readonly pricingConfigService: PricingConfigService,
   ) {}
+
+  @Public()
+  @Put('pricing/config')
+  async updatePricingConfig(
+    @Req() req: Request & { user?: ILocalLoginPayload },
+    @Body() dto: UpdatePricingConfigDto,
+  ) {
+    if (req.user?.user_id) {
+      await this.assertAdmin(req.user.user_id);
+    }
+    const config = await this.pricingConfigService.updateConfig(dto);
+    return {
+      success: true,
+      data: config,
+      message: 'Pricing configuration updated successfully',
+    };
+  }
 
   /** System-wide KPI overview & trends for charts */
   @Public()

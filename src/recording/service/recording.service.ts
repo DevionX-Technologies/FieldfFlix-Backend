@@ -67,6 +67,7 @@ import { RecordingHighlightEngagementService } from './recording-highlight-engag
 import { PaymentRestrictionService } from 'src/payment/payment-restriction.service';
 import { PointsService } from 'src/points/points.service';
 import { PointEventType } from 'src/points/entities/point-event.entity';
+import { PricingConfigService } from 'src/payment/pricing-config.service';
 
 /**
  * Service for managing recordings.
@@ -111,6 +112,7 @@ export class RecordingService {
     private readonly recordingHighlightEngagementService: RecordingHighlightEngagementService,
     private readonly paymentRestrictionService: PaymentRestrictionService,
     private readonly pointsService: PointsService,
+    private readonly pricingConfigService: PricingConfigService,
   ) {
     // Match S3 client: use explicit keys when present (local/.env), else default chain (IAM role).
     const region = process.env.AWS_REGION || 'ap-south-1';
@@ -1370,8 +1372,13 @@ export class RecordingService {
         const plannedSec =
           parsePlannedDurationSecFromMetadata(recording.metadata) ??
           HALF_HOUR_SEC;
-        const unlockBase = recordingUnlockBaseInr(unlockTier, plannedSec);
-        const unlockTotal = recordingUnlockTotalInr(unlockBase);
+        const config = this.pricingConfigService.getConfig();
+        const unlockBase = recordingUnlockBaseInr(
+          unlockTier as 'cricket' | 'pickleball' | 'padel',
+          plannedSec,
+          config,
+        );
+        const unlockTotal = recordingUnlockTotalInr(unlockBase, config);
         const paymentInfo: any = {
           status: PaymentStatus.PENDING,
           payment_amount: unlockTotal,

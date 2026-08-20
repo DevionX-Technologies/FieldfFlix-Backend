@@ -79,12 +79,16 @@ export function parseRelativeTimestampToSeconds(
   }
 }
 
+import { PricingConfigEntity } from 'src/payment/entities/pricing-config.entity';
+
 export function calculatePaymentAmountFromDuration(
   durationInSeconds: number,
+  config: PricingConfigEntity,
   tier: RecordingUnlockSport = 'pickleball',
 ): number {
   return recordingUnlockTotalInr(
-    recordingUnlockBaseInr(tier, durationInSeconds),
+    recordingUnlockBaseInr(tier, durationInSeconds, config),
+    config,
   );
 }
 
@@ -92,10 +96,11 @@ export function calculatePaymentAmountFromDuration(
 export function recordingUnlockBaseFromRecording(
   metadata: unknown,
   tier: RecordingUnlockSport,
+  config: PricingConfigEntity,
 ): number {
   const plannedSec =
     parsePlannedDurationSecFromMetadata(metadata) ?? HALF_HOUR_SEC;
-  return recordingUnlockBaseInr(tier, plannedSec);
+  return recordingUnlockBaseInr(tier, plannedSec, config);
 }
 
 /**

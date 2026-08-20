@@ -69,7 +69,11 @@ const grouped = {};
 for (const r of res.rows) {
   const sports = coerceSportsSupported(r.sports_supported);
   const sportLabel =
-    sports.length === 0 ? 'NONE' : sports.length === 1 ? sports[0] : sports.join('+');
+    sports.length === 0
+      ? 'NONE'
+      : sports.length === 1
+        ? sports[0]
+        : sports.join('+');
   const key = `${r.turf_id} | ${r.turf_name} | ${sportLabel}`;
   if (!grouped[key]) grouped[key] = [];
   if (r.camera_id) {

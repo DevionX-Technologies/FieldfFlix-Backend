@@ -36,7 +36,17 @@ try {
   await c.connect();
   const r = await c.query(sql);
   const total = await c.query('SELECT count(*)::int AS n FROM turfs');
-  console.log(JSON.stringify({ matchCount: r.rows.length, totalTurfs: total.rows[0].n, matches: r.rows }, null, 2));
+  console.log(
+    JSON.stringify(
+      {
+        matchCount: r.rows.length,
+        totalTurfs: total.rows[0].n,
+        matches: r.rows,
+      },
+      null,
+      2,
+    ),
+  );
 
   const list = await c.query(
     `SELECT name, city FROM turfs ORDER BY name LIMIT 80`,

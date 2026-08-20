@@ -119,7 +119,16 @@ if (APPLY && toInsert.length > 0) {
           $8,
           now(), now()
         )`,
-        [r.id, r.name, r.location, r.city, r.state, r.country, r.sportEnum, r.is_active],
+        [
+          r.id,
+          r.name,
+          r.location,
+          r.city,
+          r.state,
+          r.country,
+          r.sportEnum,
+          r.is_active,
+        ],
       );
     }
     await client.query('COMMIT');

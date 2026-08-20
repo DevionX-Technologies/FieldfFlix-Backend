@@ -26,7 +26,8 @@ const EXPECTED = [
     pattern: '%balkanji%',
     location: 'Santacruz West',
     courts: 3,
-    sport: 'Pickleball courts 1–3 (cricket venue is separate Santacruz row in ops sheet)',
+    sport:
+      'Pickleball courts 1–3 (cricket venue is separate Santacruz row in ops sheet)',
   },
   {
     key: 'padel_arena',
@@ -142,6 +143,8 @@ const santacruz = await client.query(
    ORDER BY t.name`,
 );
 
-console.log(JSON.stringify({ byVenue: report, santacruzTurfs: santacruz.rows }, null, 2));
+console.log(
+  JSON.stringify({ byVenue: report, santacruzTurfs: santacruz.rows }, null, 2),
+);
 
 await client.end();

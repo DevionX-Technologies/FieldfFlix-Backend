@@ -81,8 +81,7 @@ function coerceSportsSupported(raw) {
 }
 
 const rows = recRes.rows.map((r) => {
-  const meta =
-    r.metadata && typeof r.metadata === 'object' ? r.metadata : {};
+  const meta = r.metadata && typeof r.metadata === 'object' ? r.metadata : {};
   const sportsArr = coerceSportsSupported(r.sports_supported);
   const turfIsCricketOnly =
     sportsArr.length === 1 && sportsArr[0] === 'Cricket';
