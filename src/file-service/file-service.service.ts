@@ -39,9 +39,9 @@ export class FileServiceService {
     fileName: string,
     contentType: string,
     tagsQueryString: string,
-    bucket: string,
   ): Promise<string> {
-    const bucketName = `${process.env.APP_NAME}-${process.env.ENVIRONMENT}-${bucket}`;
+    const bucketName =
+      process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
     const command = new PutObjectCommand({
       Bucket: bucketName,
       Key: fileName,
@@ -80,7 +80,6 @@ export class FileServiceService {
             filePath,
             file.contentType,
             tagsQueryString,
-            createFileServiceDto.bucketName,
           );
 
           return { fileName: file.fileName, url, filePath };
@@ -260,7 +259,8 @@ export class FileServiceService {
     fileBufferOrStream: Buffer | Readable,
     fileName: string,
     contentType: string,
-    bucketName: string = `${process.env.APP_NAME}-${process.env.ENVIRONMENT}-media`,
+    bucketName: string = process.env.AWS_S3_BUCKET_NAME ||
+      'fieldflicks-media-assets',
   ): Promise<{ fileKey: string; bucketName: string; url: string }> {
     const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
     const fileKey = `media/${uuidv4()}-${sanitizedFileName}`;

@@ -6,6 +6,7 @@ import {
   Query,
   UseGuards,
   ValidationPipe,
+  BadRequestException,
 } from '@nestjs/common';
 import { FileServiceService } from './file-service.service';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -28,6 +29,26 @@ export class FileServiceController {
     @Body(ValidationPipe) createFileServiceDto: UploadFileInS3Dto,
   ) {
     return this.fileService.generatePresignedUrls(createFileServiceDto);
+  }
+
+  @Get('/presigned-url')
+  @ApiOperation({
+    summary: 'Legacy Generate Presigned URL',
+    description:
+      'Generates a single presigned URL for frontend backwards compatibility',
+  })
+  async getLegacyPresignedUrl(
+    @Query('key') key: string,
+    @Query('bucketName') bucketName?: string,
+  ) {
+    if (!key) {
+      throw new BadRequestException('Key is required');
+    }
+    const result = await this.fileService.generatePresignedUrls({
+      files: [{ fileName: key, contentType: 'application/octet-stream' }],
+      bucketName: bucketName,
+    });
+    return { presignedUrl: result[0].url };
   }
 
   @Get('/file/signed-s3-url/generate')
