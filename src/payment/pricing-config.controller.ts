@@ -1,7 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { PricingConfigService } from './pricing-config.service';
-import { Public } from 'src/auth/decorators/public.decorator';
+import { Public } from '../decorators/public.decorator';
 
 @ApiTags('Pricing')
 @Controller('pricing')
