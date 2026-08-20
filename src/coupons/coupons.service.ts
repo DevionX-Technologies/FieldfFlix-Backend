@@ -59,7 +59,7 @@ export class CouponsService {
   }
 
   async createCoupon(
-    createdByUserId: string,
+    createdByUserId: string | null,
     body: {
       code: string;
       label: string;

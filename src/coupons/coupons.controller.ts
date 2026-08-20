@@ -85,7 +85,7 @@ export class CouponsController {
     @Req() req: Request & { user?: ILocalLoginPayload },
     @Body() body: CreateCouponDto,
   ) {
-    const creatorId = req.user?.user_id || 'admin';
+    const creatorId = req.user?.user_id || null;
     return this.coupons.createCoupon(creatorId, body);
   }
 
