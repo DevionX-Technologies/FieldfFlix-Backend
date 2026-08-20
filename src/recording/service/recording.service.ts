@@ -3178,7 +3178,7 @@ export class RecordingService {
         startTime: anchor.startTime,
         endTime: anchor.endTime,
       },
-      order: { createdAt: 'ASC' },
+      order: { startTime: 'ASC' },
     });
 
     return rows
