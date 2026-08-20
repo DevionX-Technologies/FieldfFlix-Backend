@@ -8,6 +8,8 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppLogger } from './logger.service';
 import { GlobalExceptionFilter } from './filters/global-exception.filter';
 
+import { json, urlencoded } from 'express';
+
 async function bootstrap() {
   const appLogger = new AppLogger();
   const app = await NestFactory.create(AppModule, {
@@ -25,6 +27,9 @@ async function bootstrap() {
       referrerPolicy: { policy: 'no-referrer' }, // Limit the amount of referrer information sent with requests
     }),
   );
+
+  app.use(json({ limit: '50mb' }));
+  app.use(urlencoded({ extended: true, limit: '50mb' }));
 
   app.enableCors({
     origin: true,
