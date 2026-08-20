@@ -39,9 +39,14 @@ export class RazorpayService {
 
       this.logger.log(`Razorpay order created successfully: ${order.id}`);
       return order;
-    } catch (error) {
-      this.logger.error('Failed to create Razorpay order', error);
-      throw new BadRequestException('Failed to create payment order');
+    } catch (error: any) {
+      const detail =
+        error?.error?.description ||
+        error?.description ||
+        error?.message ||
+        'Failed to create payment order';
+      this.logger.error(`Failed to create Razorpay order: ${detail}`, error);
+      throw new BadRequestException(detail);
     }
   }
 
