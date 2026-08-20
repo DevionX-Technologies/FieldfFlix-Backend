@@ -65,6 +65,20 @@ export class RaspberryPiApiService {
     process.env.EVMS_API_KEY ||
     'b0967580ef4fe425b2336c25b0a9d19d06a9f3800a422ecd5785ddfd261172a6';
 
+  private getLiveApiKey(raspberryPiBaseUrl: string): string {
+    if (raspberryPiBaseUrl && raspberryPiBaseUrl.includes('court17-1')) {
+      return '8574b1b253c577210132a9dc0f084b69c4acfa4e82715b889cc5573d512ab6f2';
+    }
+    return this.liveApiKey;
+  }
+
+  private getEvmsApiKey(raspberryPiBaseUrl: string): string {
+    if (raspberryPiBaseUrl && raspberryPiBaseUrl.includes('court17-1')) {
+      return '7e323f6f3b08ddd9b5aa12a7fa2f3c575ee7021f7435a29b9e00f3c91d683f46';
+    }
+    return this.evmsApiKey;
+  }
+
   constructor(private readonly httpService: HttpService) {}
 
   /**
@@ -117,7 +131,7 @@ export class RaspberryPiApiService {
       const response = await firstValueFrom(
         this.httpService.post(`${targetUrl}/extract-session`, payload, {
           headers: {
-            'X-API-KEY': this.evmsApiKey,
+            'X-API-KEY': this.getEvmsApiKey(raspberryPiBaseUrl),
             'Content-Type': 'application/json',
           },
           timeout: 300000, // 5 minutes timeout for slicing and uploading to S3
@@ -147,7 +161,7 @@ export class RaspberryPiApiService {
       const response = await firstValueFrom(
         this.httpService.get(`${targetUrl}/live-stream-status`, {
           headers: {
-            'X-API-KEY': this.liveApiKey,
+            'X-API-KEY': this.getLiveApiKey(raspberryPiBaseUrl),
           },
           timeout: 8000,
         }),
@@ -176,7 +190,7 @@ export class RaspberryPiApiService {
         const response = await firstValueFrom(
           this.httpService.post(`${targetUrl}/start-live-stream`, payload, {
             headers: {
-              'X-API-KEY': this.liveApiKey,
+              'X-API-KEY': this.getLiveApiKey(raspberryPiBaseUrl),
               'Content-Type': 'application/json',
             },
             timeout: 10000,
@@ -237,7 +251,7 @@ export class RaspberryPiApiService {
       const response = await firstValueFrom(
         this.httpService.post(`${targetUrl}/stop-live-stream`, payload, {
           headers: {
-            'X-API-KEY': this.liveApiKey,
+            'X-API-KEY': this.getLiveApiKey(raspberryPiBaseUrl),
             'Content-Type': 'application/json',
           },
           timeout: 10000,
@@ -284,7 +298,7 @@ export class RaspberryPiApiService {
           {},
           {
             headers: {
-              'X-API-KEY': this.evmsApiKey,
+              'X-API-KEY': this.getEvmsApiKey(raspberryPiBaseUrl),
             },
           },
         ),
@@ -314,7 +328,7 @@ export class RaspberryPiApiService {
           },
           {
             headers: {
-              'X-API-KEY': this.evmsApiKey,
+              'X-API-KEY': this.getEvmsApiKey(raspberryPiBaseUrl),
             },
           },
         ),
