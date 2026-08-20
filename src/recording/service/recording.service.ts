@@ -3331,6 +3331,36 @@ export class RecordingService {
       },
     );
 
+    // 3. Automatically link it to any active tournaments using this camera
+    try {
+      const query = `
+        SELECT id, "liveStreams" FROM tournaments 
+        WHERE "cameraIds" @> '"${camera.id}"' AND status IN ('Upcoming', 'Live')
+      `;
+      const activeTournaments = await this.dataSource.query(query);
+
+      for (const t of activeTournaments) {
+        let streams = t.liveStreams || [];
+        streams = streams.filter((s: any) => s.cameraId !== camera.id);
+        streams.push({
+          cameraId: camera.id,
+          cameraName: camera.name,
+          courtNumber: camera.court_number ?? channelNumber,
+          playbackUrl: playbackUrl,
+          isLive: true,
+        });
+
+        await this.dataSource.query(
+          `UPDATE tournaments SET "liveStreams" = $1 WHERE id = $2`,
+          [JSON.stringify(streams), t.id],
+        );
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to auto-update tournament live streams: ${err.message}`,
+      );
+    }
+
     return {
       success: true,
       cameraId: camera.id,
@@ -3357,6 +3387,32 @@ export class RecordingService {
     await this.raspberryPiApiService.stopLiveStream(camera.raspberryPiBaseUrl, {
       channel: channelNumber,
     });
+
+    // Automatically remove it from any active tournaments using this camera
+    try {
+      const query = `
+        SELECT id, "liveStreams" FROM tournaments 
+        WHERE "cameraIds" @> '"${camera.id}"' AND status IN ('Upcoming', 'Live')
+      `;
+      const activeTournaments = await this.dataSource.query(query);
+
+      for (const t of activeTournaments) {
+        let streams = t.liveStreams || [];
+        const originalLength = streams.length;
+        streams = streams.filter((s: any) => s.cameraId !== camera.id);
+
+        if (streams.length !== originalLength) {
+          await this.dataSource.query(
+            `UPDATE tournaments SET "liveStreams" = $1 WHERE id = $2`,
+            [JSON.stringify(streams), t.id],
+          );
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to auto-remove tournament live streams: ${err.message}`,
+      );
+    }
 
     return { success: true, cameraId: camera.id, nvrChannel: channelNumber };
   }
