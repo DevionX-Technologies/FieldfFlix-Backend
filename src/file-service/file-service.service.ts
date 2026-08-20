@@ -144,7 +144,7 @@ export class FileServiceService {
       Key: key,
     });
     const s3Client = new S3Client({
-      region: process.env.AWS_REGION,
+      region: process.env.AWS_S3_REGION || 'eu-north-1',
     });
     return await getSignedUrl(s3Client, cmd, { expiresIn: expiresInSeconds });
   }
