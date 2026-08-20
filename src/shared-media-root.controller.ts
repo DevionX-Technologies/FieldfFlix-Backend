@@ -13,7 +13,7 @@ import { CommonService } from 'src/common/service/common.service';
 import { RecordingService } from 'src/recording/service/recording.service';
 import { successResponse } from 'src/responses/response-utils';
 
-const ANDROID_PACKAGE = 'com.fieldflicks';
+const ANDROID_PACKAGE = 'com.loki123123.fieldflix';
 const PLAY_STORE_URL = `https://play.google.com/store/apps/details?id=${ANDROID_PACKAGE}`;
 
 /**
@@ -87,12 +87,12 @@ export class SharedMediaRootController {
 }
 
 function shareLinkBridgeHtml(shareToken: string): string {
-  const appScheme = `fieldflicks://shared/media/${encodeURIComponent(shareToken)}`;
+  const appScheme = `fieldflix://shared/media/${encodeURIComponent(shareToken)}`;
   // intent:// is the typical Android "open app or market" pattern.
   const intentUrl =
     `intent://shared/media/${encodeURIComponent(shareToken)}#Intent;` +
     `package=${ANDROID_PACKAGE};` +
-    `scheme=fieldflicks;` +
+    `scheme=fieldflix;` +
     `S.browser_fallback_url=${encodeURIComponent(PLAY_STORE_URL)};end`;
 
   // Branded landing page. Auto-attempts the app deep link on load, with a

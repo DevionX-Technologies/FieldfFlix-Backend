@@ -56,7 +56,6 @@ import { RecordingHighlightsService } from '../service/recording-highlight.servi
 import { RecordingService } from '../service/recording.service';
 import { RecordingHighlightEngagementService } from '../service/recording-highlight-engagement.service';
 import { MuxService } from '../../mux/mux.service';
-import { ActiveHighlightDto } from '../dto/active-highlight.dto';
 
 /**
  * Controller for handling recording-related requests.
@@ -625,19 +624,6 @@ export class RecordingController {
     );
   }
 
-  @Get(':id/session-recordings')
-  @ApiOperation({
-    summary:
-      'List all camera/NVR-channel recordings for the same match session',
-  })
-  @ApiResponse({
-    status: HttpStatus.OK,
-    description: 'Session recordings returned',
-  })
-  async getSessionRecordings(@Param('id') recordingId: string) {
-    return this.recordingService.getSessionRecordings(recordingId);
-  }
-
   /**
    * Returns a fresh signed Mux playback token + URL for a recording, suitable for
    * in-app playback of recordings whose Mux assets are configured with a `signed`
@@ -922,27 +908,6 @@ export class RecordingController {
     return await this.recordingHighlightsService.createRecordingHighlight(
       recordingId,
     );
-  }
-
-  @Public()
-  @ApiHeaders([
-    {
-      name: 'x-client-id',
-      description: 'Mux signature for webhook verification',
-      required: true,
-    },
-  ])
-  @Post('active-highlight')
-  @HttpCode(200)
-  async createActiveHighlight(
-    @Req() req: Request,
-    @Body() dto: ActiveHighlightDto,
-  ) {
-    const clientId = req.headers['x-client-id'] as string;
-    if (!clientId || clientId !== process.env.RPI_CLIENT_ID) {
-      throw new BadRequestException('Client ID is required');
-    }
-    return await this.recordingHighlightsService.createActiveHighlight(dto);
   }
 
   /**

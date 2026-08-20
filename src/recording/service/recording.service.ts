@@ -64,10 +64,15 @@ import {
 } from 'src/utils/mux-static-renditions';
 import { SharedRecordingResponseDto } from '../dto/shared-recording-response.dto';
 import { RecordingHighlightEngagementService } from './recording-highlight-engagement.service';
+import { RecordingHighlightsService } from './recording-highlight.service';
 import { PaymentRestrictionService } from 'src/payment/payment-restriction.service';
 import { PointsService } from 'src/points/points.service';
 import { PointEventType } from 'src/points/entities/point-event.entity';
 import { PricingConfigService } from 'src/payment/pricing-config.service';
+import {
+  readRecordingNvrChannel,
+  resolveNvrChannelsForCamera,
+} from 'src/utils/nvr-channels.util';
 
 /**
  * Service for managing recordings.
@@ -110,6 +115,7 @@ export class RecordingService {
     @InjectDataSource()
     private readonly dataSource: DataSource,
     private readonly recordingHighlightEngagementService: RecordingHighlightEngagementService,
+    private readonly recordingHighlightsService: RecordingHighlightsService,
     private readonly paymentRestrictionService: PaymentRestrictionService,
     private readonly pointsService: PointsService,
     private readonly pricingConfigService: PricingConfigService,
@@ -924,9 +930,17 @@ export class RecordingService {
       );
     }
 
-    if (recording.userId !== userId) {
+    const isOwner = recording.userId === userId;
+    const hasUnlockAccess =
+      !isOwner &&
+      (await this.paymentRestrictionService.hasCompletedRecordingOrHighlightAccess(
+        userId,
+        recordingId,
+      ));
+
+    if (!isOwner && !hasUnlockAccess) {
       throw new ForbiddenException(
-        `User ${userId} does not own recording with ID ${recordingId}.`,
+        `User ${userId} does not have access to share recording with ID ${recordingId}.`,
       );
     }
 
@@ -2907,19 +2921,24 @@ export class RecordingService {
     dto: ExtractSessionRequestDto,
     requestingUserId?: string,
   ): Promise<any> {
-    const camera = await this.cameraRepository.findOne({
+    const primaryCamera = await this.cameraRepository.findOne({
       where: { id: dto.cameraId },
+      relations: ['turf'],
     });
 
-    if (!camera) {
+    if (!primaryCamera) {
       throw new NotFoundException(`Camera not found with ID: ${dto.cameraId}`);
     }
 
-    if (!camera.raspberryPiBaseUrl) {
-      throw new BadRequestException(
-        `Camera ${camera.name || camera.id} is not configured with an active Edge Pi Gateway URL.`,
-      );
-    }
+    // Find all cameras for this court to support multi-angle recordings
+    const allCourtCameras = await this.cameraRepository.find({
+      where: {
+        turfId: primaryCamera.turfId,
+        court_number: primaryCamera.court_number || 1,
+      },
+      relations: ['turf'],
+      order: { id: 'ASC' },
+    });
 
     const startDate = new Date(dto.startTime);
     const endDate = new Date(dto.endTime);
@@ -2932,27 +2951,6 @@ export class RecordingService {
       throw new BadRequestException(
         'endTime must be strictly after startTime.',
       );
-    }
-
-    // Check for cached / already completed recording matching this camera & time window
-    const existingRecording = await this.recordingRepositoryForMedia.findOne({
-      where: {
-        cameraId: camera.id,
-        startTime: startDate,
-        endTime: endDate,
-        status: 'completed',
-      },
-    });
-
-    if (existingRecording && existingRecording.mux_media_url) {
-      this.logger.log(
-        `Cache HIT for match extraction: recording ${existingRecording.id} already exists on Mux`,
-      );
-      return {
-        cached: true,
-        recording: existingRecording,
-        playbackUrl: existingRecording.mux_media_url,
-      };
     }
 
     // Ensure userId is never null if table has NOT NULL constraint
@@ -2970,7 +2968,6 @@ export class RecordingService {
       }
     }
 
-    // Try relaxing the NOT NULL constraint on Postgres database
     try {
       await this.recordingRepositoryForMedia.query(
         'ALTER TABLE "recordings" ALTER COLUMN "userId" DROP NOT NULL',
@@ -2979,90 +2976,232 @@ export class RecordingService {
       // Ignore if column already allows nulls or permissions don't allow ALTER
     }
 
-    // Create a new recording row in database
-    const recording = this.recordingRepositoryForMedia.create({
-      id: uuidv4(),
-      userId: resolvedUserId || null,
-      turfId: camera.turfId,
-      cameraId: camera.id,
-      startTime: startDate,
-      endTime: endDate,
-      status: 'extracting',
-    });
+    const createdRecordings: Recording[] = [];
 
-    const timestamp = new Date()
-      .toISOString()
-      .replace(/[-:T.]/g, '')
-      .slice(0, 14);
-    const s3Key = `recordings/${recording.id}_${timestamp}.mp4`;
-    // We no longer set recording.s3Path because we use Mux Direct Upload instead of AWS S3
+    for (const camera of allCourtCameras) {
+      if (!camera.raspberryPiBaseUrl) {
+        this.logger.warn(
+          `Camera ${camera.name || camera.id} is not configured with an active Edge Pi Gateway URL. Skipping multi-angle extraction for this channel.`,
+        );
+        continue;
+      }
 
-    await this.recordingRepositoryForMedia.save(recording);
+      const nvrChannels = resolveNvrChannelsForCamera(camera);
+      const defaultChannel =
+        camera.court_number && camera.court_number > 0
+          ? camera.court_number
+          : 1;
 
-    // Generate Mux Direct Upload URL for Pi
-    const { uploadUrl } = await this.muxService.createDirectUpload(
-      recording.id,
-    );
-
-    const channelNumber = camera.court_number || 1;
-    const callbackWebhookUrl = `${process.env.APP_BASE_URL || 'https://api.devionx.com'}/recording/pi-callback`;
-
-    this.logger.log(
-      `Dispatching on-demand extraction for Recording ${recording.id} to Pi (${camera.raspberryPiBaseUrl}) on Channel ${channelNumber}`,
-    );
-
-    try {
-      // Fire and forget - do NOT await this request!
-      // The Pi can take minutes or even hours to extract and upload a 4K video.
-      // If we await this, the NestJS HTTP client will throw a 500 Timeout Error after 5 minutes.
-      this.raspberryPiApiService
-        .extractSession(camera.raspberryPiBaseUrl, {
-          recordingId: recording.id,
-          channel: channelNumber,
-          startTime: startDate.toISOString(),
-          endTime: endDate.toISOString(),
-          uploadUrl,
-          s3Key,
-          callbackWebhookUrl,
-        })
-        .then((piResponse) => {
-          if (piResponse.status === 'SUCCESS') {
-            this.logger.log(
-              `Pi reported initial extraction success for recording ${recording.id}. Waiting for Mux webhook.`,
-            );
-          } else {
-            this.logger.warn(
-              `Pi reported non-success status for recording ${recording.id}: ${piResponse.status}`,
-            );
-          }
-        })
-        .catch((error) => {
-          // We log the error but we do NOT mark the recording as failed!
-          // The Pi's EVMS extraction continues running in the background even if the HTTP connection times out.
-          this.logger.warn(
-            `Pi extraction HTTP request finished with error or timed out, but extraction may still be running: ${error.message}`,
-          );
+      for (const channelNumber of nvrChannels) {
+        const completedRows = await this.recordingRepositoryForMedia.find({
+          where: {
+            cameraId: camera.id,
+            startTime: startDate,
+            endTime: endDate,
+            status: 'completed',
+          },
         });
 
-      await this.recordingRepositoryForMedia.update(recording.id, {
-        status: 'uploaded', // This signals it's waiting for Mux processing
-      });
+        const existingRecording =
+          completedRows.find((row) => {
+            const rowChannel = readRecordingNvrChannel(
+              row.metadata as Record<string, unknown> | undefined,
+              defaultChannel,
+            );
+            return rowChannel === channelNumber && !!row.mux_media_url;
+          }) ?? null;
 
-      return {
-        cached: false,
-        recordingId: recording.id,
-        status: 'PROCESSING',
-        s3Path: recording.s3Path,
-        piResponse: { status: 'DISPATCHED_ASYNC', recordingId: recording.id },
-      };
-    } catch (error) {
-      this.logger.error(
-        `Error during on-demand extraction setup: ${error.message}`,
-      );
+        if (existingRecording) {
+          this.logger.log(
+            `Cache HIT for match extraction: recording ${existingRecording.id} (camera ${camera.id}, NVR ch ${channelNumber})`,
+          );
+          if (channelNumber === nvrChannels[0]) {
+            try {
+              await this.recordingHighlightsService.attachHighlightsInTimeWindow(
+                existingRecording.id,
+                camera.id,
+                startDate,
+                endDate,
+              );
+            } catch (attachErr) {
+              this.logger.warn(
+                `Failed to attach highlights for cached recording ${existingRecording.id}: ${(attachErr as Error)?.message || attachErr}`,
+              );
+            }
+          }
+          createdRecordings.push(existingRecording);
+          continue;
+        }
+
+        const recording = this.recordingRepositoryForMedia.create({
+          id: uuidv4(),
+          userId: resolvedUserId || null,
+          turfId: camera.turfId,
+          cameraId: camera.id,
+          startTime: startDate,
+          endTime: endDate,
+          status: 'extracting',
+          metadata: {
+            nvr_channel: channelNumber,
+            camera_label: `Camera ${channelNumber}`,
+            extract_session_key: `${camera.id}_${startDate.toISOString()}_${endDate.toISOString()}`,
+          },
+        });
+
+        const timestamp = new Date()
+          .toISOString()
+          .replace(/[-:T.]/g, '')
+          .slice(0, 14);
+        const s3Key = `recordings/${recording.id}_${timestamp}.mp4`;
+
+        await this.recordingRepositoryForMedia.save(recording);
+
+        if (channelNumber === nvrChannels[0]) {
+          try {
+            await this.recordingHighlightsService.attachHighlightsInTimeWindow(
+              recording.id,
+              camera.id,
+              startDate,
+              endDate,
+            );
+          } catch (attachErr) {
+            this.logger.warn(
+              `Failed to attach highlights for new recording ${recording.id}: ${(attachErr as Error)?.message || attachErr}`,
+            );
+          }
+        }
+
+        const { uploadUrl } = await this.muxService.createDirectUpload(
+          recording.id,
+        );
+        const callbackWebhookUrl = `${process.env.APP_BASE_URL || 'https://api.devionx.com'}/recording/pi-callback`;
+
+        this.logger.log(
+          `Dispatching on-demand extraction for Recording ${recording.id} to Pi (${camera.raspberryPiBaseUrl}) on NVR channel ${channelNumber} (Camera: ${camera.name})`,
+        );
+
+        try {
+          this.raspberryPiApiService
+            .extractSession(camera.raspberryPiBaseUrl, {
+              recordingId: recording.id,
+              channel: channelNumber,
+              startTime: startDate.toISOString(),
+              endTime: endDate.toISOString(),
+              uploadUrl,
+              s3Key,
+              callbackWebhookUrl,
+            })
+            .then((piResponse) => {
+              if (piResponse.status === 'SUCCESS') {
+                this.logger.log(
+                  `Pi reported initial extraction success for recording ${recording.id} (NVR ch ${channelNumber}). Waiting for Mux webhook.`,
+                );
+              } else {
+                this.logger.warn(
+                  `Pi reported non-success status for recording ${recording.id} (NVR ch ${channelNumber}): ${piResponse.status}`,
+                );
+              }
+            })
+            .catch((error) => {
+              this.logger.warn(
+                `Pi extraction HTTP request finished with error or timed out for recording ${recording.id} (NVR ch ${channelNumber}), but extraction may still be running: ${error.message}`,
+              );
+            });
+
+          await this.recordingRepositoryForMedia.update(recording.id, {
+            status: 'uploaded',
+          });
+
+          createdRecordings.push(recording);
+        } catch (error) {
+          this.logger.error(
+            `Error during on-demand extraction setup for camera ${camera.id} NVR ch ${channelNumber}: ${error.message}`,
+          );
+        }
+      }
+    }
+
+    if (createdRecordings.length === 0) {
       throw new InternalServerErrorException(
-        `Failed to extract match video from venue NVR: ${error.message}`,
+        'Failed to extract match video from any cameras on this court.',
       );
     }
+
+    const primaryRecording = createdRecordings[0];
+
+    return {
+      cached: primaryRecording.status === 'completed',
+      recordingId: primaryRecording.id,
+      recordingIds: createdRecordings.map((row) => row.id),
+      status:
+        primaryRecording.status === 'completed' ? 'COMPLETED' : 'PROCESSING',
+      s3Path: primaryRecording.s3Path,
+      piResponse: {
+        status: 'DISPATCHED_ASYNC',
+        recordingId: primaryRecording.id,
+      },
+    };
+  }
+
+  /**
+   * Returns all recordings extracted for the same court session (multi-NVR-channel or multi-camera).
+   */
+  async getSessionRecordings(recordingId: string): Promise<
+    Array<{
+      id: string;
+      cameraId: string | null;
+      nvr_channel: number;
+      camera_label: string;
+      mux_playback_id: string | null;
+      status: string | null;
+      startTime: Date | null;
+      endTime: Date | null;
+    }>
+  > {
+    const anchor = await this.recordingRepositoryForMedia.findOne({
+      where: { id: recordingId },
+      relations: ['camera'],
+    });
+
+    if (!anchor?.cameraId || !anchor.startTime || !anchor.endTime) {
+      return [];
+    }
+
+    const defaultChannel =
+      anchor.camera?.court_number != null && anchor.camera.court_number > 0
+        ? anchor.camera.court_number
+        : 1;
+
+    const rows = await this.recordingRepositoryForMedia.find({
+      where: {
+        cameraId: anchor.cameraId,
+        startTime: anchor.startTime,
+        endTime: anchor.endTime,
+      },
+      order: { createdAt: 'ASC' },
+    });
+
+    return rows
+      .map((row) => {
+        const meta = (row.metadata ?? {}) as Record<string, unknown>;
+        const nvrChannel = readRecordingNvrChannel(meta, defaultChannel);
+        const cameraLabel =
+          typeof meta.camera_label === 'string'
+            ? meta.camera_label
+            : `Camera ${nvrChannel}`;
+
+        return {
+          id: row.id,
+          cameraId: row.cameraId ?? null,
+          nvr_channel: nvrChannel,
+          camera_label: cameraLabel,
+          mux_playback_id: row.mux_playback_id ?? null,
+          status: row.status ?? null,
+          startTime: row.startTime ?? null,
+          endTime: row.endTime ?? null,
+        };
+      })
+      .sort((a, b) => a.nvr_channel - b.nvr_channel);
   }
 
   /**

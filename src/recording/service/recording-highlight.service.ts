@@ -17,7 +17,8 @@ import { User } from 'src/user/entities/user.entity';
 import { NotificationEntity } from 'src/notification/entities/notification.entity';
 import { MessageStatus, NotificationType } from 'src/constant/enum';
 import { PointsService } from 'src/points/points.service';
-
+import { Camera } from '../../camera/camera.entity';
+import { ActiveHighlightDto } from '../dto/active-highlight.dto';
 @Injectable()
 export class RecordingHighlightsService {
   private readonly logger = new Logger(RecordingHighlightsService.name);
@@ -117,6 +118,139 @@ export class RecordingHighlightsService {
     );
   }
 
+  /**
+   * When a user extracts a match window, copy button-press highlights from other
+   * recordings on the same camera whose timestamp falls inside that window.
+   */
+  async attachHighlightsInTimeWindow(
+    targetRecordingId: string,
+    cameraId: string,
+    startTime: Date,
+    endTime: Date,
+  ): Promise<number> {
+    const targetRecording = await this.dataSource.manager.findOne(Recording, {
+      where: { id: targetRecordingId },
+    });
+
+    if (!targetRecording?.startTime) {
+      this.logger.warn(
+        `Skipping highlight attach — target recording ${targetRecordingId} missing or has no startTime`,
+      );
+      return 0;
+    }
+
+    const windowSeconds = Math.floor(
+      (endTime.getTime() - startTime.getTime()) / 1000,
+    );
+    if (windowSeconds < 5) {
+      return 0;
+    }
+
+    const existingRows = await this.dataSource.manager.find(
+      RecordingHighlights,
+      {
+        where: { recordingId: targetRecordingId },
+      },
+    );
+    const existingClickTimes = new Set(
+      existingRows.map((row) => new Date(row.button_click_timestamp).getTime()),
+    );
+
+    const candidates = await this.dataSource
+      .getRepository(RecordingHighlights)
+      .createQueryBuilder('rh')
+      .innerJoin('rh.recording', 'r')
+      .where('r.cameraId = :cameraId', { cameraId })
+      .andWhere('rh.button_click_timestamp >= :startTime', { startTime })
+      .andWhere('rh.button_click_timestamp <= :endTime', { endTime })
+      .andWhere('rh.recordingId != :targetRecordingId', { targetRecordingId })
+      .orderBy('rh.button_click_timestamp', 'ASC')
+      .getMany();
+
+    const seenClickTimes = new Set<number>();
+    let attachedCount = 0;
+    let maxProcessingOrder =
+      existingRows.reduce(
+        (max, row) => Math.max(max, row.processing_order ?? 0),
+        0,
+      ) ?? 0;
+
+    for (const source of candidates) {
+      const clickMs = new Date(source.button_click_timestamp).getTime();
+      if (seenClickTimes.has(clickMs) || existingClickTimes.has(clickMs)) {
+        continue;
+      }
+      seenClickTimes.add(clickMs);
+
+      const relativeSeconds = this.calculateRelativeSeconds(
+        targetRecording.startTime,
+        new Date(source.button_click_timestamp),
+      );
+
+      if (relativeSeconds < 5 || relativeSeconds > windowSeconds) {
+        continue;
+      }
+
+      maxProcessingOrder += 1;
+      const relativeTimestamp = this.formatRelativeTime(relativeSeconds);
+
+      await this.dataSource.manager.save(RecordingHighlights, {
+        recordingId: targetRecordingId,
+        button_click_timestamp: source.button_click_timestamp,
+        relative_timestamp: relativeTimestamp,
+        status: HIGHLIGHT_STATUS.PENDING,
+        mux_public_playback_url: null,
+        playback_id: null,
+        asset_id: null,
+        source_asset_id: targetRecording.mux_asset_id || null,
+        failed_message: null,
+        processing_order: maxProcessingOrder,
+        isClipCreated: false,
+      });
+
+      attachedCount += 1;
+      existingClickTimes.add(clickMs);
+    }
+
+    if (attachedCount === 0) {
+      return 0;
+    }
+
+    this.logger.log(
+      `Attached ${attachedCount} highlight(s) to recording ${targetRecordingId} for camera ${cameraId}`,
+      { startTime, endTime },
+    );
+
+    if (targetRecording.mux_asset_id && targetRecording.isVideoCreated) {
+      await this.dataSource.query(
+        `UPDATE recording_highlights
+         SET status = $1, source_asset_id = $2, updated_at = NOW()
+         WHERE recording_id = $3
+           AND status = $4
+           AND asset_id IS NULL`,
+        [
+          HIGHLIGHT_STATUS.QUEUED,
+          targetRecording.mux_asset_id,
+          targetRecordingId,
+          HIGHLIGHT_STATUS.PENDING,
+        ],
+      );
+
+      try {
+        await this.enqueueService.enqueueRecording(
+          targetRecordingId,
+          'single_highlight',
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Failed to enqueue clip processing after attaching highlights to ${targetRecordingId}: ${(err as Error)?.message || err}`,
+        );
+      }
+    }
+
+    return attachedCount;
+  }
+
   async createRecordingHighlight(
     recordingId: string,
   ): Promise<RecordingHighlights> {
@@ -132,7 +266,8 @@ export class RecordingHighlightsService {
       });
 
       if (!recording) {
-        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+        const uuidRegex =
+          /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
         if (uuidRegex.test(recordingId)) {
           recording = await queryRunner.manager.findOne(Recording, {
             where: { id: recordingId },
@@ -1495,6 +1630,115 @@ export class RecordingHighlightsService {
 
       await queryRunner.commitTransaction();
       return 'recordingHighlights';
+    } catch (error) {
+      await queryRunner.rollbackTransaction();
+      throw error;
+    } finally {
+      await queryRunner.release();
+    }
+  }
+
+  async createActiveHighlight(
+    dto: ActiveHighlightDto,
+  ): Promise<RecordingHighlights> {
+    const queryRunner: QueryRunner = this.dataSource.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const buttonClickTimestamp = dto.pressedAt
+        ? new Date(dto.pressedAt)
+        : new Date();
+
+      const camera = await queryRunner.manager.findOne(Camera, {
+        where: { court_number: dto.court },
+      });
+
+      if (!camera) {
+        throw new HttpException(
+          `Camera not found for court ${dto.court}`,
+          HttpStatus.NOT_FOUND,
+        );
+      }
+
+      const recording = await queryRunner.manager
+        .createQueryBuilder(Recording, 'recording')
+        .leftJoinAndSelect(
+          'recording.recordingHighlights',
+          'recordingHighlights',
+        )
+        .where('recording.cameraId = :cameraId', { cameraId: camera.id })
+        .andWhere('recording.status IN (:...statuses)', {
+          statuses: ['live', 'in_progress', 'uploaded', 'ready'],
+        })
+        .orderBy('recording.startTime', 'DESC')
+        .getOne();
+
+      if (!recording || !recording.startTime) {
+        throw new HttpException(
+          `No active recording found for court ${dto.court}`,
+          HttpStatus.NOT_FOUND,
+        );
+      }
+
+      const relativeSeconds = this.calculateRelativeSeconds(
+        recording.startTime,
+        buttonClickTimestamp,
+      );
+
+      const relativeTimestamp = this.formatRelativeTime(relativeSeconds);
+
+      const maxOrderResult = await queryRunner.query(
+        `SELECT COALESCE(MAX(processing_order), 0) AS max_order
+         FROM recording_highlights
+         WHERE recording_id = $1`,
+        [recording.id],
+      );
+      const processingOrder = parseInt(maxOrderResult[0].max_order, 10) + 1;
+
+      let initialStatus: string = HIGHLIGHT_STATUS.PENDING;
+      if (dto.s3Path) {
+        initialStatus = HIGHLIGHT_STATUS.READY;
+      }
+
+      const recordingHighlight = await queryRunner.manager.save(
+        RecordingHighlights,
+        {
+          recordingId: recording.id,
+          button_click_timestamp: buttonClickTimestamp,
+          relative_timestamp: relativeTimestamp,
+          status: initialStatus,
+          s3path: dto.s3Path || null,
+          mux_public_playback_url: dto.s3Path ? dto.s3Path : null,
+          playback_id: null,
+          asset_id: null,
+          source_asset_id: recording?.mux_asset_id || null,
+          failed_message: null,
+          processing_order: processingOrder,
+          isClipCreated: !!dto.s3Path,
+        },
+      );
+
+      await queryRunner.commitTransaction();
+
+      if (!dto.s3Path && recording.mux_asset_id && recording.isVideoCreated) {
+        const updateRunner = this.dataSource.createQueryRunner();
+        await updateRunner.connect();
+        try {
+          await updateRunner.query(
+            `UPDATE recording_highlights SET status = $1, updated_at = NOW() WHERE id = $2`,
+            [HIGHLIGHT_STATUS.QUEUED, recordingHighlight.id],
+          );
+          await this.enqueueService.enqueueRecording(
+            recording.id,
+            'single_highlight',
+          );
+        } finally {
+          await updateRunner.release();
+        }
+      }
+
+      return recordingHighlight;
     } catch (error) {
       await queryRunner.rollbackTransaction();
       throw error;
