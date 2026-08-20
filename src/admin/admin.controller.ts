@@ -26,13 +26,35 @@ import { Public } from 'src/decorators/public.decorator';
 
 import { PricingConfigService } from 'src/payment/pricing-config.service';
 
+import { IsNumber, IsOptional } from 'class-validator';
+
 export class UpdatePricingConfigDto {
+  @IsOptional()
+  @IsNumber()
   cricket_hourly_rate?: number;
+
+  @IsOptional()
+  @IsNumber()
   pickleball_hourly_rate?: number;
+
+  @IsOptional()
+  @IsNumber()
   padel_hourly_rate?: number;
+
+  @IsOptional()
+  @IsNumber()
   default_hourly_rate?: number;
+
+  @IsOptional()
+  @IsNumber()
   highlight_base_price?: number;
+
+  @IsOptional()
+  @IsNumber()
   shorts_base_price?: number;
+
+  @IsOptional()
+  @IsNumber()
   gst_rate?: number;
 }
 
