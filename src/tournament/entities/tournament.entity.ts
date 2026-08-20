@@ -24,7 +24,7 @@ export class TournamentEntity {
   @Column({ type: 'varchar', length: 100, default: 'Pickleball' })
   sport: string;
 
-  @Column({ type: 'varchar', length: 500, nullable: true })
+  @Column({ type: 'text', nullable: true })
   bannerImage: string;
 
   @Column({ type: 'integer', default: 0 })
