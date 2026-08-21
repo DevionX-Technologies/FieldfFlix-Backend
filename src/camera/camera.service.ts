@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Camera } from './camera.entity';
 import { CreateCameraDto } from './dto/create-camera.dto';
+import { resolveLegacyQrCameraId } from './camera-legacy-qr.util';
 
 interface PaginationResult<T> {
   data: T[];
@@ -61,10 +62,21 @@ export class CameraService {
    */
   async findOne(id: string): Promise<Camera> {
     const camera = await this.cameraRepository.findOne({ where: { id } });
-    if (!camera) {
-      throw new NotFoundException(`Camera with ID ${id} not found`);
+    if (camera) {
+      return camera;
     }
-    return camera;
+
+    const legacyResolvedId = resolveLegacyQrCameraId(id);
+    if (legacyResolvedId) {
+      const legacyCamera = await this.cameraRepository.findOne({
+        where: { id: legacyResolvedId },
+      });
+      if (legacyCamera) {
+        return legacyCamera;
+      }
+    }
+
+    throw new NotFoundException(`Camera with ID ${id} not found`);
   }
 
   /**

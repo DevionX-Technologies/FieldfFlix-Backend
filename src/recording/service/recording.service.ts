@@ -748,7 +748,9 @@ export class RecordingService {
         'id',
         'status',
         's3Path',
+        'mux_asset_id',
         'mux_playback_id',
+        'mux_media_url',
         'startTime',
         'endTime',
       ],
@@ -758,6 +760,40 @@ export class RecordingService {
       throw new NotFoundException(
         `Recording with ID ${recordingId} not found.`,
       );
+    }
+
+    if (
+      recording.mux_asset_id &&
+      (recording.status !== 'ready' || !recording.mux_playback_id)
+    ) {
+      try {
+        const asset = await this.muxService.getAssetDetails(
+          recording.mux_asset_id,
+        );
+        if (asset?.status === 'ready') {
+          const livePlaybackId = Array.isArray(asset.playback_ids)
+            ? (asset.playback_ids.find((p: any) => p?.policy === 'public')
+                ?.id ??
+              asset.playback_ids[0]?.id ??
+              null)
+            : null;
+
+          const patch: Partial<Recording> = {};
+          if (recording.status !== 'ready') patch.status = 'ready';
+          if (livePlaybackId && !recording.mux_playback_id) {
+            patch.mux_playback_id = livePlaybackId;
+            patch.mux_media_url = `https://stream.mux.com/${livePlaybackId}.m3u8`;
+          }
+          if (Object.keys(patch).length > 0) {
+            await this.recordingRepository.update(recording.id, patch);
+            Object.assign(recording, patch);
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `Mux self-heal in getRecordingStatus(${recordingId}) failed: ${err?.message ?? err}`,
+        );
+      }
     }
 
     return {

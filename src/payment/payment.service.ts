@@ -122,10 +122,24 @@ export class PaymentService {
       });
 
       if (existingPayment) {
-        // If payment is pending or completed, return the existing payment
+        if (existingPayment.status === PaymentStatus.COMPLETED) {
+          return {
+            id: existingPayment.id,
+            razorpay_order_id: existingPayment.razorpay_order_id,
+            amount: existingPayment.amount,
+            currency: existingPayment.currency,
+            base_amount: existingPayment.base_amount,
+            status: existingPayment.status,
+            payment_type: existingPayment.payment_type,
+            created_at: existingPayment.created_at,
+            expires_at: existingPayment.expires_at,
+          };
+        }
+
+        // Re-use an in-flight Razorpay order when we already have an order id.
         if (
-          existingPayment.status === PaymentStatus.PENDING ||
-          existingPayment.status === PaymentStatus.COMPLETED
+          existingPayment.status === PaymentStatus.PENDING &&
+          existingPayment.razorpay_order_id
         ) {
           return {
             id: existingPayment.id,
@@ -138,6 +152,11 @@ export class PaymentService {
             created_at: existingPayment.created_at,
             expires_at: existingPayment.expires_at,
           };
+        }
+
+        // Stale PENDING row (Razorpay never created) blocks new orders — remove it.
+        if (existingPayment.status === PaymentStatus.PENDING) {
+          await this.paymentRepository.remove(existingPayment);
         }
       }
 
@@ -300,6 +319,56 @@ export class PaymentService {
   }
 
   /**
+   * Live unlock pricing for checkout (same math as my-recordings payment block).
+   */
+  async getRecordingUnlockQuote(
+    req: Request,
+    recordingId: string,
+  ): Promise<{
+    base_amount: number;
+    payment_amount: number;
+    status: PaymentStatus;
+    gst_rate: number;
+    tier: RecordingUnlockSport;
+    has_paid_access: boolean;
+  }> {
+    const tokenData = await this.commonService.extractDataFromToken(req);
+
+    const recording = await this.recordingRepository.findOne({
+      where: { id: recordingId },
+      relations: ['turf'],
+    });
+    if (!recording) {
+      throw new NotFoundException('Recording not found');
+    }
+
+    const config = this.pricingConfigService.getConfig();
+    const { tier, base, total } = this.unlockTierAndAmounts(recording, config);
+    const baseRounded = Math.round(base);
+
+    const existingPayment = await this.paymentRepository.findOne({
+      where: {
+        user_id: tokenData.user_id,
+        recording_id: recordingId,
+        status: In([PaymentStatus.PENDING, PaymentStatus.COMPLETED]),
+      },
+    });
+
+    const hasPaidAccess = existingPayment?.status === PaymentStatus.COMPLETED;
+
+    return {
+      base_amount: existingPayment
+        ? Number(existingPayment.base_amount) || baseRounded
+        : baseRounded,
+      payment_amount: existingPayment ? Number(existingPayment.amount) : total,
+      status: existingPayment?.status ?? PaymentStatus.PENDING,
+      gst_rate: config.gst_rate,
+      tier,
+      has_paid_access: hasPaidAccess,
+    };
+  }
+
+  /**
    * One-time plan purchase (Razorpay). Uses `MEDIA_ACCESS` as a general “non-recording”
    * payment type until a dedicated `SUBSCRIPTION` type exists in the schema.
    */
@@ -367,6 +436,7 @@ export class PaymentService {
     userId: string,
     createPaymentDto: CreatePaymentOrderDto,
   ): Promise<PaymentResponseDto> {
+    let savedPayment: PaymentEntity | null = null;
     try {
       // Convert amount to paise
       const amountInPaise = this.razorpayService.convertRupeesToPaise(
@@ -386,7 +456,7 @@ export class PaymentService {
         metadata: createPaymentDto.metadata ?? null,
       });
 
-      const savedPayment = await this.paymentRepository.save(payment);
+      savedPayment = await this.paymentRepository.save(payment);
 
       // Create Razorpay order
       const razorpayOrder = await this.razorpayService.createOrder(
@@ -419,6 +489,11 @@ export class PaymentService {
         expires_at: savedPayment.expires_at,
       };
     } catch (error) {
+      if (savedPayment?.id) {
+        await this.paymentRepository
+          .remove(savedPayment)
+          .catch(() => undefined);
+      }
       this.logger.error('Failed to create payment order', error);
       throw error;
     }

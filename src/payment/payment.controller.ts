@@ -278,6 +278,19 @@ export class PaymentController {
   /**
    * Create payment order for recording access
    */
+  @Get(':recordingId/unlock-quote')
+  @ApiOperation({
+    summary: 'Get unlock pricing for a recording',
+    description:
+      'Returns base_amount, payment_amount (incl. GST), and payment status for checkout UI',
+  })
+  async getRecordingUnlockQuote(
+    @Request() req: any,
+    @Param('recordingId') recordingId: string,
+  ) {
+    return this.paymentService.getRecordingUnlockQuote(req, recordingId);
+  }
+
   @Post(':recordingId/create-payment')
   @ApiOperation({
     summary: 'Create payment order for recording',
