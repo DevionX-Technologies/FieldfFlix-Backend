@@ -3052,7 +3052,6 @@ export class RecordingService {
           endTime: endDate,
           status: Not('failed'),
         },
-        order: { createdAt: 'DESC' },
       });
 
       if (priorClaim) {
