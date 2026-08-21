@@ -116,4 +116,11 @@ export class StopCourtLiveStreamDto {
   @Type(() => Number)
   @IsNumber()
   logicalChannel?: number;
+
+  @ApiPropertyOptional({
+    description: 'Mux live stream ID returned from start-live-stream',
+  })
+  @IsOptional()
+  @IsString()
+  liveStreamId?: string;
 }

@@ -3440,15 +3440,27 @@ export class RecordingService {
       playbackUrl = muxLive.playbackUrl;
     }
 
-    // 2. Command Pi to relay RTSP from NVR to Mux RTMP
-    await this.raspberryPiApiService.startLiveStream(
-      camera.raspberryPiBaseUrl,
-      {
-        channel: channelNumber,
-        rtmpUrl: rtmpUrl,
-      },
-      camera.raspberryPiApiKey,
-    );
+    // 2. Command Pi to relay RTSP from NVR to Mux RTMP (best-effort — playback URL works without Pi)
+    let piStatus = 'STARTED';
+    let piWarning: string | undefined;
+    try {
+      await this.raspberryPiApiService.startLiveStream(
+        camera.raspberryPiBaseUrl,
+        {
+          channel: channelNumber,
+          rtmpUrl: rtmpUrl,
+        },
+        camera.raspberryPiApiKey,
+      );
+    } catch (err: any) {
+      piStatus = 'MUX_READY_PI_PENDING';
+      const detail =
+        err?.response?.message || err?.message || 'Pi bridge unreachable';
+      piWarning = `Mux playback is ready but the Pi relay did not start (${detail}). You can still open the playback URL; retry start when the Pi is online.`;
+      this.logger.warn(
+        `Start live stream: Pi failed for camera ${camera.id} ch ${channelNumber}: ${detail}`,
+      );
+    }
 
     // 3. Automatically link it to any active tournaments using this camera
     try {
@@ -3479,6 +3491,7 @@ export class RecordingService {
           cameraName: camera.name + (logicalSlot === 2 ? ' (Ch 2)' : ' (Ch 1)'),
           courtNumber: camera.court_number ?? channelNumber,
           playbackUrl: playbackUrl,
+          liveStreamId,
           isLive: true,
         });
 
@@ -3509,6 +3522,8 @@ export class RecordingService {
       }),
       liveStreamId: liveStreamId,
       playbackUrl: playbackUrl,
+      piStatus,
+      warning: piWarning,
     };
   }
 
@@ -3525,25 +3540,49 @@ export class RecordingService {
     }
 
     const channelNumber = dto.channel ?? camera.court_number ?? 1;
+    const logicalSlot = resolveLiveStreamSlot({
+      nvrChannel: channelNumber,
+      courtNumber: camera.court_number,
+      raspberryPiBaseUrl: camera.raspberryPiBaseUrl,
+      logicalChannel:
+        dto.logicalChannel === 1 || dto.logicalChannel === 2
+          ? (dto.logicalChannel as LiveStreamSlot)
+          : undefined,
+    });
+    const actualCameraId = liveStreamCameraId(camera.id, logicalSlot);
+
     const piResult = await this.raspberryPiApiService.stopLiveStream(
       camera.raspberryPiBaseUrl,
       { channel: channelNumber },
       camera.raspberryPiApiKey,
     );
 
+    let muxLiveStreamId = dto.liveStreamId?.trim() || null;
+    if (
+      !muxLiveStreamId ||
+      muxLiveStreamId === 'hardcoded-botanical-live-stream-id'
+    ) {
+      muxLiveStreamId = await this.resolveStoredLiveStreamId(actualCameraId);
+    }
+
+    let muxStatus: string | undefined;
+    if (
+      muxLiveStreamId &&
+      muxLiveStreamId !== 'hardcoded-botanical-live-stream-id'
+    ) {
+      try {
+        await this.muxService.disableLiveStream(muxLiveStreamId);
+        muxStatus = 'MUX_DISABLED';
+      } catch (err: any) {
+        muxStatus = 'MUX_DISABLE_FAILED';
+        this.logger.warn(
+          `Mux disable failed for ${muxLiveStreamId}: ${err.message}`,
+        );
+      }
+    }
+
     // Automatically mark offline in any active tournaments using this camera
     try {
-      const logicalSlot = resolveLiveStreamSlot({
-        nvrChannel: channelNumber,
-        courtNumber: camera.court_number,
-        raspberryPiBaseUrl: camera.raspberryPiBaseUrl,
-        logicalChannel:
-          dto.logicalChannel === 1 || dto.logicalChannel === 2
-            ? (dto.logicalChannel as LiveStreamSlot)
-            : undefined,
-      });
-      const actualCameraId = liveStreamCameraId(camera.id, logicalSlot);
-
       const query = `
         SELECT id, "liveStreams" FROM tournaments 
         WHERE (
@@ -3578,16 +3617,40 @@ export class RecordingService {
       cameraId: camera.id,
       nvrChannel: channelNumber,
       piStatus: piResult.status,
+      muxStatus,
       warning: piResult.warning,
-      logicalChannel: resolveLiveStreamSlot({
-        nvrChannel: channelNumber,
-        courtNumber: camera.court_number,
-        raspberryPiBaseUrl: camera.raspberryPiBaseUrl,
-        logicalChannel:
-          dto.logicalChannel === 1 || dto.logicalChannel === 2
-            ? (dto.logicalChannel as LiveStreamSlot)
-            : undefined,
-      }),
+      logicalChannel: logicalSlot,
     };
+  }
+
+  /** Read Mux live stream id from an active tournament row (fleet stop fallback). */
+  private async resolveStoredLiveStreamId(
+    tournamentCameraId: string,
+  ): Promise<string | null> {
+    try {
+      const rows = await this.dataSource.query(`
+        SELECT "liveStreams" FROM tournaments
+        WHERE status IN ('Upcoming', 'Live')
+      `);
+      for (const row of rows) {
+        const streams = row.liveStreams;
+        if (!Array.isArray(streams)) continue;
+        const match = streams.find(
+          (s: { cameraId?: string; liveStreamId?: string }) =>
+            s.cameraId === tournamentCameraId && s.liveStreamId,
+        );
+        if (
+          match?.liveStreamId &&
+          match.liveStreamId !== 'hardcoded-botanical-live-stream-id'
+        ) {
+          return String(match.liveStreamId);
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(
+        `Could not resolve stored liveStreamId for ${tournamentCameraId}: ${err.message}`,
+      );
+    }
+    return null;
   }
 }

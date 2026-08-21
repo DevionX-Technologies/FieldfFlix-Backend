@@ -77,6 +77,7 @@ export function upsertTournamentLiveStream(
     cameraName: string;
     courtNumber?: number | null;
     playbackUrl: string;
+    liveStreamId?: string;
     isLive: boolean;
   },
 ): any[] {
