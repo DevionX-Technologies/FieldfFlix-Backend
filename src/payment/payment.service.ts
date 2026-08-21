@@ -443,14 +443,24 @@ export class PaymentService {
     userId: string,
     createPaymentDto: CreatePaymentOrderDto,
   ): Promise<PaymentResponseDto> {
-    let savedPayment: PaymentEntity | null = null;
     try {
-      // Convert amount to paise
       const amountInPaise = this.razorpayService.convertRupeesToPaise(
         createPaymentDto.amount,
       );
 
-      // Create payment entity
+      // Razorpay order must exist before INSERT — `payments.razorpay_order_id` is NOT NULL.
+      const receipt = randomUUID().replace(/-/g, '').slice(0, 40);
+      const razorpayOrder = await this.razorpayService.createOrder(
+        amountInPaise,
+        'INR',
+        receipt,
+        {
+          user_id: userId,
+          payment_type: createPaymentDto.payment_type,
+          recording_id: createPaymentDto.recording_id ?? null,
+        },
+      );
+
       const payment = this.paymentRepository.create({
         user_id: userId,
         recording_id: createPaymentDto.recording_id,
@@ -461,26 +471,11 @@ export class PaymentService {
         payment_type: createPaymentDto.payment_type,
         description: createPaymentDto.description,
         metadata: createPaymentDto.metadata ?? null,
+        razorpay_order_id: razorpayOrder.id,
+        expires_at: new Date(Date.now() + 30 * 60 * 1000),
       });
 
-      savedPayment = await this.paymentRepository.save(payment);
-
-      // Create Razorpay order
-      const razorpayOrder = await this.razorpayService.createOrder(
-        amountInPaise,
-        'INR',
-        savedPayment.id,
-        {
-          user_id: userId,
-          payment_id: savedPayment.id,
-          payment_type: createPaymentDto.payment_type,
-        },
-      );
-
-      // Update payment with Razorpay order details
-      savedPayment.razorpay_order_id = razorpayOrder.id;
-      savedPayment.expires_at = new Date(Date.now() + 30 * 60 * 1000);
-      await this.paymentRepository.save(savedPayment);
+      const savedPayment = await this.paymentRepository.save(payment);
 
       this.logger.log(`Payment order created successfully: ${savedPayment.id}`);
 
@@ -496,11 +491,6 @@ export class PaymentService {
         expires_at: savedPayment.expires_at,
       };
     } catch (error) {
-      if (savedPayment?.id) {
-        await this.paymentRepository
-          .remove(savedPayment)
-          .catch(() => undefined);
-      }
       this.logger.error('Failed to create payment order', error);
       throw error;
     }
