@@ -86,6 +86,15 @@ export class StartCourtLiveStreamDto {
   @Type(() => Number)
   @IsNumber()
   channel?: number;
+
+  /** Logical tournament slot: 1 = `_ch1`, 2 = `_ch2` (independent of NVR channel number). */
+  @ApiPropertyOptional({
+    description: 'Logical camera slot (1 or 2) for tournament liveStreams',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  logicalChannel?: number;
 }
 
 export class StopCourtLiveStreamDto {
@@ -99,4 +108,12 @@ export class StopCourtLiveStreamDto {
   @Type(() => Number)
   @IsNumber()
   channel?: number;
+
+  @ApiPropertyOptional({
+    description: 'Logical camera slot (1 or 2) for tournament liveStreams',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  logicalChannel?: number;
 }

@@ -45,13 +45,6 @@ import {
 import { deriveFlickSportFromTurf } from 'src/common/turf-flick-sport.util';
 import { formatDurationToHHMMSS } from 'src/utils/utils';
 import {
-  HOUR_SEC,
-  recordingUnlockBaseInr,
-  recordingUnlockTotalInr,
-  parsePlannedDurationSecFromMetadata,
-  resolveUnlockTierFromRecording,
-} from 'src/utils/recording-pricing';
-import {
   HIGHLIGHT_STATUS,
   HOURLY_RATE,
   MUX_API_BASE_URL,
@@ -73,6 +66,20 @@ import {
   readRecordingNvrChannel,
   resolveNvrChannelsForCamera,
 } from 'src/utils/nvr-channels.util';
+import {
+  HOUR_SEC,
+  recordingUnlockBaseInr,
+  recordingUnlockTotalInr,
+  parsePlannedDurationSecFromMetadata,
+  resolveUnlockTierFromRecording,
+} from 'src/utils/recording-pricing';
+import {
+  liveStreamCameraId,
+  markTournamentLiveStreamOffline,
+  resolveLiveStreamSlot,
+  upsertTournamentLiveStream,
+  type LiveStreamSlot,
+} from 'src/utils/live-stream-slots.util';
 
 /**
  * Service for managing recordings.
@@ -3375,29 +3382,31 @@ export class RecordingService {
 
     // 3. Automatically link it to any active tournaments using this camera
     try {
+      const logicalSlot = resolveLiveStreamSlot({
+        nvrChannel: channelNumber,
+        courtNumber: camera.court_number,
+        raspberryPiBaseUrl: camera.raspberryPiBaseUrl,
+        logicalChannel:
+          dto.logicalChannel === 1 || dto.logicalChannel === 2
+            ? (dto.logicalChannel as LiveStreamSlot)
+            : undefined,
+      });
+      const actualCameraId = liveStreamCameraId(camera.id, logicalSlot);
+
       const query = `
         SELECT id, "liveStreams" FROM tournaments 
         WHERE (
-          "cameraIds"::text LIKE '%${camera.id}%'
+          "cameraIds"::text LIKE $1
         ) AND status IN ('Upcoming', 'Live')
       `;
-      const activeTournaments = await this.dataSource.query(query);
+      const activeTournaments = await this.dataSource.query(query, [
+        `%${camera.id}%`,
+      ]);
 
       for (const t of activeTournaments) {
-        let streams = t.liveStreams || [];
-        // Map to suffix format used by frontend
-        const actualCameraId =
-          channelNumber === 2 ? `${camera.id}_ch2` : `${camera.id}_ch1`;
-
-        // Remove old occurrences
-        streams = streams.filter(
-          (s: any) => s.cameraId !== camera.id && s.cameraId !== actualCameraId,
-        );
-
-        streams.push({
+        const streams = upsertTournamentLiveStream(t.liveStreams || [], {
           cameraId: actualCameraId,
-          cameraName:
-            camera.name + (channelNumber === 2 ? ' (Ch 2)' : ' (Ch 1)'),
+          cameraName: camera.name + (logicalSlot === 2 ? ' (Ch 2)' : ' (Ch 1)'),
           courtNumber: camera.court_number ?? channelNumber,
           playbackUrl: playbackUrl,
           isLive: true,
@@ -3419,6 +3428,15 @@ export class RecordingService {
       cameraId: camera.id,
       courtNumber: camera.court_number ?? channelNumber,
       nvrChannel: channelNumber,
+      logicalChannel: resolveLiveStreamSlot({
+        nvrChannel: channelNumber,
+        courtNumber: camera.court_number,
+        raspberryPiBaseUrl: camera.raspberryPiBaseUrl,
+        logicalChannel:
+          dto.logicalChannel === 1 || dto.logicalChannel === 2
+            ? (dto.logicalChannel as LiveStreamSlot)
+            : undefined,
+      }),
       liveStreamId: liveStreamId,
       playbackUrl: playbackUrl,
     };
@@ -3443,28 +3461,36 @@ export class RecordingService {
       camera.raspberryPiApiKey,
     );
 
-    // Automatically remove it from any active tournaments using this camera
+    // Automatically mark offline in any active tournaments using this camera
     try {
+      const logicalSlot = resolveLiveStreamSlot({
+        nvrChannel: channelNumber,
+        courtNumber: camera.court_number,
+        raspberryPiBaseUrl: camera.raspberryPiBaseUrl,
+        logicalChannel:
+          dto.logicalChannel === 1 || dto.logicalChannel === 2
+            ? (dto.logicalChannel as LiveStreamSlot)
+            : undefined,
+      });
+      const actualCameraId = liveStreamCameraId(camera.id, logicalSlot);
+
       const query = `
         SELECT id, "liveStreams" FROM tournaments 
         WHERE (
-          "cameraIds"::text LIKE '%${camera.id}%'
+          "cameraIds"::text LIKE $1
         ) AND status IN ('Upcoming', 'Live')
       `;
-      const activeTournaments = await this.dataSource.query(query);
+      const activeTournaments = await this.dataSource.query(query, [
+        `%${camera.id}%`,
+      ]);
 
       for (const t of activeTournaments) {
-        let streams = t.liveStreams || [];
-        const originalLength = streams.length;
-
-        const actualCameraId =
-          channelNumber === 2 ? `${camera.id}_ch2` : `${camera.id}_ch1`;
-
-        streams = streams.filter(
-          (s: any) => s.cameraId !== camera.id && s.cameraId !== actualCameraId,
+        const streams = markTournamentLiveStreamOffline(
+          t.liveStreams || [],
+          actualCameraId,
         );
 
-        if (streams.length !== originalLength) {
+        if (JSON.stringify(streams) !== JSON.stringify(t.liveStreams || [])) {
           await this.dataSource.query(
             `UPDATE tournaments SET "liveStreams" = $1 WHERE id = $2`,
             [JSON.stringify(streams), t.id],
@@ -3477,6 +3503,19 @@ export class RecordingService {
       );
     }
 
-    return { success: true, cameraId: camera.id, nvrChannel: channelNumber };
+    return {
+      success: true,
+      cameraId: camera.id,
+      nvrChannel: channelNumber,
+      logicalChannel: resolveLiveStreamSlot({
+        nvrChannel: channelNumber,
+        courtNumber: camera.court_number,
+        raspberryPiBaseUrl: camera.raspberryPiBaseUrl,
+        logicalChannel:
+          dto.logicalChannel === 1 || dto.logicalChannel === 2
+            ? (dto.logicalChannel as LiveStreamSlot)
+            : undefined,
+      }),
+    };
   }
 }
