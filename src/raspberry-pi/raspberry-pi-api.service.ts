@@ -366,7 +366,7 @@ export class RaspberryPiApiService {
     raspberryPiBaseUrl: string,
     payload: StopLiveStreamPayload,
     customApiKey?: string,
-  ): Promise<{ status: string }> {
+  ): Promise<{ status: string; warning?: string }> {
     const targetUrl = this.getLiveBaseUrl(raspberryPiBaseUrl);
     this.logger.log(
       `Calling Pi to stop live stream on Channel ${payload.channel} via ${targetUrl}`,
@@ -379,7 +379,7 @@ export class RaspberryPiApiService {
           'X-API-KEY': this.getLiveApiKey(raspberryPiBaseUrl, customApiKey),
           'Content-Type': 'application/json',
         },
-        15000,
+        8000,
       );
     } catch (error: any) {
       if (error.response?.status === 404) {
@@ -394,6 +394,26 @@ export class RaspberryPiApiService {
         error.response?.data?.message ||
         error.message ||
         'Device unresponsive';
+
+      const errCode = String(error.code ?? '');
+      const isUnreachable =
+        !error.response ||
+        errCode === 'ECONNABORTED' ||
+        errCode === 'ETIMEDOUT' ||
+        errCode === 'ECONNREFUSED' ||
+        errCode === 'ECONNRESET' ||
+        errCode === 'ENOTFOUND' ||
+        errCode === 'EHOSTUNREACH';
+
+      if (isUnreachable) {
+        this.logger.warn(
+          `Stop live stream: Pi unreachable at ${targetUrl}, assuming stopped (${errMsg})`,
+        );
+        return {
+          status: 'STOPPED_ASSUMED',
+          warning: `Pi bridge did not respond (${errMsg}). Stream marked stopped in admin.`,
+        };
+      }
 
       this.logger.error(
         `Error stopping live stream on Pi (${targetUrl}): ${errMsg}`,

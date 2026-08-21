@@ -3525,7 +3525,7 @@ export class RecordingService {
     }
 
     const channelNumber = dto.channel ?? camera.court_number ?? 1;
-    await this.raspberryPiApiService.stopLiveStream(
+    const piResult = await this.raspberryPiApiService.stopLiveStream(
       camera.raspberryPiBaseUrl,
       { channel: channelNumber },
       camera.raspberryPiApiKey,
@@ -3577,6 +3577,8 @@ export class RecordingService {
       success: true,
       cameraId: camera.id,
       nvrChannel: channelNumber,
+      piStatus: piResult.status,
+      warning: piResult.warning,
       logicalChannel: resolveLiveStreamSlot({
         nvrChannel: channelNumber,
         courtNumber: camera.court_number,
