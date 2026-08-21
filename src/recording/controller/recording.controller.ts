@@ -57,6 +57,7 @@ import { RecordingService } from '../service/recording.service';
 import { RecordingHighlightEngagementService } from '../service/recording-highlight-engagement.service';
 import { MuxService } from '../../mux/mux.service';
 import { ActiveHighlightDto } from '../dto/active-highlight.dto';
+import { resolvePublicAppBaseUrl } from 'src/utils/public-app-base-url.util';
 
 /**
  * Controller for handling recording-related requests.
@@ -731,12 +732,9 @@ export class RecordingController {
     );
 
     // Public origin that serves `GET /shared/media/:token` (SharedMediaRootController).
-    // Prefer `APP_BASE_URL` in env; if unset (misconfigured deploy), use production API
-    // so links are not silently wrong.
-    const rawBase =
-      this.configService.get<string>('APP_BASE_URL')?.trim() ||
-      'https://api.fieldflicks.com';
-    const appBaseUrl = rawBase.replace(/\/+$/, '');
+    const appBaseUrl = resolvePublicAppBaseUrl(
+      this.configService.get<string>('APP_BASE_URL'),
+    );
     const shareableLink = `${appBaseUrl}/shared/media/${share_token}`;
 
     return { shareableLink };
