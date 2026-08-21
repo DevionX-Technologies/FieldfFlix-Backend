@@ -735,7 +735,7 @@ export class RecordingController {
     // so links are not silently wrong.
     const rawBase =
       this.configService.get<string>('APP_BASE_URL')?.trim() ||
-      'https://api.devionx.com';
+      'https://api.fieldflicks.com';
     const appBaseUrl = rawBase.replace(/\/+$/, '');
     const shareableLink = `${appBaseUrl}/shared/media/${share_token}`;
 

@@ -63,6 +63,10 @@ import { PointsService } from 'src/points/points.service';
 import { PointEventType } from 'src/points/entities/point-event.entity';
 import { PricingConfigService } from 'src/payment/pricing-config.service';
 import {
+  isBotanicalVenueLabel,
+  resolveBotanicalLogicalCourtNumber,
+} from 'src/utils/botanical-logical-court.util';
+import {
   readRecordingNvrChannel,
   resolveNvrChannelsForCamera,
 } from 'src/utils/nvr-channels.util';
@@ -3039,6 +3043,28 @@ export class RecordingService {
       // Ignore if column already allows nulls or permissions don't allow ALTER
     }
 
+    if (resolvedUserId) {
+      const priorClaim = await this.recordingRepositoryForMedia.findOne({
+        where: {
+          cameraId: primaryCamera.id,
+          userId: resolvedUserId,
+          startTime: startDate,
+          endTime: endDate,
+          status: Not('failed'),
+        },
+        order: { createdAt: 'DESC' },
+      });
+
+      if (priorClaim) {
+        throw new ConflictException({
+          message:
+            'You have already claimed this match for this court and time window.',
+          recordingId: priorClaim.id,
+          status: priorClaim.status,
+        });
+      }
+    }
+
     const createdRecordings: Recording[] = [];
 
     for (const camera of camerasToExtract) {
@@ -3050,13 +3076,18 @@ export class RecordingService {
       }
 
       const nvrChannels = resolveNvrChannelsForCamera(camera);
+      const logicalCourt = isBotanicalVenueLabel(camera.turf?.name)
+        ? resolveBotanicalLogicalCourtNumber(camera)
+        : camera.court_number;
       this.logger.log(
-        `On-demand extraction for camera ${camera.id} (${camera.name ?? 'unnamed'}, court_number=${camera.court_number ?? 'null'}) → NVR channels [${nvrChannels.join(', ')}]`,
+        `On-demand extraction for camera ${camera.id} (${camera.name ?? 'unnamed'}, court_number=${camera.court_number ?? 'null'}, logical_court=${logicalCourt ?? 'null'}) → NVR channels [${nvrChannels.join(', ')}]`,
       );
       const defaultChannel =
-        camera.court_number && camera.court_number > 0
-          ? camera.court_number
-          : 1;
+        logicalCourt != null && Number(logicalCourt) > 0
+          ? Number(logicalCourt)
+          : camera.court_number && camera.court_number > 0
+            ? camera.court_number
+            : 1;
 
       for (const channelNumber of nvrChannels) {
         const completedRows = await this.recordingRepositoryForMedia.find({
@@ -3140,7 +3171,7 @@ export class RecordingService {
         const { uploadUrl } = await this.muxService.createDirectUpload(
           recording.id,
         );
-        const callbackWebhookUrl = `${process.env.APP_BASE_URL || 'https://api.devionx.com'}/recording/pi-callback`;
+        const callbackWebhookUrl = `${process.env.APP_BASE_URL || 'https://api.fieldflicks.com'}/recording/pi-callback`;
 
         this.logger.log(
           `Dispatching on-demand extraction for Recording ${recording.id} to Pi (${camera.raspberryPiBaseUrl}) on NVR channel ${channelNumber} (Camera: ${camera.name})`,

@@ -3,6 +3,10 @@ import {
   botanicalNvrChannels,
   isBotanicalPiBaseUrl,
 } from 'src/utils/live-stream-slots.util';
+import {
+  isBotanicalVenueLabel,
+  resolveBotanicalLogicalCourtNumber,
+} from 'src/utils/botanical-logical-court.util';
 
 const PICKPAD_PATTERN = /pick\s*pad|pickpad|aim sports/i;
 
@@ -40,11 +44,11 @@ export function resolveNvrChannelsForCamera(
   }
 
   const isBotanical =
-    (camera.turf?.name ?? '').toLowerCase().includes('botanical') ||
+    isBotanicalVenueLabel(camera.turf?.name) ||
     isBotanicalPiBaseUrl(camera.raspberryPiBaseUrl);
 
   if (isBotanical) {
-    const courtNumber = camera.court_number ?? 0;
+    const courtNumber = resolveBotanicalLogicalCourtNumber(camera);
     const map = botanicalNvrChannels(courtNumber);
     if (map) {
       return [map.ch1, map.ch2];
