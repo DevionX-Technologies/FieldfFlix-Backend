@@ -6,6 +6,6 @@ import AwsS3Provider from '../providers/s3Bucket';
 @Module({
   controllers: [FileServiceController],
   providers: [FileServiceService, AwsS3Provider],
-  exports: [FileServiceService],
+  exports: [FileServiceService, AwsS3Provider],
 })
 export class FileServiceModule {}
