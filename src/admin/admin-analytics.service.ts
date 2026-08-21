@@ -433,9 +433,58 @@ export class AdminAnalyticsService {
     }
 
     // Return only active venues with registered courts
-    return Array.from(venueMap.values()).filter(
+    const finalFleet = Array.from(venueMap.values()).filter(
       (v) => v.courts && v.courts.length > 0,
     );
+
+    // Patch in live streaming state from active tournaments
+    try {
+      const activeTournaments = await this.dataSource.query(`
+        SELECT "liveStreams" FROM tournaments 
+        WHERE status IN ('Live', 'Upcoming')
+      `);
+
+      const liveCameraIds = new Set<string>();
+      const liveCh2CameraIds = new Set<string>();
+      const playbackUrls = new Map<string, string>();
+
+      for (const t of activeTournaments) {
+        if (t.liveStreams && Array.isArray(t.liveStreams)) {
+          for (const s of t.liveStreams) {
+            if (s.isLive && s.cameraId) {
+              if (s.cameraId.endsWith('_ch2')) {
+                const baseId = s.cameraId.replace('_ch2', '');
+                liveCh2CameraIds.add(baseId);
+                playbackUrls.set(`${baseId}_ch2`, s.playbackUrl || '');
+              } else {
+                const baseId = s.cameraId.replace('_ch1', '');
+                liveCameraIds.add(baseId);
+                playbackUrls.set(`${baseId}_ch1`, s.playbackUrl || '');
+              }
+            }
+          }
+        }
+      }
+
+      for (const v of finalFleet) {
+        for (const c of v.courts) {
+          if (liveCameraIds.has(c.cameraId)) {
+            c.isLiveStreaming = true;
+            c.status = 'STREAMING';
+            c.livePlaybackUrl = playbackUrls.get(`${c.cameraId}_ch1`);
+          }
+          if (liveCh2CameraIds.has(c.cameraId)) {
+            c.isLiveStreamingCh2 = true;
+            c.status = 'STREAMING';
+            c.livePlaybackUrlCh2 = playbackUrls.get(`${c.cameraId}_ch2`);
+          }
+        }
+      }
+    } catch (err: any) {
+      this.logger.warn(`Failed to patch live streams: ${err.message}`);
+    }
+
+    return finalFleet;
   }
 
   async updateCameraMapping(

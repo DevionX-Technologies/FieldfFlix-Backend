@@ -3343,10 +3343,19 @@ export class RecordingService {
 
       for (const t of activeTournaments) {
         let streams = t.liveStreams || [];
-        streams = streams.filter((s: any) => s.cameraId !== camera.id);
+        // Map to suffix format used by frontend
+        const actualCameraId =
+          channelNumber === 2 ? `${camera.id}_ch2` : `${camera.id}_ch1`;
+
+        // Remove old occurrences
+        streams = streams.filter(
+          (s: any) => s.cameraId !== camera.id && s.cameraId !== actualCameraId,
+        );
+
         streams.push({
-          cameraId: camera.id,
-          cameraName: camera.name,
+          cameraId: actualCameraId,
+          cameraName:
+            camera.name + (channelNumber === 2 ? ' (Ch 2)' : ' (Ch 1)'),
           courtNumber: camera.court_number ?? channelNumber,
           playbackUrl: playbackUrl,
           isLive: true,
@@ -3403,7 +3412,13 @@ export class RecordingService {
       for (const t of activeTournaments) {
         let streams = t.liveStreams || [];
         const originalLength = streams.length;
-        streams = streams.filter((s: any) => s.cameraId !== camera.id);
+
+        const actualCameraId =
+          channelNumber === 2 ? `${camera.id}_ch2` : `${camera.id}_ch1`;
+
+        streams = streams.filter(
+          (s: any) => s.cameraId !== camera.id && s.cameraId !== actualCameraId,
+        );
 
         if (streams.length !== originalLength) {
           await this.dataSource.query(
