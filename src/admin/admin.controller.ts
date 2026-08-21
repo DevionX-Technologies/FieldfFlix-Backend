@@ -19,6 +19,7 @@ import { RecordingService } from 'src/recording/service/recording.service';
 import { UserService } from 'src/user/user.service';
 import { AdminRoleService } from './admin-role.service';
 import { AddAdminPhoneDto } from './dto/add-admin-phone.dto';
+import { Public } from 'src/decorators/public.decorator';
 
 @Controller('admin')
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
@@ -33,6 +34,83 @@ export class AdminController {
     @Inject(forwardRef(() => RecordingService))
     private readonly recordingService: RecordingService,
   ) {}
+
+  @Public()
+  @Get('migrate-db')
+  async migrateDb() {
+    const { Client } = require('pg');
+
+    const sourceConfig = {
+      host: 'ep-green-paper-aysc1pqc.c-5.us-east-2.aws.neon.tech',
+      port: 5432,
+      user: 'neondb_owner',
+      password: 'npg_OwyVHutfN28n',
+      database: 'neondb',
+      ssl: { rejectUnauthorized: false }
+    };
+
+    const destConfig = {
+      host: 'fieldflicks-production-db.czk0ioma2e3z.ap-south-1.rds.amazonaws.com',
+      port: 5432,
+      user: 'fieldflicks',
+      password: 'curJqH6SwDwEFSbawMva',
+      database: 'fieldflicks-prod',
+      ssl: { rejectUnauthorized: false }
+    };
+
+    const source = new Client(sourceConfig);
+    const dest = new Client(destConfig);
+
+    try {
+      await source.connect();
+      await dest.connect();
+
+      await dest.query("SET session_replication_role = 'replica';");
+
+      const tablesRes = await source.query(`
+        SELECT table_name 
+        FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name != 'spatial_ref_sys'
+        AND table_type = 'BASE TABLE';
+      `);
+      const tables = tablesRes.rows.map(r => r.table_name);
+
+      for (const table of tables) {
+        const dataRes = await source.query(`SELECT * FROM "${table}"`);
+        const rows = dataRes.rows;
+
+        if (rows.length > 0) {
+          try {
+              await dest.query(`TRUNCATE TABLE "${table}" CASCADE;`);
+          } catch(e) {
+              await dest.query(`DELETE FROM "${table}";`);
+          }
+
+          const columns = Object.keys(rows[0]);
+          const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ');
+          const insertQuery = `INSERT INTO "${table}" ("${columns.join('", "')}") VALUES (${placeholders})`;
+
+          for (const row of rows) {
+            const values = columns.map(col => row[col]);
+            await dest.query(insertQuery, values);
+          }
+        } else {
+          try {
+              await dest.query(`TRUNCATE TABLE "${table}" CASCADE;`);
+          } catch(e) {}
+        }
+      }
+
+      await dest.query("SET session_replication_role = 'origin';");
+      return { success: true, message: 'Migration complete!' };
+    } catch (err) {
+      return { success: false, message: 'Migration error: ' + err.message };
+    } finally {
+      await source.end();
+      await dest.end();
+    }
+  }
 
   /** Any authenticated user: whether they have admin UI access. */
   @Get('me')
