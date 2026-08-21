@@ -19,6 +19,7 @@ import { MessageStatus, NotificationType } from 'src/constant/enum';
 import { PointsService } from 'src/points/points.service';
 import { Camera } from '../../camera/camera.entity';
 import { ActiveHighlightDto } from '../dto/active-highlight.dto';
+import { S3HighlightSyncService } from './s3-highlight-sync.service';
 @Injectable()
 export class RecordingHighlightsService {
   private readonly logger = new Logger(RecordingHighlightsService.name);
@@ -29,6 +30,7 @@ export class RecordingHighlightsService {
     private readonly enqueueService: ClipProcessingEnqueueService,
     private readonly fireBaseNotificationService: FireBaseNotificationService,
     private readonly pointsService: PointsService,
+    private readonly s3HighlightSyncService: S3HighlightSyncService,
   ) {}
 
   /**
@@ -146,6 +148,17 @@ export class RecordingHighlightsService {
       return 0;
     }
 
+    let attachedCount =
+      await this.s3HighlightSyncService.attachS3HighlightsInTimeWindow(
+        targetRecordingId,
+        cameraId,
+        startTime,
+        endTime,
+        (seconds) => this.formatRelativeTime(seconds),
+        (recordingStart, clickTime) =>
+          this.calculateRelativeSeconds(recordingStart, clickTime),
+      );
+
     const existingRows = await this.dataSource.manager.find(
       RecordingHighlights,
       {
@@ -168,7 +181,6 @@ export class RecordingHighlightsService {
       .getMany();
 
     const seenClickTimes = new Set<number>();
-    let attachedCount = 0;
     let maxProcessingOrder =
       existingRows.reduce(
         (max, row) => Math.max(max, row.processing_order ?? 0),

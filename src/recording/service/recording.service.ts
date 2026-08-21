@@ -2009,7 +2009,9 @@ export class RecordingService {
         return false;
       }
       const hasStream =
-        Boolean(h.playback_id?.trim?.()) || Boolean(h.mux_public_playback_url);
+        Boolean(h.playback_id?.trim?.()) ||
+        Boolean(h.mux_public_playback_url) ||
+        Boolean(h.s3path?.trim?.());
       if (!hasStream) return false;
       return (
         st === HIGHLIGHT_STATUS.READY || st === HIGHLIGHT_STATUS.CLIP_CREATED
@@ -2034,7 +2036,11 @@ export class RecordingService {
           h.mux_public_playback_url ??
           (h.playback_id
             ? `https://stream.mux.com/${h.playback_id}.m3u8`
-            : null),
+            : h.s3path
+              ? h.s3path.startsWith('http')
+                ? h.s3path
+                : `https://${process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets'}.s3.${process.env.AWS_S3_REGION || process.env.AWS_REGION || 'eu-north-1'}.amazonaws.com/${h.s3path.split('/').map(encodeURIComponent).join('/')}`
+              : null),
         thumbnail_url: h.playback_id
           ? `https://image.mux.com/${h.playback_id}/thumbnail.jpg?time=2`
           : null,

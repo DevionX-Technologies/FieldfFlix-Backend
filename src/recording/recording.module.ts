@@ -14,6 +14,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { UserModule } from 'src/user/user.module';
 import { RecordingService } from './service/recording.service';
 import { RecordingHighlightsService } from './service/recording-highlight.service';
+import { S3HighlightSyncService } from './service/s3-highlight-sync.service';
 import { RecordingHighlightEngagementService } from './service/recording-highlight-engagement.service';
 import { RecordingPaymentService } from './service/recording-payment.service';
 import { MuxWebhookController } from './controller/mux-webhook.controller';
@@ -53,6 +54,7 @@ import { PointsModule } from 'src/points/points.module';
     RecordingService,
     RaspberryPiApiService,
     RecordingHighlightsService,
+    S3HighlightSyncService,
     RecordingHighlightEngagementService,
     RecordingPaymentService,
   ],

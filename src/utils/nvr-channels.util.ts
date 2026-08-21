@@ -1,4 +1,8 @@
 import { Camera } from 'src/camera/camera.entity';
+import {
+  botanicalNvrChannels,
+  isBotanicalPiBaseUrl,
+} from 'src/utils/live-stream-slots.util';
 
 const PICKPAD_PATTERN = /pick\s*pad|pickpad|aim sports/i;
 
@@ -18,7 +22,10 @@ function parseDualChannelCameraIds(): Set<string> {
  * share one Pi with NVR channels 1 and 2.
  */
 export function resolveNvrChannelsForCamera(
-  camera: Pick<Camera, 'id' | 'name' | 'court_number'> & {
+  camera: Pick<
+    Camera,
+    'id' | 'name' | 'court_number' | 'raspberryPiBaseUrl'
+  > & {
     turf?: { name?: string | null } | null;
   },
 ): number[] {
@@ -30,6 +37,18 @@ export function resolveNvrChannelsForCamera(
   const label = `${camera.turf?.name ?? ''} ${camera.name ?? ''}`;
   if (PICKPAD_PATTERN.test(label)) {
     return [1, 2];
+  }
+
+  const isBotanical =
+    (camera.turf?.name ?? '').toLowerCase().includes('botanical') ||
+    isBotanicalPiBaseUrl(camera.raspberryPiBaseUrl);
+
+  if (isBotanical) {
+    const courtNumber = camera.court_number ?? 0;
+    const map = botanicalNvrChannels(courtNumber);
+    if (map) {
+      return [map.ch1, map.ch2];
+    }
   }
 
   const defaultChannel =
