@@ -45,7 +45,7 @@ import {
 import { deriveFlickSportFromTurf } from 'src/common/turf-flick-sport.util';
 import { formatDurationToHHMMSS } from 'src/utils/utils';
 import {
-  HALF_HOUR_SEC,
+  HOUR_SEC,
   recordingUnlockBaseInr,
   recordingUnlockTotalInr,
   parsePlannedDurationSecFromMetadata,
@@ -1420,8 +1420,7 @@ export class RecordingService {
         let gameDuration = formatDurationToHHMMSS(0);
         const unlockTier = resolveUnlockTierFromRecording(recording);
         const plannedSec =
-          parsePlannedDurationSecFromMetadata(recording.metadata) ??
-          HALF_HOUR_SEC;
+          parsePlannedDurationSecFromMetadata(recording.metadata) ?? HOUR_SEC;
         const config = this.pricingConfigService.getConfig();
         const unlockBase = recordingUnlockBaseInr(
           unlockTier as 'cricket' | 'pickleball' | 'padel',
@@ -3297,7 +3296,9 @@ export class RecordingService {
     const channelNumber = dto.channel ?? camera.court_number ?? 1;
 
     // Hardcoded Mux keys for Botanical Gardens provided by the Pi team
-    const isBotanical = camera.raspberryPiBaseUrl.includes('court17-1');
+    const isBotanical =
+      camera.raspberryPiBaseUrl.includes('court17-1') ||
+      camera.raspberryPiBaseUrl.includes('cpu.taild82368.ts.net');
 
     let rtmpUrl = '';
     let liveStreamId = '';

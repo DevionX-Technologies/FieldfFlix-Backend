@@ -31,7 +31,7 @@ import { CommonService } from 'src/common/service/common.service';
 import { HOURLY_RATE } from 'src/constant/constant';
 
 import {
-  HALF_HOUR_SEC,
+  HOUR_SEC,
   recordingUnlockBaseInr,
   recordingUnlockTotalInr,
   parsePlannedDurationSecFromMetadata,
@@ -78,7 +78,7 @@ export class PaymentService {
   } {
     const tier = resolveUnlockTierFromRecording(recording);
     const plannedSec =
-      parsePlannedDurationSecFromMetadata(recording.metadata) ?? HALF_HOUR_SEC;
+      parsePlannedDurationSecFromMetadata(recording.metadata) ?? HOUR_SEC;
     const base = recordingUnlockBaseInr(tier, plannedSec, config);
     const total = recordingUnlockTotalInr(base, config);
     return { tier, base, total };
@@ -331,6 +331,8 @@ export class PaymentService {
     gst_rate: number;
     tier: RecordingUnlockSport;
     has_paid_access: boolean;
+    planned_duration_sec: number;
+    billed_hours: number;
   }> {
     const tokenData = await this.commonService.extractDataFromToken(req);
 
@@ -343,8 +345,11 @@ export class PaymentService {
     }
 
     const config = this.pricingConfigService.getConfig();
+    const plannedSec =
+      parsePlannedDurationSecFromMetadata(recording.metadata) ?? HOUR_SEC;
     const { tier, base, total } = this.unlockTierAndAmounts(recording, config);
     const baseRounded = Math.round(base);
+    const billedHours = Math.max(1, Math.ceil(plannedSec / HOUR_SEC));
 
     const existingPayment = await this.paymentRepository.findOne({
       where: {
@@ -365,6 +370,8 @@ export class PaymentService {
       gst_rate: config.gst_rate,
       tier,
       has_paid_access: hasPaidAccess,
+      planned_duration_sec: plannedSec,
+      billed_hours: billedHours,
     };
   }
 

@@ -323,14 +323,18 @@ export class PaymentController {
     } catch (error: any) {
       this.paymentService['logger'].error(
         'Payment order creation failed',
-        error.stack || error,
+        error?.stack || error,
       );
       if (error instanceof HttpException) {
         throw error;
       }
+      const detail =
+        error?.response?.message ||
+        error?.message ||
+        'Failed to create payment order';
       throw new HttpException(
-        'Failed to create payment order',
-        HttpStatus.INTERNAL_SERVER_ERROR,
+        typeof detail === 'string' ? detail : 'Failed to create payment order',
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
   }
