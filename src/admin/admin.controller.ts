@@ -176,6 +176,23 @@ export class AdminController {
     return this.adminAnalytics.updateCameraMapping(id, body);
   }
 
+  /** Hide or show entire venue(s) in the athlete app (cascades to all courts). */
+  @Public()
+  @Put('venues/visibility')
+  async setVenuesAppVisibility(
+    @Body()
+    body: { turfIds: string[]; hidden_from_app: boolean },
+    @Req() req: Request & { user?: ILocalLoginPayload },
+  ) {
+    if (req.user?.user_id) {
+      await this.assertAdmin(req.user.user_id);
+    }
+    return this.adminAnalytics.setVenuesAppVisibility(
+      body.turfIds,
+      body.hidden_from_app,
+    );
+  }
+
   /** Create/Add new court device mapping */
   @Public()
   @Post('cameras')

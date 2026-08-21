@@ -5,7 +5,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, Repository, In } from 'typeorm';
 import axios from 'axios';
 // S3 SDK imports removed as we migrated to Mux
 import { User } from 'src/user/entities/user.entity';
@@ -398,12 +398,20 @@ export class AdminAnalyticsService {
       if (!venueMap.has(cleanName)) {
         venueMap.set(cleanName, {
           turfId: t.id,
+          turfIds: [t.id],
           turfName: cleanName,
           city: t.city || 'Mumbai',
           address: t.address_line || cleanName,
           sportsSupported: t.sports_supported || ['Pickleball'],
+          hiddenFromApp: !!t.hidden_from_app,
           courts: [],
         });
+      } else {
+        const venue = venueMap.get(cleanName);
+        if (!venue.turfIds.includes(t.id)) {
+          venue.turfIds.push(t.id);
+        }
+        venue.hiddenFromApp = venue.hiddenFromApp || !!t.hidden_from_app;
       }
     }
 
@@ -486,6 +494,12 @@ export class AdminAnalyticsService {
       this.logger.warn(`Failed to patch live streams: ${err.message}`);
     }
 
+    for (const v of finalFleet) {
+      if (!v.hiddenFromApp && v.courts?.length) {
+        v.hiddenFromApp = v.courts.every((c: any) => c.hiddenFromApp);
+      }
+    }
+
     return finalFleet;
   }
 
@@ -548,6 +562,59 @@ export class AdminAnalyticsService {
     });
 
     return this.cameraRepo.save(newCam);
+  }
+
+  /**
+   * Hide or show entire venue(s) in the athlete app. Resolves duplicate-name
+   * turf rows and cascades hidden_from_app to every court camera at those turfs.
+   */
+  async setVenuesAppVisibility(
+    turfIds: string[],
+    hiddenFromApp: boolean,
+  ): Promise<{
+    updatedTurfs: number;
+    updatedCameras: number;
+    hiddenFromApp: boolean;
+  }> {
+    if (!Array.isArray(turfIds) || turfIds.length === 0) {
+      throw new BadRequestException('At least one turfId is required');
+    }
+
+    const resolvedTurfIds = new Set<string>();
+
+    for (const turfId of turfIds) {
+      const turf = await this.turfRepo.findOne({ where: { id: turfId } });
+      if (!turf) {
+        throw new NotFoundException(`Turf ${turfId} not found`);
+      }
+
+      const cleanName = (turf.name || '').trim();
+      const siblings = await this.turfRepo
+        .createQueryBuilder('turf')
+        .where('TRIM(turf.name) = :cleanName', { cleanName })
+        .getMany();
+
+      for (const sibling of siblings) {
+        resolvedTurfIds.add(sibling.id);
+      }
+    }
+
+    const allTurfIds = Array.from(resolvedTurfIds);
+    await this.turfRepo.update(
+      { id: In(allTurfIds) },
+      { hidden_from_app: hiddenFromApp },
+    );
+
+    const cameraUpdate = await this.cameraRepo.update(
+      { turfId: In(allTurfIds) },
+      { hidden_from_app: hiddenFromApp },
+    );
+
+    return {
+      updatedTurfs: allTurfIds.length,
+      updatedCameras: cameraUpdate.affected ?? 0,
+      hiddenFromApp,
+    };
   }
 
   async testPiConnectivity(

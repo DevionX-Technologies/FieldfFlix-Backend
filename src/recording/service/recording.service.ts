@@ -2789,16 +2789,14 @@ export class RecordingService {
       .andWhere(
         "RIGHT(REGEXP_REPLACE(COALESCE(user.phone_number, ''), '\\D', '', 'g'), 10) = :phoneLast10",
         { phoneLast10 },
-      );
+      )
+      .andWhere('camera.hidden_from_app = false')
+      .andWhere('(turf.hidden_from_app = false OR turf.id IS NULL)');
 
     if (cameraId) {
       qb.andWhere('recording.cameraId = :cameraId', { cameraId });
-      qb.andWhere('camera.hidden_from_app = false');
     } else if (courtNumber != null && courtNumber > 0) {
       qb.andWhere('camera.court_number = :courtNumber', { courtNumber });
-      qb.andWhere('camera.hidden_from_app = false');
-    } else {
-      qb.andWhere('camera.hidden_from_app = false');
     }
 
     return qb.getMany();
@@ -3010,6 +3008,12 @@ export class RecordingService {
     if (primaryCamera.hidden_from_app) {
       throw new ForbiddenException(
         'This court is not available in the app yet. Please choose another court or ask venue staff.',
+      );
+    }
+
+    if (primaryCamera.turf?.hidden_from_app) {
+      throw new ForbiddenException(
+        'This venue is not available in the app yet. Please choose another venue or ask venue staff.',
       );
     }
 

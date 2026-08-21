@@ -297,6 +297,9 @@ export class TurfsService {
     this.applyGeoFilters(queryBuilder, query);
 
     queryBuilder.andWhere('turf.is_active = :is_active', { is_active: true });
+    queryBuilder.andWhere('turf.hidden_from_app = :hidden_from_app', {
+      hidden_from_app: false,
+    });
   }
 
   private applyBasicFilters(
@@ -529,6 +532,11 @@ export class TurfsService {
 
     if (!turf) {
       this.logger.error(`Turf not found with ID: ${turfId}`);
+      return null;
+    }
+
+    if (turf.hidden_from_app) {
+      this.logger.warn(`Turf ${turfId} is hidden from app`);
       return null;
     }
 

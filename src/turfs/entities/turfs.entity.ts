@@ -89,6 +89,10 @@ export class TurfEntity {
   @Column({ default: true })
   is_active: boolean;
 
+  /** When true, venue and all its courts are omitted from athlete app discovery. */
+  @Column({ default: false })
+  hidden_from_app: boolean;
+
   @Column({ length: 20, nullable: true })
   contact_phone: string;
 
