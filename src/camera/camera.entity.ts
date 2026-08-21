@@ -31,6 +31,10 @@ export class Camera {
   @Column({ type: 'integer', nullable: true })
   court_number: number | null;
 
+  /** When true, court is omitted from athlete app court lists, QR resolve, and new extractions. */
+  @Column({ default: false })
+  hidden_from_app: boolean;
+
   @ManyToOne(() => TurfEntity)
   @JoinColumn({ name: 'turfId' })
   turf: TurfEntity;

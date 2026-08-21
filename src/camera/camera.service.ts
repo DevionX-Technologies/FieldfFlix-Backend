@@ -14,6 +14,8 @@ interface PaginationParams {
   page?: number;
   limit?: number;
   turfId?: string;
+  /** When true (default), omit courts hidden from the athlete app. */
+  appVisibleOnly?: boolean;
 }
 
 /**
@@ -42,9 +44,12 @@ export class CameraService {
    * @returns A promise that resolves to a paginated list of camera entities.
    */
   async findAll(params: PaginationParams): Promise<PaginationResult<Camera>> {
-    const { page = 1, limit = 10, turfId } = params;
+    const { page = 1, limit = 10, turfId, appVisibleOnly = true } = params;
 
-    const whereCondition = turfId ? { turfId } : {};
+    const whereCondition: Record<string, unknown> = turfId ? { turfId } : {};
+    if (appVisibleOnly) {
+      whereCondition.hidden_from_app = false;
+    }
 
     const [data, total] = await this.cameraRepository.findAndCount({
       where: whereCondition,
@@ -60,9 +65,17 @@ export class CameraService {
    * @returns A promise that resolves to the camera entity.
    * @throws NotFoundException if the camera with the given ID is not found.
    */
-  async findOne(id: string): Promise<Camera> {
+  async findOne(
+    id: string,
+    options?: { includeHidden?: boolean },
+  ): Promise<Camera> {
+    const includeHidden = options?.includeHidden ?? false;
+
     const camera = await this.cameraRepository.findOne({ where: { id } });
     if (camera) {
+      if (!includeHidden && camera.hidden_from_app) {
+        throw new NotFoundException(`Camera with ID ${id} not found`);
+      }
       return camera;
     }
 
@@ -72,6 +85,9 @@ export class CameraService {
         where: { id: legacyResolvedId },
       });
       if (legacyCamera) {
+        if (!includeHidden && legacyCamera.hidden_from_app) {
+          throw new NotFoundException(`Camera with ID ${id} not found`);
+        }
         return legacyCamera;
       }
     }

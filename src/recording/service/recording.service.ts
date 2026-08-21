@@ -2793,8 +2793,12 @@ export class RecordingService {
 
     if (cameraId) {
       qb.andWhere('recording.cameraId = :cameraId', { cameraId });
+      qb.andWhere('camera.hidden_from_app = false');
     } else if (courtNumber != null && courtNumber > 0) {
       qb.andWhere('camera.court_number = :courtNumber', { courtNumber });
+      qb.andWhere('camera.hidden_from_app = false');
+    } else {
+      qb.andWhere('camera.hidden_from_app = false');
     }
 
     return qb.getMany();
@@ -3001,6 +3005,12 @@ export class RecordingService {
 
     if (!primaryCamera) {
       throw new NotFoundException(`Camera not found with ID: ${dto.cameraId}`);
+    }
+
+    if (primaryCamera.hidden_from_app) {
+      throw new ForbiddenException(
+        'This court is not available in the app yet. Please choose another court or ask venue staff.',
+      );
     }
 
     // Extract only the camera the user selected. Dual-angle courts are handled

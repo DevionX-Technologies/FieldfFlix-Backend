@@ -426,6 +426,7 @@ export class AdminAnalyticsService {
             name: c.name || `Court ${c.court_number || 1}`,
             raspberryPiBaseUrl: c.raspberryPiBaseUrl || null,
             raspberryPiApiKey: c.raspberryPiApiKey || null,
+            hiddenFromApp: !!c.hidden_from_app,
             isConfigured,
             status: isConfigured ? 'ONLINE' : 'UNCONFIGURED',
           });
@@ -495,6 +496,7 @@ export class AdminAnalyticsService {
       court_number?: number;
       raspberryPiBaseUrl?: string;
       raspberryPiApiKey?: string;
+      hidden_from_app?: boolean;
     },
   ) {
     const camera = await this.cameraRepo.findOne({ where: { id: cameraId } });
@@ -513,6 +515,9 @@ export class AdminAnalyticsService {
       camera.raspberryPiApiKey = dto.raspberryPiApiKey
         ? dto.raspberryPiApiKey.trim()
         : null;
+    }
+    if (dto.hidden_from_app !== undefined) {
+      camera.hidden_from_app = dto.hidden_from_app;
     }
 
     return this.cameraRepo.save(camera);

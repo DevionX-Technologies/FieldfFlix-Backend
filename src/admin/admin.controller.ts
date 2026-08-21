@@ -35,7 +35,15 @@ export class UpdatePricingConfigDto {
 
   @IsOptional()
   @IsNumber()
+  cricket_half_hourly_rate?: number;
+
+  @IsOptional()
+  @IsNumber()
   pickleball_hourly_rate?: number;
+
+  @IsOptional()
+  @IsNumber()
+  pickleball_half_hourly_rate?: number;
 
   @IsOptional()
   @IsNumber()
@@ -43,7 +51,15 @@ export class UpdatePricingConfigDto {
 
   @IsOptional()
   @IsNumber()
+  padel_half_hourly_rate?: number;
+
+  @IsOptional()
+  @IsNumber()
   default_hourly_rate?: number;
+
+  @IsOptional()
+  @IsNumber()
+  default_half_hourly_rate?: number;
 
   @IsOptional()
   @IsNumber()
@@ -145,7 +161,13 @@ export class AdminController {
   async updateCameraMapping(
     @Param('id') id: string,
     @Body()
-    body: { name?: string; court_number?: number; raspberryPiBaseUrl?: string },
+    body: {
+      name?: string;
+      court_number?: number;
+      raspberryPiBaseUrl?: string;
+      raspberryPiApiKey?: string;
+      hidden_from_app?: boolean;
+    },
     @Req() req: Request & { user?: ILocalLoginPayload },
   ) {
     if (req.user?.user_id) {
