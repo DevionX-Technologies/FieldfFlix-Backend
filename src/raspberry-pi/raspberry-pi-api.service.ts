@@ -6,6 +6,10 @@ import {
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
+import * as dns from 'node:dns';
+import { lookup } from 'node:dns/promises';
+import * as https from 'node:https';
+import type { AxiosRequestConfig } from 'axios';
 
 export interface StartRecordingResponse {
   recordingId: string;
@@ -97,6 +101,100 @@ export class RaspberryPiApiService {
   constructor(private readonly httpService: HttpService) {}
 
   /**
+   * ECS/VPC DNS sometimes fails to resolve Tailscale Funnel (*.ts.net) names.
+   * Fall back to public resolvers while preserving SNI for HTTPS.
+   */
+  private async resolvePiHostname(hostname: string): Promise<string | null> {
+    if (!hostname || /^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
+      return null;
+    }
+
+    const tryLookup = async (): Promise<string> => {
+      const { address } = await lookup(hostname, { family: 4 });
+      return address;
+    };
+
+    try {
+      return await tryLookup();
+    } catch (primaryErr) {
+      const prior = dns.getServers();
+      try {
+        dns.setServers(['8.8.8.8', '1.1.1.1', '8.8.4.4']);
+        const address = await tryLookup();
+        this.logger.warn(
+          `Resolved Pi host ${hostname} via public DNS fallback -> ${address}`,
+        );
+        return address;
+      } catch (fallbackErr) {
+        this.logger.warn(
+          `DNS lookup failed for ${hostname}: ${(primaryErr as Error).message}; fallback: ${(fallbackErr as Error).message}`,
+        );
+        return null;
+      } finally {
+        dns.setServers(prior);
+      }
+    }
+  }
+
+  private async buildPiRequest(
+    fullUrl: string,
+    headers: Record<string, string>,
+    timeoutMs: number,
+  ): Promise<{ url: string; config: AxiosRequestConfig }> {
+    const parsed = new URL(fullUrl);
+    const originalHostname = parsed.hostname;
+    const resolvedIp = await this.resolvePiHostname(originalHostname);
+    let url = fullUrl;
+    let httpsAgent: https.Agent | undefined;
+
+    if (resolvedIp && resolvedIp !== originalHostname) {
+      parsed.hostname = resolvedIp;
+      url = parsed.toString();
+      httpsAgent = new https.Agent({ servername: originalHostname });
+    }
+
+    return {
+      url,
+      config: {
+        headers,
+        timeout: timeoutMs,
+        ...(httpsAgent ? { httpsAgent } : {}),
+      },
+    };
+  }
+
+  private async piGet<T>(
+    fullUrl: string,
+    headers: Record<string, string>,
+    timeoutMs: number,
+  ): Promise<T> {
+    const { url, config } = await this.buildPiRequest(
+      fullUrl,
+      headers,
+      timeoutMs,
+    );
+    const response = await firstValueFrom(this.httpService.get(url, config));
+    return response.data as T;
+  }
+
+  private async piPost<T>(
+    fullUrl: string,
+    body: unknown,
+    headers: Record<string, string>,
+    timeoutMs: number,
+  ): Promise<T> {
+    const { url, config } = await this.buildPiRequest(
+      fullUrl,
+      headers,
+      timeoutMs,
+    );
+    const response = await firstValueFrom(
+      this.httpService.post(url, body, config),
+    );
+    return response.data as T;
+  }
+
+  /**
    * Live streaming runs on Port 8443 on the Tailscale Funnel.
    */
   private getLiveBaseUrl(baseUrl: string): string {
@@ -120,15 +218,14 @@ export class RaspberryPiApiService {
   async checkHealth(raspberryPiBaseUrl: string): Promise<PiHealthResponse> {
     const targetUrl = this.getLiveBaseUrl(raspberryPiBaseUrl);
     try {
-      const response = await firstValueFrom(
-        this.httpService.get(`${targetUrl}/health`, {
-          timeout: 5000,
-        }),
+      return await this.piGet<PiHealthResponse>(
+        `${targetUrl}/health`,
+        {},
+        8000,
       );
-      return response.data as PiHealthResponse;
     } catch (error) {
       this.logger.warn(
-        `Health check failed for ${targetUrl}: ${error.message}`,
+        `Health check failed for ${targetUrl}: ${(error as Error).message}`,
       );
       return { status: 'UNREACHABLE' };
     }
@@ -144,16 +241,15 @@ export class RaspberryPiApiService {
       `Triggering extraction on Pi Recordings Gateway (${targetUrl}) for Recording ${payload.recordingId} (Channel ${payload.channel})`,
     );
     try {
-      const response = await firstValueFrom(
-        this.httpService.post(`${targetUrl}/extract-session`, payload, {
-          headers: {
-            'X-API-KEY': this.getEvmsApiKey(raspberryPiBaseUrl, customApiKey),
-            'Content-Type': 'application/json',
-          },
-          timeout: 300000, // 5 minutes timeout for slicing and uploading to S3
-        }),
+      return await this.piPost<ExtractSessionResponse>(
+        `${targetUrl}/extract-session`,
+        payload,
+        {
+          'X-API-KEY': this.getEvmsApiKey(raspberryPiBaseUrl, customApiKey),
+          'Content-Type': 'application/json',
+        },
+        300000,
       );
-      return response.data as ExtractSessionResponse;
     } catch (error: any) {
       const errMsg =
         error.response?.data?.message ||
@@ -175,15 +271,13 @@ export class RaspberryPiApiService {
   ): Promise<{ publishing: boolean; streams: any[] }> {
     const targetUrl = this.getLiveBaseUrl(raspberryPiBaseUrl);
     try {
-      const response = await firstValueFrom(
-        this.httpService.get(`${targetUrl}/live-stream-status`, {
-          headers: {
-            'X-API-KEY': this.getLiveApiKey(raspberryPiBaseUrl, customApiKey),
-          },
-          timeout: 8000,
-        }),
+      return await this.piGet<{ publishing: boolean; streams: any[] }>(
+        `${targetUrl}/live-stream-status`,
+        {
+          'X-API-KEY': this.getLiveApiKey(raspberryPiBaseUrl, customApiKey),
+        },
+        8000,
       );
-      return response.data;
     } catch (error: any) {
       this.logger.warn(
         `Failed to fetch live stream status from ${targetUrl}: ${error.message}`,
@@ -203,20 +297,29 @@ export class RaspberryPiApiService {
     );
 
     try {
-      const response = await firstValueFrom(
-        this.httpService.post(`${targetUrl}/start-live-stream`, payload, {
-          headers: {
-            'X-API-KEY': this.getLiveApiKey(raspberryPiBaseUrl, customApiKey),
-            'Content-Type': 'application/json',
-          },
-          timeout: 5000,
-        }),
+      return await this.piPost<any>(
+        `${targetUrl}/start-live-stream`,
+        payload,
+        {
+          'X-API-KEY': this.getLiveApiKey(raspberryPiBaseUrl, customApiKey),
+          'Content-Type': 'application/json',
+        },
+        15000,
       );
-      return response.data;
     } catch (error: any) {
       if (error.response?.status === 409) {
         this.logger.log(
           `Channel ${payload.channel} is already streaming on ${targetUrl}. Returning success.`,
+        );
+        return { status: 'LIVE_STREAM_STARTED' };
+      }
+
+      const detail = String(
+        error.response?.data?.detail || error.response?.data?.message || '',
+      ).toLowerCase();
+      if (detail.includes('already live')) {
+        this.logger.log(
+          `Channel ${payload.channel} already live on ${targetUrl}. Returning success.`,
         );
         return { status: 'LIVE_STREAM_STARTED' };
       }
@@ -249,16 +352,15 @@ export class RaspberryPiApiService {
       `Calling Pi to stop live stream on Channel ${payload.channel} via ${targetUrl}`,
     );
     try {
-      const response = await firstValueFrom(
-        this.httpService.post(`${targetUrl}/stop-live-stream`, payload, {
-          headers: {
-            'X-API-KEY': this.getLiveApiKey(raspberryPiBaseUrl, customApiKey),
-            'Content-Type': 'application/json',
-          },
-          timeout: 10000,
-        }),
+      return await this.piPost<{ status: string }>(
+        `${targetUrl}/stop-live-stream`,
+        payload,
+        {
+          'X-API-KEY': this.getLiveApiKey(raspberryPiBaseUrl, customApiKey),
+          'Content-Type': 'application/json',
+        },
+        15000,
       );
-      return response.data;
     } catch (error: any) {
       if (error.response?.status === 404) {
         this.logger.log(
