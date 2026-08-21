@@ -7,9 +7,19 @@ import {
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom } from 'rxjs';
 import * as dns from 'node:dns';
-import { lookup } from 'node:dns/promises';
+import { resolve4 } from 'node:dns/promises';
 import * as https from 'node:https';
 import type { AxiosRequestConfig } from 'axios';
+
+/** Last-resort when VPC + public DNS both fail (Tailscale funnel IPs can change). */
+const PI_HOST_IP_FALLBACK: Record<string, string> = {
+  'cpu.taild82368.ts.net':
+    process.env.PI_BOTANICAL_GATEWAY_IP || '103.84.155.153',
+  'raspberrypi-court17-1.taild82368.ts.net':
+    process.env.PI_COURT17_GATEWAY_IP || '103.84.155.153',
+  'raspberrypi-court11.taild82368.ts.net':
+    process.env.PI_COURT11_GATEWAY_IP || '103.84.155.217',
+};
 
 export interface StartRecordingResponse {
   recordingId: string;
@@ -101,33 +111,43 @@ export class RaspberryPiApiService {
   constructor(private readonly httpService: HttpService) {}
 
   /**
-   * ECS/VPC DNS sometimes fails to resolve Tailscale Funnel (*.ts.net) names.
-   * Fall back to public resolvers while preserving SNI for HTTPS.
+   * ECS/VPC DNS often fails for Tailscale Funnel (*.ts.net).
+   * Use dns.resolve4 (respects setServers) — NOT dns.lookup (libc getaddrinfo only).
    */
   private async resolvePiHostname(hostname: string): Promise<string | null> {
     if (!hostname || /^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
       return null;
     }
 
-    const tryLookup = async (): Promise<string> => {
-      const { address } = await lookup(hostname, { family: 4 });
-      return address;
+    const tryResolve4 = async (): Promise<string> => {
+      const addresses = await resolve4(hostname);
+      if (!addresses?.length) {
+        throw new Error(`No A records for ${hostname}`);
+      }
+      return addresses[0];
     };
 
     try {
-      return await tryLookup();
+      return await tryResolve4();
     } catch (primaryErr) {
       const prior = dns.getServers();
       try {
         dns.setServers(['8.8.8.8', '1.1.1.1', '8.8.4.4']);
-        const address = await tryLookup();
+        const address = await tryResolve4();
         this.logger.warn(
-          `Resolved Pi host ${hostname} via public DNS fallback -> ${address}`,
+          `Resolved Pi host ${hostname} via public DNS -> ${address}`,
         );
         return address;
       } catch (fallbackErr) {
+        const staticIp = PI_HOST_IP_FALLBACK[hostname.toLowerCase()];
+        if (staticIp) {
+          this.logger.warn(
+            `Using static Pi IP fallback for ${hostname} -> ${staticIp} (DNS: ${(primaryErr as Error).message})`,
+          );
+          return staticIp;
+        }
         this.logger.warn(
-          `DNS lookup failed for ${hostname}: ${(primaryErr as Error).message}; fallback: ${(fallbackErr as Error).message}`,
+          `DNS lookup failed for ${hostname}: ${(primaryErr as Error).message}; public: ${(fallbackErr as Error).message}`,
         );
         return null;
       } finally {
