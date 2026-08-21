@@ -2718,9 +2718,11 @@ export class RecordingService {
    * Matching semantics:
    *   - Recording must belong to ANY of the supplied `turfIds` (the picked
    *     venue plus every duplicate-name alias).
-   *   - Court / camera are intentionally ignored for matching (UX request:
-   *     "search by arena + time + phone only"), so all cameras at the venue
-   *     are eligible.
+   *   - When `cameraId` is supplied, only recordings for that camera match.
+   *   - When `courtNumber` is supplied (and no cameraId), only recordings whose
+   *     camera shares that court number match.
+   *   - When neither is supplied, all cameras at the venue are eligible
+   *     (legacy phone + time search).
    *   - Time window is padded by ±1h before overlap testing.
    *   - Phone matches the last 10 digits exactly against the digits-only
    *     phone number of the recording's creator.
@@ -2731,8 +2733,18 @@ export class RecordingService {
     startTime: string;
     endTime: string;
     phoneLast10: string;
+    cameraId?: string;
+    courtNumber?: number;
   }): Promise<Recording[]> {
-    const { turfIds, date, startTime, endTime, phoneLast10 } = args;
+    const {
+      turfIds,
+      date,
+      startTime,
+      endTime,
+      phoneLast10,
+      cameraId,
+      courtNumber,
+    } = args;
 
     if (!Array.isArray(turfIds) || turfIds.length === 0) {
       throw new BadRequestException('At least one turfId is required');
@@ -2775,6 +2787,12 @@ export class RecordingService {
         { phoneLast10 },
       );
 
+    if (cameraId) {
+      qb.andWhere('recording.cameraId = :cameraId', { cameraId });
+    } else if (courtNumber != null && courtNumber > 0) {
+      qb.andWhere('camera.court_number = :courtNumber', { courtNumber });
+    }
+
     return qb.getMany();
   }
 
@@ -2794,6 +2812,8 @@ export class RecordingService {
       startTime: dto.startTime,
       endTime: dto.endTime,
       phoneLast10: dto.phoneLast10,
+      cameraId: dto.cameraId,
+      courtNumber: dto.courtNumber,
     });
   }
 
@@ -2917,6 +2937,7 @@ export class RecordingService {
       startTime: dto.startTime,
       endTime: dto.endTime,
       phoneLast10: dto.phoneLast10,
+      cameraId: dto.cameraId,
     });
     if (matches.length === 0) return [];
 
@@ -2978,15 +2999,9 @@ export class RecordingService {
       throw new NotFoundException(`Camera not found with ID: ${dto.cameraId}`);
     }
 
-    // Find all cameras for this court to support multi-angle recordings
-    const allCourtCameras = await this.cameraRepository.find({
-      where: {
-        turfId: primaryCamera.turfId,
-        court_number: primaryCamera.court_number || 1,
-      },
-      relations: ['turf'],
-      order: { id: 'ASC' },
-    });
+    // Extract only the camera the user selected. Dual-angle courts are handled
+    // via resolveNvrChannelsForCamera (multiple NVR channels, one camera row).
+    const camerasToExtract = [primaryCamera];
 
     const startDate = new Date(dto.startTime);
     const endDate = new Date(dto.endTime);
@@ -3026,7 +3041,7 @@ export class RecordingService {
 
     const createdRecordings: Recording[] = [];
 
-    for (const camera of allCourtCameras) {
+    for (const camera of camerasToExtract) {
       if (!camera.raspberryPiBaseUrl) {
         this.logger.warn(
           `Camera ${camera.name || camera.id} is not configured with an active Edge Pi Gateway URL. Skipping multi-angle extraction for this channel.`,
@@ -3035,6 +3050,9 @@ export class RecordingService {
       }
 
       const nvrChannels = resolveNvrChannelsForCamera(camera);
+      this.logger.log(
+        `On-demand extraction for camera ${camera.id} (${camera.name ?? 'unnamed'}, court_number=${camera.court_number ?? 'null'}) → NVR channels [${nvrChannels.join(', ')}]`,
+      );
       const defaultChannel =
         camera.court_number && camera.court_number > 0
           ? camera.court_number
@@ -3179,7 +3197,9 @@ export class RecordingService {
       );
     }
 
-    const primaryRecording = createdRecordings[0];
+    const primaryRecording =
+      createdRecordings.find((row) => row.cameraId === primaryCamera.id) ??
+      createdRecordings[0];
 
     return {
       cached: primaryRecording.status === 'completed',

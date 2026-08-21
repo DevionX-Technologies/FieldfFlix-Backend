@@ -18,8 +18,8 @@ import {
  * The DB has duplicate turf rows (same display name, different UUIDs) created
  * by a buggy seed run. The Recordings screen passes EVERY alias UUID for the
  * picked venue here so cameras / recordings attached to a non-canonical row
- * still match. `courtNumber` / `cameraId` are accepted for backward
- * compatibility but ignored by search (matching is arena + time + phone).
+ * still match. When `cameraId` or `courtNumber` is provided, search is scoped
+ * to that court; otherwise all cameras at the venue are eligible.
  */
 export class FindRecordingsDto {
   @ApiProperty({
@@ -34,7 +34,7 @@ export class FindRecordingsDto {
 
   @ApiPropertyOptional({
     description:
-      'Deprecated / ignored by search (kept for backward compatibility).',
+      'Optional court number — when set, search is limited to recordings from cameras on this court.',
     example: 3,
   })
   @IsOptional()
@@ -45,7 +45,7 @@ export class FindRecordingsDto {
 
   @ApiPropertyOptional({
     description:
-      'Deprecated / ignored by search (kept for backward compatibility).',
+      'Optional camera UUID — when set, search is limited to recordings from this camera only.',
   })
   @IsUUID()
   @IsOptional()
