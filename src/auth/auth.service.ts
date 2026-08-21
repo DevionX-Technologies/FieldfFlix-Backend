@@ -11,6 +11,13 @@ import { NotificationType, MessageStatus } from 'src/constant/enum';
 import { AppleAuthCallbackDto } from './dto/auth.dto';
 import { Fast2SmsService } from 'src/common/service/fast2sms.service';
 import { PhoneOtpStore } from 'src/common/service/phone-otp.store';
+import {
+  DEMO_OTP,
+  DEMO_USER_NAME,
+  isDemoOtp,
+  isDemoPhone,
+  phoneDigitsOnly,
+} from './demo-account.constants';
 
 @Injectable()
 export class AuthService {
@@ -27,6 +34,12 @@ export class AuthService {
 
   /** Sends a 6-digit OTP via Fast2SMS (DLT) and stores it for verification. */
   async sendOtp(mobile: string): Promise<{ message: string }> {
+    if (isDemoPhone(mobile)) {
+      this.logger.log('send-otp demo account — skipping SMS');
+      this.phoneOtpStore.set(mobile, DEMO_OTP);
+      return { message: 'Demo OTP ready' };
+    }
+
     this.logger.log(
       `send-otp (Fast2SMS) — …${mobile.replace(/\D/g, '').slice(-4)}`,
     );
@@ -37,11 +50,22 @@ export class AuthService {
   }
 
   async accountExistsByPhone(mobile: string): Promise<{ exists: boolean }> {
-    const phoneNumber = mobile.startsWith('+') ? mobile : `+${mobile}`;
+    const phoneNumber = this.formatPhoneForStorage(mobile);
     const user = await this.userService.findUserPhoneNumberOrEmail({
       phone_number: phoneNumber,
     });
     return { exists: !!user };
+  }
+
+  private formatPhoneForStorage(mobile: string): string {
+    if (mobile.startsWith('+')) {
+      return mobile;
+    }
+    const digits = phoneDigitsOnly(mobile);
+    if (digits.length === 10) {
+      return `+91${digits}`;
+    }
+    return `+${String(mobile).replace(/\D/g, '')}`;
   }
 
   /** Verifies the OTP, then issues the app JWT. */
@@ -55,13 +79,13 @@ export class AuthService {
     phone_number: string;
     profile_image_path: string;
   }> {
-    if (!this.phoneOtpStore.verifyAndConsume(mobile, otp)) {
+    const demoLogin = isDemoPhone(mobile) && isDemoOtp(otp);
+    if (!demoLogin && !this.phoneOtpStore.verifyAndConsume(mobile, otp)) {
       throw new BadRequestException('Invalid or expired OTP');
     }
 
     try {
-      // Format phone number with + prefix for storage
-      const phoneNumber = mobile.startsWith('+') ? mobile : `+${mobile}`;
+      const phoneNumber = this.formatPhoneForStorage(mobile);
 
       // Find or create user by phone number
       let isFirstTimeLogin = false;
@@ -73,6 +97,7 @@ export class AuthService {
         user = await this.userService.create({
           phone_number: phoneNumber,
           singUp_Method: SingUpType.PHONE_NUMBER,
+          ...(demoLogin ? { name: DEMO_USER_NAME } : {}),
         });
         isFirstTimeLogin = true;
       }
