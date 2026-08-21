@@ -12,6 +12,7 @@ import { AdminPhone } from './entities/admin-phone.entity';
 export const BOOTSTRAP_ADMIN_PHONE_LAST_10 = new Set<string>([
   '9321538768',
   '9370613157',
+  '9833438017',
 ]);
 
 const FLICK_SHORT_MAX_SEC = 15;
