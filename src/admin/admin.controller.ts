@@ -38,6 +38,7 @@ export class AdminController {
   @Public()
   @Get('migrate-db')
   async migrateDb() {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { Client } = require('pg');
 
     const sourceConfig = {
@@ -46,7 +47,7 @@ export class AdminController {
       user: 'neondb_owner',
       password: 'npg_OwyVHutfN28n',
       database: 'neondb',
-      ssl: { rejectUnauthorized: false }
+      ssl: { rejectUnauthorized: false },
     };
 
     const destConfig = {
@@ -55,7 +56,7 @@ export class AdminController {
       user: 'fieldflicks',
       password: 'curJqH6SwDwEFSbawMva',
       database: 'fieldflicks-prod',
-      ssl: { rejectUnauthorized: false }
+      ssl: { rejectUnauthorized: false },
     };
 
     const source = new Client(sourceConfig);
@@ -74,7 +75,7 @@ export class AdminController {
         AND table_name != 'spatial_ref_sys'
         AND table_type = 'BASE TABLE';
       `);
-      const tables = tablesRes.rows.map(r => r.table_name);
+      const tables = tablesRes.rows.map((r) => r.table_name);
 
       for (const table of tables) {
         const dataRes = await source.query(`SELECT * FROM "${table}"`);
@@ -82,9 +83,10 @@ export class AdminController {
 
         if (rows.length > 0) {
           try {
-              await dest.query(`TRUNCATE TABLE "${table}" CASCADE;`);
-          } catch(e) {
-              await dest.query(`DELETE FROM "${table}";`);
+            await dest.query(`TRUNCATE TABLE "${table}" CASCADE;`);
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          } catch (_e) {
+            await dest.query(`DELETE FROM "${table}";`);
           }
 
           const columns = Object.keys(rows[0]);
@@ -92,13 +94,14 @@ export class AdminController {
           const insertQuery = `INSERT INTO "${table}" ("${columns.join('", "')}") VALUES (${placeholders})`;
 
           for (const row of rows) {
-            const values = columns.map(col => row[col]);
+            const values = columns.map((col) => row[col]);
             await dest.query(insertQuery, values);
           }
         } else {
           try {
-              await dest.query(`TRUNCATE TABLE "${table}" CASCADE;`);
-          } catch(e) {}
+            await dest.query(`TRUNCATE TABLE "${table}" CASCADE;`);
+            // eslint-disable-next-line @typescript-eslint/no-unused-vars
+          } catch (_e) {}
         }
       }
 
