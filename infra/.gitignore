@@ -1,0 +1,11 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+# Local overrides (values live in SSM / tfvars committed intentionally)
+*.auto.tfvars
+override.tf
+override.tf.json

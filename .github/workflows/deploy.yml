@@ -1,17 +1,19 @@
-﻿name: Deploy ECS
+name: Deploy ECS
 
 on:
   push:
     branches:
       - main
 
+# Values sourced from the Terraform outputs. Set these as GitHub repo
+# variables (Settings → Secrets and variables → Actions → Variables):
+#   AWS_DEPLOY_ROLE  = github_deploy_role_arn
+#   ECR_REPOSITORY   = fieldflicks-backend        (image repo name)
+#   ECS_CLUSTER      = fieldflicks-production-cluster
+#   ECS_SERVICE      = fieldflicks-production-service
+#   CONTAINER_NAME   = fieldflicks-backend
 env:
   AWS_REGION: ap-south-1
-  ECR_REPOSITORY: devionx/fieldflix-backend
-  ECS_SERVICE: devionx-fieldflix-backend-service-7bonitr3
-  ECS_CLUSTER: default
-  ECS_TASK_DEFINITION: devionx-fieldflix-backend
-  CONTAINER_NAME: fieldflix-backend
 
 jobs:
   deploy:
@@ -19,39 +21,47 @@ jobs:
 
     permissions:
       contents: read
+      id-token: write # required for OIDC — no long-lived AWS keys
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS
+      - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build image
+      - name: Build, tag, and push image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t $ECR_REPOSITORY .
+          docker build \
+            --build-arg BUILD_SHA=${{ github.sha }} \
+            --build-arg BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --build-arg BUILD_REF=${{ github.ref_name }} \
+            -t $REGISTRY/$REPOSITORY:$IMAGE_TAG \
+            -t $REGISTRY/$REPOSITORY:latest \
+            .
+          docker push $REGISTRY/$REPOSITORY:$IMAGE_TAG
+          docker push $REGISTRY/$REPOSITORY:latest
 
-      - name: Tag image
-        run: |
-          docker tag $ECR_REPOSITORY:latest \
-          ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:latest
-
-      - name: Push image
-        run: |
-          docker push \
-          ${{ steps.login-ecr.outputs.registry }}/$ECR_REPOSITORY:latest
-
-      - name: Force deploy
+      - name: Force new deployment
         run: |
           aws ecs update-service \
-            --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
+            --cluster ${{ vars.ECS_CLUSTER }} \
+            --service ${{ vars.ECS_SERVICE }} \
             --force-new-deployment
+
+      - name: Wait for service to stabilize
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${{ vars.ECS_CLUSTER }} \
+            --services ${{ vars.ECS_SERVICE }}

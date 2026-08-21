@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars and fill in. Non-secret values only.
+# (App secrets go into SSM out-of-band — see README.md.)
+
+domain_name = "api.devionx.com"           # public API hostname served by the ALB
+github_repo = "DevionX-Technologies/FieldfFlix-Backend"
+alert_email = "chandamin23@gmail.com"      # Budgets + anomaly alerts
+
+# Optional overrides (defaults shown):
+# region                = "ap-south-1"
+# github_deploy_branch  = "main"
+# task_cpu              = 512
+# task_memory           = 1024
+# service_desired_count = 1
+# service_max_count     = 3
+# db_instance_class     = "db.t4g.micro"
+# monthly_budget_usd    = 150
+# media_cdn_domain      = ""               # reserved for custom CDN domain (follow-up)
