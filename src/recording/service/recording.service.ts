@@ -3117,15 +3117,19 @@ export class RecordingService {
 
         try {
           this.raspberryPiApiService
-            .extractSession(camera.raspberryPiBaseUrl, {
-              recordingId: recording.id,
-              channel: channelNumber,
-              startTime: startDate.toISOString(),
-              endTime: endDate.toISOString(),
-              uploadUrl,
-              s3Key,
-              callbackWebhookUrl,
-            })
+            .extractSession(
+              camera.raspberryPiBaseUrl,
+              {
+                recordingId: recording.id,
+                channel: channelNumber,
+                startTime: startDate.toISOString(),
+                endTime: endDate.toISOString(),
+                uploadUrl,
+                s3Key,
+                callbackWebhookUrl,
+              },
+              camera.raspberryPiApiKey,
+            )
             .then((piResponse) => {
               if (piResponse.status === 'SUCCESS') {
                 this.logger.log(
@@ -3366,6 +3370,7 @@ export class RecordingService {
         channel: channelNumber,
         rtmpUrl: rtmpUrl,
       },
+      camera.raspberryPiApiKey,
     );
 
     // 3. Automatically link it to any active tournaments using this camera
@@ -3432,9 +3437,11 @@ export class RecordingService {
     }
 
     const channelNumber = dto.channel ?? camera.court_number ?? 1;
-    await this.raspberryPiApiService.stopLiveStream(camera.raspberryPiBaseUrl, {
-      channel: channelNumber,
-    });
+    await this.raspberryPiApiService.stopLiveStream(
+      camera.raspberryPiBaseUrl,
+      { channel: channelNumber },
+      camera.raspberryPiApiKey,
+    );
 
     // Automatically remove it from any active tournaments using this camera
     try {

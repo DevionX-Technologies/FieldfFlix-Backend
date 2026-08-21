@@ -425,6 +425,7 @@ export class AdminAnalyticsService {
             courtNumber: c.court_number ?? 1,
             name: c.name || `Court ${c.court_number || 1}`,
             raspberryPiBaseUrl: c.raspberryPiBaseUrl || null,
+            raspberryPiApiKey: c.raspberryPiApiKey || null,
             isConfigured,
             status: isConfigured ? 'ONLINE' : 'UNCONFIGURED',
           });
@@ -489,7 +490,12 @@ export class AdminAnalyticsService {
 
   async updateCameraMapping(
     cameraId: string,
-    dto: { name?: string; court_number?: number; raspberryPiBaseUrl?: string },
+    dto: {
+      name?: string;
+      court_number?: number;
+      raspberryPiBaseUrl?: string;
+      raspberryPiApiKey?: string;
+    },
   ) {
     const camera = await this.cameraRepo.findOne({ where: { id: cameraId } });
     if (!camera) {
@@ -503,6 +509,11 @@ export class AdminAnalyticsService {
         ? dto.raspberryPiBaseUrl.trim()
         : null;
     }
+    if (dto.raspberryPiApiKey !== undefined) {
+      camera.raspberryPiApiKey = dto.raspberryPiApiKey
+        ? dto.raspberryPiApiKey.trim()
+        : null;
+    }
 
     return this.cameraRepo.save(camera);
   }
@@ -512,6 +523,7 @@ export class AdminAnalyticsService {
     name?: string;
     court_number?: number;
     raspberryPiBaseUrl?: string;
+    raspberryPiApiKey?: string;
   }) {
     const turf = await this.turfRepo.findOne({ where: { id: dto.turfId } });
     if (!turf) {
@@ -524,6 +536,9 @@ export class AdminAnalyticsService {
       court_number: dto.court_number ?? 1,
       raspberryPiBaseUrl: dto.raspberryPiBaseUrl
         ? dto.raspberryPiBaseUrl.trim()
+        : null,
+      raspberryPiApiKey: dto.raspberryPiApiKey
+        ? dto.raspberryPiApiKey.trim()
         : null,
     });
 
