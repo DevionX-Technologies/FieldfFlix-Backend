@@ -1,6 +1,9 @@
 domain_name = "api.fieldflicks.com"
 github_repo = "DevionX-Technologies/FieldfFlix-Backend"
-alert_email = "chandamin23@gmail.com"
+# Branches allowed to deploy via OIDC. feature/nvr-on-demand-streaming included
+# for now since it's the actively-deployed branch matching the live DB schema.
+github_deploy_branches = ["main", "feature/nvr-on-demand-streaming"]
+alert_email            = "chandamin23@gmail.com"
 
 # Bring the stack up on HTTP first (ALB DNS name). Flip to true and re-apply
 # once the ACM cert for api.fieldflicks.com has validated, to enable HTTPS.

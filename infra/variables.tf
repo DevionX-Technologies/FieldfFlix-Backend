@@ -32,10 +32,10 @@ variable "github_repo" {
   description = "GitHub repo allowed to assume the CI/CD deploy role, in owner/name form, e.g. Dark-Kernel/FieldfFlix-Backend."
 }
 
-variable "github_deploy_branch" {
-  type        = string
-  default     = "main"
-  description = "Branch whose pushes may assume the deploy role via OIDC."
+variable "github_deploy_branches" {
+  type        = list(string)
+  default     = ["main"]
+  description = "Branches whose pushes may assume the deploy role via OIDC."
 }
 
 # --- Compute / DB sizing (cost-tunable) ---

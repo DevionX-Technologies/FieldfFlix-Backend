@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+      - feature/nvr-on-demand-streaming
+  workflow_dispatch: {}
 
 # Values sourced from the Terraform outputs. Set these as GitHub repo
 # variables (Settings → Secrets and variables → Actions → Variables):
