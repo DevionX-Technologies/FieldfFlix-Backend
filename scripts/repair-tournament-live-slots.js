@@ -15,7 +15,7 @@ const BOTANICAL_PLAYBACK_TO_SLOT = {
   gnlrEQPVEKKqwcspjdSidYv9c4ocu4JsaBN01Uzsjksw: { court: 4, slot: 2 },
   // Court 5
   Un4RKt37Yl7kMT1TGPpx2ye7x9BKOEn02flHs6tIhXCA: { court: 5, slot: 1 },
-  aP00piIFqOmgLubzo2vMM00fcBxPJIF00BZM9QgnTzHTN4: { court: 5, slot: 2 },
+  aP00piIFqOmglUbzo2vMM00fcBxPJIF00BZM9QgnTzHTN4: { court: 5, slot: 2 },
 };
 
 function playbackIdFromUrl(url) {
