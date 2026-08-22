@@ -84,6 +84,7 @@ import {
   upsertTournamentLiveStream,
   type LiveStreamSlot,
 } from 'src/utils/live-stream-slots.util';
+import { getBotanicalMuxKey } from 'src/utils/botanical-mux-keys.util';
 
 /**
  * Service for managing recordings.
@@ -3386,45 +3387,7 @@ export class RecordingService {
     let playbackUrl = '';
 
     if (isBotanical) {
-      const botanicalKeys: Record<
-        number,
-        { streamKey: string; playbackId: string }
-      > = {
-        8: {
-          streamKey: '5fde67eb-216d-88a2-bb62-d97cbb40329a',
-          playbackId: 'JVNeDKDKzeM5hicta4Aj0101fygyBlpN00Rxz3ZPpOEFlo',
-        },
-        9: {
-          streamKey: 'd9e08a81-f71c-a92d-b423-aafe4014b4de',
-          playbackId: '5by003TqhFMfsrP0100NHS7hipy4WxJjKSJ01G01023pVyAyA',
-        },
-        5: {
-          streamKey: '036ce09f-6d8f-3d52-b80d-3c6fb5656f53',
-          playbackId: 'J0102TdMq9n3UnEGzVu3kRW4AxgqwWBsdpRN6A2T8fbgU',
-        },
-        11: {
-          streamKey: 'cc87e8ef-e65a-9d22-a34c-536c51ee70ae',
-          playbackId: 'gnlrEQPVEKKqwcspjdSidYv9c4ocu4JsaBN01Uzsjksw',
-        },
-        2: {
-          streamKey: '62a93d81-6798-06cc-1c42-fe0a60fa9465',
-          playbackId: 'Un4RKt37Yl7kMT1TGPpx2ye7x9BKOEn02flHs6tIhXCA',
-        },
-        3: {
-          streamKey: '59db2aa9-d1d9-8d52-5e67-ea67428b6624',
-          playbackId: 'aP00piIFqOmgLubzo2vMM00fcBxPJIF00BZM9QgnTzHTN4',
-        },
-        1: {
-          streamKey: '1c745972-a169-3a16-2676-c4f254ea8511',
-          playbackId: 'UBbR4q9RqgBFwC6APiHAsOWGuawZJ5x02bywXJBeTnV8',
-        },
-        10: {
-          streamKey: '94b0b075-3935-068e-5f9f-09f13fd248b8',
-          playbackId: '00wcJWg00HQFOojDDbDHEM7C600W4Frsqj00B01mNz2c4i7s',
-        },
-      };
-
-      const keys = botanicalKeys[channelNumber];
+      const keys = getBotanicalMuxKey(channelNumber);
       if (keys) {
         rtmpUrl = `rtmps://global-live.mux.com:443/app/${keys.streamKey}`;
         liveStreamId = 'hardcoded-botanical-live-stream-id';
@@ -3464,9 +3427,12 @@ export class RecordingService {
 
     // 3. Automatically link it to any active tournaments using this camera
     try {
+      const posterCourt = isBotanical
+        ? resolveBotanicalLogicalCourtNumber(camera)
+        : camera.court_number;
       const logicalSlot = resolveLiveStreamSlot({
         nvrChannel: channelNumber,
-        courtNumber: camera.court_number,
+        courtNumber: posterCourt || camera.court_number,
         raspberryPiBaseUrl: camera.raspberryPiBaseUrl,
         logicalChannel:
           dto.logicalChannel === 1 || dto.logicalChannel === 2
@@ -3489,7 +3455,7 @@ export class RecordingService {
         const streams = upsertTournamentLiveStream(t.liveStreams || [], {
           cameraId: actualCameraId,
           cameraName: camera.name + (logicalSlot === 2 ? ' (Ch 2)' : ' (Ch 1)'),
-          courtNumber: camera.court_number ?? channelNumber,
+          courtNumber: posterCourt || camera.court_number || channelNumber,
           playbackUrl: playbackUrl,
           liveStreamId,
           isLive: true,
