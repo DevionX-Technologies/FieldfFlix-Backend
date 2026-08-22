@@ -97,6 +97,11 @@ export class RecordingService {
   /** If `in_progress` is older than this, it is treated as abandoned (app crash / no stop) and cleared. */
   private static readonly STALE_IN_PROGRESS_MS = 2 * 60 * 60 * 1000; // 2 hours
 
+  /** On-demand extractions without Mux playback older than this are failed (max 3 attempts). */
+  private static readonly STALE_EXTRACTION_MS = 45 * 60 * 1000; // 45 minutes
+  private static readonly MAX_EXTRACT_ATTEMPTS = 3;
+  private staleExtractionRunning = false;
+
   /**
    * @param recordingRepository The repository for the Recording entity.
    * @param sharedRecordingRepository The repository for the SharedRecording entity.
@@ -313,6 +318,65 @@ export class RecordingService {
       );
     } finally {
       this.autoStopRunning = false;
+    }
+  }
+
+  /**
+   * Fail or retry on-demand extractions stuck without a Mux asset.
+   * Rows sit at `uploaded`/`extracting` when the Pi never callbacks or Mux never ingests.
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async sweepStaleOnDemandExtractions(): Promise<void> {
+    if (this.staleExtractionRunning) return;
+    this.staleExtractionRunning = true;
+    try {
+      const cutoff = new Date(
+        Date.now() - RecordingService.STALE_EXTRACTION_MS,
+      );
+      const stale = await this.recordingRepositoryForMedia.find({
+        where: [{ status: 'extracting' }, { status: 'uploaded' }],
+      });
+
+      const targets = stale.filter(
+        (rec) =>
+          !rec.mux_playback_id &&
+          rec.updated_at &&
+          new Date(rec.updated_at) < cutoff,
+      );
+
+      for (const rec of targets) {
+        const meta = (rec.metadata ?? {}) as Record<string, unknown>;
+        const attempts = Number(meta.extract_attempts ?? 1);
+        if (attempts >= RecordingService.MAX_EXTRACT_ATTEMPTS) {
+          await this.recordingRepositoryForMedia.update(rec.id, {
+            status: 'failed',
+            metadata: {
+              ...meta,
+              extract_failed_reason:
+                'Pi/Mux pipeline timed out after 3 attempts',
+            },
+          });
+          this.logger.warn(
+            `Marked stale extraction ${rec.id} as failed (${attempts} attempts)`,
+          );
+        } else {
+          await this.recordingRepositoryForMedia.update(rec.id, {
+            status: 'failed',
+            metadata: {
+              ...meta,
+              extract_attempts: attempts,
+              extract_failed_reason:
+                'Pi/Mux pipeline timed out — retry on next claim',
+            },
+          });
+        }
+      }
+    } catch (e) {
+      this.logger.error(
+        `sweepStaleOnDemandExtractions: ${(e as Error)?.message ?? e}`,
+      );
+    } finally {
+      this.staleExtractionRunning = false;
     }
   }
 
@@ -3104,28 +3168,42 @@ export class RecordingService {
             : 1;
 
       for (const channelNumber of nvrChannels) {
-        const completedRows = await this.recordingRepositoryForMedia.find({
+        const cacheRows = await this.recordingRepositoryForMedia.find({
           where: {
             cameraId: camera.id,
             startTime: startDate,
             endTime: endDate,
-            status: 'completed',
           },
         });
 
         const existingRecording =
-          completedRows.find((row) => {
+          cacheRows.find((row) => {
+            if (!['completed', 'ready'].includes(String(row.status ?? ''))) {
+              return false;
+            }
+            if (!row.mux_playback_id && !row.mux_media_url) {
+              return false;
+            }
             const rowChannel = readRecordingNvrChannel(
               row.metadata as Record<string, unknown> | undefined,
               defaultChannel,
             );
-            return rowChannel === channelNumber && !!row.mux_media_url;
+            return rowChannel === channelNumber;
           }) ?? null;
 
         if (existingRecording) {
           this.logger.log(
             `Cache HIT for match extraction: recording ${existingRecording.id} (camera ${camera.id}, NVR ch ${channelNumber})`,
           );
+          if (resolvedUserId && existingRecording.userId !== resolvedUserId) {
+            await this.recordingRepositoryForMedia.update(
+              existingRecording.id,
+              {
+                userId: resolvedUserId,
+              },
+            );
+            existingRecording.userId = resolvedUserId;
+          }
           if (channelNumber === nvrChannels[0]) {
             try {
               await this.recordingHighlightsService.attachHighlightsInTimeWindow(
@@ -3156,6 +3234,7 @@ export class RecordingService {
             nvr_channel: channelNumber,
             camera_label: `Camera ${channelNumber}`,
             extract_session_key: `${camera.id}_${startDate.toISOString()}_${endDate.toISOString()}`,
+            extract_attempts: 1,
           },
         });
 
@@ -3223,12 +3302,16 @@ export class RecordingService {
               );
             });
 
-          await this.recordingRepositoryForMedia.update(recording.id, {
-            status: 'uploaded',
-          });
-
           createdRecordings.push(recording);
         } catch (error) {
+          await this.recordingRepositoryForMedia.update(recording.id, {
+            status: 'failed',
+            metadata: {
+              ...(recording.metadata as Record<string, unknown>),
+              extract_failed_reason:
+                (error as Error)?.message ?? 'Setup failed',
+            },
+          });
           this.logger.error(
             `Error during on-demand extraction setup for camera ${camera.id} NVR ch ${channelNumber}: ${error.message}`,
           );
@@ -3247,11 +3330,16 @@ export class RecordingService {
       createdRecordings[0];
 
     return {
-      cached: primaryRecording.status === 'completed',
+      cached: ['completed', 'ready'].includes(
+        String(primaryRecording.status ?? ''),
+      ),
       recordingId: primaryRecording.id,
       recordingIds: createdRecordings.map((row) => row.id),
-      status:
-        primaryRecording.status === 'completed' ? 'COMPLETED' : 'PROCESSING',
+      status: ['completed', 'ready'].includes(
+        String(primaryRecording.status ?? ''),
+      )
+        ? 'COMPLETED'
+        : 'PROCESSING',
       s3Path: primaryRecording.s3Path,
       piResponse: {
         status: 'DISPATCHED_ASYNC',
@@ -3349,14 +3437,29 @@ export class RecordingService {
         const s3SignedReadUrl =
           await this.fileServiceService.getSignedUrlFromS3(key, bucketName);
         await this.muxService.uploadFromS3(s3SignedReadUrl, key, recording.id);
+        await this.recordingRepositoryForMedia.update(recording.id, {
+          status: 'uploaded',
+          s3Path: `s3://${bucketName}/${key}`,
+        });
+      } else {
+        // Pi uploaded via Mux direct upload — Mux webhook will finalize the asset.
+        await this.recordingRepositoryForMedia.update(recording.id, {
+          status: 'processing',
+        });
       }
-
-      await this.recordingRepositoryForMedia.update(recording.id, {
-        status: 'uploaded',
-      });
     } else {
+      const meta = (recording.metadata ?? {}) as Record<string, unknown>;
+      const attempts = Number(meta.extract_attempts ?? 1);
       await this.recordingRepositoryForMedia.update(recording.id, {
-        status: 'failed',
+        status:
+          attempts >= RecordingService.MAX_EXTRACT_ATTEMPTS
+            ? 'failed'
+            : 'failed',
+        metadata: {
+          ...meta,
+          extract_attempts: attempts,
+          extract_failed_reason: dto.error ?? 'Pi reported extraction failure',
+        },
       });
     }
 
