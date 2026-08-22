@@ -994,10 +994,19 @@ export class AdminAnalyticsService {
         mergedHighlightMux.status = 'pending';
       }
 
-      const sessionStatus =
-        allMuxReady || mergedHighlightMux.ready > 0
-          ? 'ready'
-          : pickBestExtractionStatus(sorted.map((r) => r.status));
+      const sessionStatus = allMuxReady
+        ? 'ready'
+        : pickBestExtractionStatus(sorted.map((r) => r.status));
+
+      const channelDetails = sorted.map((r) => ({
+        id: r.id,
+        nvrChannel: r.nvrChannel,
+        status: r.status,
+        hasS3: !!r.hasS3,
+        hasMux: !!r.hasMux,
+        muxProcessing: !!r.muxProcessing,
+        muxPlaybackId: r.muxPlaybackId ?? null,
+      }));
 
       return {
         ...primary,
@@ -1038,6 +1047,7 @@ export class AdminAnalyticsService {
           mergedHighlightMux.status === 'processing' ||
           mergedHighlightMux.status === 'partial' ||
           mergedHighlightMux.status === 'pending',
+        channelDetails,
       };
     });
   }
