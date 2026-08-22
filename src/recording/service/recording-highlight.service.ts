@@ -1,5 +1,5 @@
 import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
-import { DataSource, QueryRunner } from 'typeorm';
+import { Between, DataSource, QueryRunner } from 'typeorm';
 import axios, { AxiosResponse } from 'axios';
 import { RecordingHighlights } from '../entities/recording-highlights.entity';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -398,6 +398,219 @@ export class RecordingHighlightsService {
         );
       }
     }
+  }
+
+  /** Admin / diagnostics: counts per highlight Mux clip state. */
+  buildHighlightMuxSummary(
+    highlights: Array<{
+      status?: string | null;
+      asset_id?: string | null;
+      playback_id?: string | null;
+      mux_public_playback_url?: string | null;
+      s3path?: string | null;
+    }>,
+  ): {
+    total: number;
+    ready: number;
+    processing: number;
+    pending: number;
+    failed: number;
+    withoutAssetId: number;
+    status: 'none' | 'ready' | 'processing' | 'pending' | 'partial' | 'failed';
+  } {
+    if (!highlights.length) {
+      return {
+        total: 0,
+        ready: 0,
+        processing: 0,
+        pending: 0,
+        failed: 0,
+        withoutAssetId: 0,
+        status: 'none',
+      };
+    }
+
+    let ready = 0;
+    let processing = 0;
+    let pending = 0;
+    let failed = 0;
+    let withoutAssetId = 0;
+
+    for (const h of highlights) {
+      const st = String(h.status ?? '').toLowerCase();
+      if (
+        st === HIGHLIGHT_STATUS.FAILED ||
+        st === HIGHLIGHT_STATUS.PERMANENTLY_FAILED
+      ) {
+        failed += 1;
+        continue;
+      }
+
+      const hasStream =
+        Boolean(h.mux_public_playback_url?.trim()) ||
+        Boolean(h.playback_id?.trim()) ||
+        Boolean(h.s3path?.trim?.() && String(h.s3path).startsWith('http'));
+
+      if (st === HIGHLIGHT_STATUS.READY && hasStream) {
+        ready += 1;
+        continue;
+      }
+
+      if (h.asset_id) {
+        processing += 1;
+        continue;
+      }
+
+      withoutAssetId += 1;
+      if (
+        st === HIGHLIGHT_STATUS.PENDING ||
+        st === HIGHLIGHT_STATUS.QUEUED ||
+        !st
+      ) {
+        pending += 1;
+      } else {
+        processing += 1;
+      }
+    }
+
+    const total = highlights.length;
+    const active = total - failed;
+    let status:
+      | 'none'
+      | 'ready'
+      | 'processing'
+      | 'pending'
+      | 'partial'
+      | 'failed' = 'pending';
+    if (failed === total) status = 'failed';
+    else if (active > 0 && ready === active) status = 'ready';
+    else if (ready > 0) status = 'partial';
+    else if (processing > 0) status = 'processing';
+    else status = 'pending';
+
+    return {
+      total,
+      ready,
+      processing,
+      pending,
+      failed,
+      withoutAssetId,
+      status,
+    };
+  }
+
+  /** Self-heal clip rows and enqueue missing Mux clips when source video is ready. */
+  async healHighlightMuxForRecording(recordingId: string): Promise<{
+    recordingId: string;
+    action: string;
+    highlightMux: ReturnType<
+      RecordingHighlightsService['buildHighlightMuxSummary']
+    >;
+  }> {
+    const rows = await this.dataSource.manager.find(RecordingHighlights, {
+      where: { recordingId },
+      order: { processing_order: 'ASC', createdAt: 'ASC' },
+    });
+
+    const healed = await Promise.all(
+      rows.map((row) => this.syncHighlightClipFromMux(row)),
+    );
+
+    await this.ensureHighlightClipsForRecording(recordingId);
+
+    const refreshed = await this.dataSource.manager.find(RecordingHighlights, {
+      where: { recordingId },
+      order: { processing_order: 'ASC', createdAt: 'ASC' },
+    });
+    const summary = this.buildHighlightMuxSummary(
+      refreshed.length > 0 ? refreshed : healed,
+    );
+
+    let action = 'no_highlights';
+    if (summary.total === 0) {
+      action = 'no_highlights';
+    } else if (summary.status === 'ready') {
+      action = 'highlights_ready';
+    } else if (summary.withoutAssetId > 0) {
+      action = 'highlight_clips_enqueued';
+    } else if (summary.processing > 0) {
+      action = 'highlights_processing';
+    } else {
+      action = 'highlights_pending';
+    }
+
+    return { recordingId, action, highlightMux: summary };
+  }
+
+  /**
+   * Backfill highlight Mux clips for an IST date (runs after full-video Mux is ready).
+   * Full-match ingest and highlight clip cuts are separate Mux operations.
+   */
+  async runHighlightMuxCycleForDate(date: string): Promise<{
+    date: string;
+    totalCandidates: number;
+    processed: number;
+    summary: Record<string, number>;
+    results: Array<{
+      recordingId: string;
+      action: string;
+      highlightMux: ReturnType<
+        RecordingHighlightsService['buildHighlightMuxSummary']
+      >;
+    }>;
+  }> {
+    const dayStart = new Date(`${date}T00:00:00+05:30`);
+    const dayEnd = new Date(`${date}T23:59:59.999+05:30`);
+
+    const recordings = await this.dataSource.manager.find(Recording, {
+      where: { startTime: Between(dayStart, dayEnd) },
+      select: ['id', 'status', 'mux_playback_id', 'mux_asset_id'],
+      order: { startTime: 'ASC', id: 'ASC' },
+    });
+
+    const candidates = recordings.filter(
+      (rec) =>
+        !!rec.mux_asset_id &&
+        !!rec.mux_playback_id &&
+        ['ready', 'completed'].includes(String(rec.status ?? '').toLowerCase()),
+    );
+
+    const summary: Record<string, number> = {};
+    const results: Array<{
+      recordingId: string;
+      action: string;
+      highlightMux: ReturnType<
+        RecordingHighlightsService['buildHighlightMuxSummary']
+      >;
+    }> = [];
+
+    const concurrency = Math.max(
+      1,
+      Math.min(8, Number(process.env.MUX_CYCLE_CONCURRENCY ?? 5)),
+    );
+
+    this.logger.log(
+      `Starting highlight Mux cycle for ${date}: ${candidates.length} playable recording(s)`,
+    );
+
+    for (let i = 0; i < candidates.length; i += concurrency) {
+      const chunk = candidates.slice(i, i + concurrency);
+      const chunkResults = await Promise.all(
+        chunk.map((rec) => this.healHighlightMuxForRecording(rec.id)),
+      );
+      for (const row of chunkResults) {
+        summary[row.action] = (summary[row.action] ?? 0) + 1;
+        results.push(row);
+      }
+    }
+
+    return {
+      date,
+      totalCandidates: candidates.length,
+      processed: results.length,
+      summary,
+      results,
+    };
   }
 
   async createRecordingHighlight(

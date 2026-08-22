@@ -409,6 +409,21 @@ export class AdminController {
     return this.recordingService.runMuxIngestionCycleForDate(date);
   }
 
+  /** Run highlight Mux clip backfill for an IST date (separate from full-video ingest). */
+  @Public()
+  @Post('extraction-pipeline/highlight-mux-cycle')
+  async runHighlightMuxCycle(@Body() body: { date?: string }) {
+    const date =
+      body?.date ||
+      new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date());
+    return this.recordingHighlightsService.runHighlightMuxCycleForDate(date);
+  }
+
   /** Get fresh playable stream URL for a recording */
   @Public()
   @Get('recordings/:id/playback-url')

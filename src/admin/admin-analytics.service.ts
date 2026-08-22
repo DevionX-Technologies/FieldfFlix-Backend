@@ -26,6 +26,7 @@ import { NotificationEntity } from 'src/notification/entities/notification.entit
 import { MessageStatus, NotificationType } from 'src/constant/enum';
 import { readRecordingNvrChannel } from 'src/utils/nvr-channels.util';
 import { RecordingService } from 'src/recording/service/recording.service';
+import { RecordingHighlightsService } from 'src/recording/service/recording-highlight.service';
 
 const EXTRACTION_STATUS_RANK: Record<string, number> = {
   ready: 100,
@@ -94,6 +95,8 @@ export class AdminAnalyticsService {
     private readonly dataSource: DataSource,
     @Inject(forwardRef(() => RecordingService))
     private readonly recordingService: RecordingService,
+    @Inject(forwardRef(() => RecordingHighlightsService))
+    private readonly recordingHighlightsService: RecordingHighlightsService,
   ) {}
 
   /**
@@ -836,6 +839,29 @@ export class AdminAnalyticsService {
         }
 
         const linkedHighlightCount = rec.recordingHighlights?.length ?? 0;
+        const rawHighlights = rec.recordingHighlights ?? [];
+        const syncedHighlights = await Promise.all(
+          rawHighlights.map((hl) =>
+            hl.asset_id
+              ? this.recordingHighlightsService.syncHighlightClipFromMux(hl)
+              : Promise.resolve(hl),
+          ),
+        );
+        const highlightMux =
+          this.recordingHighlightsService.buildHighlightMuxSummary(
+            syncedHighlights,
+          );
+
+        if (isMuxPlayable && highlightMux.withoutAssetId > 0) {
+          await this.recordingHighlightsService
+            .ensureHighlightClipsForRecording(rec.id)
+            .catch((err) =>
+              this.logger.warn(
+                `Auto-enqueue highlight clips for ${rec.id} failed: ${(err as Error)?.message || err}`,
+              ),
+            );
+        }
+
         const durationMinutes =
           rec.startTime && rec.endTime
             ? Math.max(
@@ -874,6 +900,7 @@ export class AdminAnalyticsService {
           updatedAt: rec.updated_at,
           extractAttempts: Number(metadata.extract_attempts ?? 1),
           extractSessionKey: String(metadata.extract_session_key ?? ''),
+          highlightMux,
         };
       }),
     );
@@ -928,6 +955,45 @@ export class AdminAnalyticsService {
         ? 'ready'
         : pickBestExtractionStatus(sorted.map((r) => r.status));
 
+      const mergedHighlightMux = sorted.reduce(
+        (acc, row) => {
+          const hl = row.highlightMux;
+          if (!hl) return acc;
+          return {
+            total: acc.total + (hl.total ?? 0),
+            ready: acc.ready + (hl.ready ?? 0),
+            processing: acc.processing + (hl.processing ?? 0),
+            pending: acc.pending + (hl.pending ?? 0),
+            failed: acc.failed + (hl.failed ?? 0),
+            withoutAssetId: acc.withoutAssetId + (hl.withoutAssetId ?? 0),
+            status: acc.status,
+          };
+        },
+        {
+          total: 0,
+          ready: 0,
+          processing: 0,
+          pending: 0,
+          failed: 0,
+          withoutAssetId: 0,
+          status: 'none' as string,
+        },
+      );
+      const activeHl = mergedHighlightMux.total - mergedHighlightMux.failed;
+      if (mergedHighlightMux.total === 0) {
+        mergedHighlightMux.status = 'none';
+      } else if (mergedHighlightMux.failed === mergedHighlightMux.total) {
+        mergedHighlightMux.status = 'failed';
+      } else if (activeHl > 0 && mergedHighlightMux.ready === activeHl) {
+        mergedHighlightMux.status = 'ready';
+      } else if (mergedHighlightMux.ready > 0) {
+        mergedHighlightMux.status = 'partial';
+      } else if (mergedHighlightMux.processing > 0) {
+        mergedHighlightMux.status = 'processing';
+      } else {
+        mergedHighlightMux.status = 'pending';
+      }
+
       return {
         ...primary,
         id: primary.id,
@@ -954,6 +1020,15 @@ export class AdminAnalyticsService {
         s3Path: s3Row.s3Path,
         extractAttempts: Math.max(...sorted.map((r) => r.extractAttempts ?? 1)),
         updatedAt: latestUpdated,
+        highlightMux: mergedHighlightMux,
+        hasHighlightMux:
+          mergedHighlightMux.status === 'ready' ||
+          (mergedHighlightMux.total === 0 &&
+            mergedHighlightMux.status === 'none'),
+        highlightMuxProcessing:
+          mergedHighlightMux.status === 'processing' ||
+          mergedHighlightMux.status === 'partial' ||
+          mergedHighlightMux.status === 'pending',
       };
     });
   }

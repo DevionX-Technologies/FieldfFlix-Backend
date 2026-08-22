@@ -537,6 +537,9 @@ export class RecordingService {
       action: string;
       error?: string;
     }>;
+    highlightPhase?: Awaited<
+      ReturnType<RecordingHighlightsService['runHighlightMuxCycleForDate']>
+    >;
   }> {
     if (this.muxCycleRunning) {
       throw new ConflictException('Mux ingestion cycle is already running');
@@ -615,12 +618,19 @@ export class RecordingService {
         }
       }
 
+      const highlightPhase =
+        await this.recordingHighlightsService.runHighlightMuxCycleForDate(date);
+      for (const [action, count] of Object.entries(highlightPhase.summary)) {
+        summary[`hl_${action}`] = count;
+      }
+
       return {
         date,
         totalCandidates: needingIngest.length,
         processed: results.length,
         summary,
         results,
+        highlightPhase,
       };
     } finally {
       this.muxCycleRunning = false;
