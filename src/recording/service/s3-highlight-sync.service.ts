@@ -186,7 +186,7 @@ export class S3HighlightSyncService {
           asset_id: null,
           source_asset_id: targetRecording.mux_asset_id || null,
           bucketName: this.bucket,
-          isClipCreated: true,
+          isClipCreated: false,
           processing_order: maxProcessingOrder,
         });
 

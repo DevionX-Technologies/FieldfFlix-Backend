@@ -98,6 +98,10 @@ import {
   mergeUnlockItems,
   unlockItemsFromPaymentMetadata,
 } from 'src/utils/unlock-item.util';
+import {
+  muxHighlightHlsUrl,
+  resolveHighlightStreamUrl,
+} from 'src/utils/s3-highlight-key.util';
 
 /**
  * Service for managing recordings.
@@ -503,7 +507,7 @@ export class RecordingService {
   }
 
   /**
-   * Heal a single recording: poll existing Mux asset or upload from S3.
+   * Heal a single recording: poll existing Mux asset, recover direct upload, or upload from S3.
    */
   async retryMuxIngestion(
     recordingId: string,
@@ -514,11 +518,12 @@ export class RecordingService {
     if (!recording) {
       throw new NotFoundException(`Recording not found: ${recordingId}`);
     }
-    if (recording.mux_playback_id && recording.status === 'ready') {
+    if (this.isRecordingMuxPlayable(recording)) {
       return { ok: true, action: 'already_ready' };
     }
 
     const bucketName = RecordingService.defaultMediaBucket();
+    const meta = (recording.metadata ?? {}) as Record<string, unknown>;
 
     if (recording.mux_asset_id) {
       try {
@@ -555,10 +560,42 @@ export class RecordingService {
       }
     }
 
+    const muxUploadId =
+      typeof meta.mux_upload_id === 'string' ? meta.mux_upload_id.trim() : '';
+    if (!recording.mux_asset_id && muxUploadId) {
+      try {
+        const upload = await this.muxService.getDirectUpload(muxUploadId);
+        const assetId =
+          typeof upload?.asset_id === 'string' ? upload.asset_id.trim() : '';
+        if (assetId) {
+          await this.recordingRepositoryForMedia.update(recordingId, {
+            mux_asset_id: assetId,
+            status: 'processing',
+          });
+          return this.retryMuxIngestion(recordingId);
+        }
+        const uploadStatus = String(upload?.status ?? '').toLowerCase();
+        if (
+          uploadStatus === 'waiting' ||
+          uploadStatus === 'asset_created' ||
+          uploadStatus === 'processing'
+        ) {
+          return { ok: true, action: 'mux_upload_pending' };
+        }
+      } catch (e) {
+        this.logger.warn(
+          `Could not poll Mux direct upload ${muxUploadId} for ${recordingId}: ${(e as Error)?.message}`,
+        );
+      }
+    }
+
     let key =
       recording.s3Path?.replace(`s3://${bucketName}/`, '') ||
       recording.s3Path?.replace(/^s3:\/\/[^/]+\//, '') ||
       null;
+    if (!key && typeof meta.expected_s3_key === 'string') {
+      key = meta.expected_s3_key.trim() || null;
+    }
     if (!key) {
       key = await this.fileServiceService.findFirstObjectKeyWithPrefix(
         `recordings/${recordingId}_`,
@@ -621,7 +658,7 @@ export class RecordingService {
       const candidates = await this.recordingRepositoryForMedia.find({
         where: {
           startTime: Between(dayStart, dayEnd),
-          s3Path: Not(IsNull()),
+          status: Not(In(['failed', 'cancelled'])),
         },
         order: { startTime: 'ASC', id: 'ASC' },
       });
@@ -631,7 +668,7 @@ export class RecordingService {
       );
 
       this.logger.log(
-        `Starting Mux ingestion cycle for ${date}: ${needingIngest.length} candidate(s) (${candidates.length} with S3)`,
+        `Starting Mux ingestion cycle for ${date}: ${needingIngest.length} candidate(s) (${candidates.length} total for day, ${candidates.filter((r) => r.s3Path).length} with s3Path)`,
       );
 
       this.muxCycleProgress.totalCandidates = needingIngest.length;
@@ -2701,22 +2738,16 @@ export class RecordingService {
 
     return filtered.map((h) => {
       const v = viewer.get(h.id);
+      const streamUrl = resolveHighlightStreamUrl(h);
+      const playbackId = h.playback_id?.trim() || null;
       return {
         id: h.id,
         relative_timestamp: h.relative_timestamp ?? null,
         button_click_timestamp: h.button_click_timestamp,
-        playback_id: h.playback_id ?? null,
-        mux_public_playback_url:
-          h.mux_public_playback_url ??
-          (h.playback_id
-            ? `https://stream.mux.com/${h.playback_id}.m3u8`
-            : h.s3path
-              ? h.s3path.startsWith('http')
-                ? h.s3path
-                : `https://${process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets'}.s3.${process.env.AWS_S3_REGION || process.env.AWS_REGION || 'eu-north-1'}.amazonaws.com/${h.s3path.split('/').map(encodeURIComponent).join('/')}`
-              : null),
-        thumbnail_url: h.playback_id
-          ? `https://image.mux.com/${h.playback_id}/thumbnail.jpg?time=2`
+        playback_id: playbackId,
+        mux_public_playback_url: streamUrl,
+        thumbnail_url: playbackId
+          ? `https://image.mux.com/${playbackId}/thumbnail.jpg?time=2`
           : null,
         status: h.status ?? 'unknown',
         likesCount: Number(h.likesCount ?? 0),
@@ -2724,6 +2755,106 @@ export class RecordingService {
         viewerSaved: v?.saved ?? false,
       };
     });
+  }
+
+  /**
+   * Fresh playback URL for a highlight clip (signed Mux JWT when configured, else S3/Mux public).
+   */
+  async getHighlightPlayback(
+    recordingId: string,
+    highlightId: string,
+  ): Promise<{
+    highlight_id: string;
+    recording_id: string;
+    playback_id: string | null;
+    mux_public_url: string | null;
+    signed_token: string | null;
+    signed_url: string | null;
+    expires_at: Date | null;
+    playable: boolean;
+    status: string;
+  }> {
+    const sessionRows = await this.getSessionRecordings(recordingId);
+    const recordingIds =
+      sessionRows.length > 0 ? sessionRows.map((row) => row.id) : [recordingId];
+
+    let highlight = await this.recordingHighlightsRepository.findOne({
+      where: { id: highlightId, recordingId: In(recordingIds) },
+    });
+
+    if (!highlight) {
+      throw new NotFoundException(
+        `Highlight ${highlightId} not found for recording ${recordingId}`,
+      );
+    }
+
+    highlight =
+      await this.recordingHighlightsService.syncHighlightClipFromMux(highlight);
+
+    const st = String(highlight.status ?? '').toLowerCase();
+    if (
+      st === HIGHLIGHT_STATUS.FAILED ||
+      st === HIGHLIGHT_STATUS.PERMANENTLY_FAILED
+    ) {
+      return {
+        highlight_id: highlight.id,
+        recording_id: highlight.recordingId,
+        playback_id: null,
+        mux_public_url: null,
+        signed_token: null,
+        signed_url: null,
+        expires_at: null,
+        playable: false,
+        status: st,
+      };
+    }
+
+    const playbackId = highlight.playback_id?.trim() || null;
+    const streamUrl = resolveHighlightStreamUrl(highlight);
+
+    if (!streamUrl) {
+      return {
+        highlight_id: highlight.id,
+        recording_id: highlight.recordingId,
+        playback_id: playbackId,
+        mux_public_url: null,
+        signed_token: null,
+        signed_url: null,
+        expires_at: null,
+        playable: false,
+        status: st || 'processing',
+      };
+    }
+
+    if (playbackId && streamUrl.includes('stream.mux.com')) {
+      const signed = await this.muxService.signPlaybackToken(playbackId);
+      const publicUrl = muxHighlightHlsUrl(playbackId)!;
+      return {
+        highlight_id: highlight.id,
+        recording_id: highlight.recordingId,
+        playback_id: playbackId,
+        mux_public_url: publicUrl,
+        signed_token: signed?.token ?? null,
+        signed_url: signed?.token
+          ? `${publicUrl}?token=${encodeURIComponent(signed.token)}`
+          : publicUrl,
+        expires_at: signed?.expires_at ?? null,
+        playable: true,
+        status: 'ready',
+      };
+    }
+
+    return {
+      highlight_id: highlight.id,
+      recording_id: highlight.recordingId,
+      playback_id: playbackId,
+      mux_public_url: streamUrl,
+      signed_token: null,
+      signed_url: streamUrl,
+      expires_at: null,
+      playable: true,
+      status: 'ready',
+    };
   }
 
   /**
@@ -3849,6 +3980,14 @@ export class RecordingService {
           .slice(0, 14);
         const s3Key = `recordings/${recording.id}_${timestamp}.mp4`;
 
+        const { uploadUrl, uploadId } =
+          await this.muxService.createDirectUpload(recording.id);
+
+        recording.metadata = {
+          ...(recording.metadata as Record<string, unknown>),
+          expected_s3_key: s3Key,
+          mux_upload_id: uploadId,
+        } as Recording['metadata'];
         await this.recordingRepositoryForMedia.save(recording);
 
         if (channelNumber === nvrChannels[0]) {
@@ -3866,9 +4005,6 @@ export class RecordingService {
           }
         }
 
-        const { uploadUrl } = await this.muxService.createDirectUpload(
-          recording.id,
-        );
         const callbackWebhookUrl = `${process.env.APP_BASE_URL || 'https://api.fieldflicks.com'}/recording/pi-callback`;
 
         this.logger.log(

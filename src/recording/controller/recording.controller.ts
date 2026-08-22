@@ -626,6 +626,20 @@ export class RecordingController {
     );
   }
 
+  @Public()
+  @Get(':id/highlights/:highlightId/playback')
+  @ApiOperation({ summary: 'Get playback URL for a highlight clip' })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Highlight playback URL returned',
+  })
+  async getHighlightPlayback(
+    @Param('id') recordingId: string,
+    @Param('highlightId') highlightId: string,
+  ) {
+    return this.recordingService.getHighlightPlayback(recordingId, highlightId);
+  }
+
   @Get(':id/session-recordings')
   @ApiOperation({
     summary:

@@ -538,6 +538,27 @@ export class MuxService {
     }
   }
 
+  /** Poll a Mux direct upload — used when webhook/asset_id link was missed. */
+  async getDirectUpload(uploadId: string): Promise<{
+    id?: string;
+    status?: string;
+    asset_id?: string | null;
+  } | null> {
+    try {
+      const upload = await this.mux.video.uploads.retrieve(uploadId);
+      return upload as {
+        id?: string;
+        status?: string;
+        asset_id?: string | null;
+      };
+    } catch (error) {
+      this.logger.warn(
+        `Failed to retrieve Mux direct upload ${uploadId}: ${(error as Error)?.message}`,
+      );
+      return null;
+    }
+  }
+
   /**
    * Handles Mux Webhook Events (e.g. video.asset.ready)
    */

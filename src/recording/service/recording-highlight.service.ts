@@ -270,10 +270,11 @@ export class RecordingHighlightsService {
     highlight: RecordingHighlights,
   ): Promise<RecordingHighlights> {
     const st = String(highlight.status ?? '').toLowerCase();
-    if (
-      st === HIGHLIGHT_STATUS.READY &&
-      highlight.mux_public_playback_url?.trim()
-    ) {
+    const storedUrl = highlight.mux_public_playback_url?.trim() ?? '';
+    const hasMuxStream =
+      Boolean(highlight.playback_id?.trim()) ||
+      storedUrl.includes('stream.mux.com');
+    if (st === HIGHLIGHT_STATUS.READY && hasMuxStream) {
       return highlight;
     }
     if (!highlight.asset_id) {
@@ -343,6 +344,27 @@ export class RecordingHighlightsService {
       );
     if (!isPlayable && !recording.isVideoCreated) {
       return;
+    }
+
+    // S3-attached highlights were marked isClipCreated=true without a Mux asset — re-queue them.
+    const s3OnlyReset: Array<{ id: string }> = await this.dataSource.query(
+      `UPDATE recording_highlights
+       SET "isClipCreated" = false,
+           status = $1,
+           source_asset_id = $2,
+           updated_at = NOW()
+       WHERE recording_id = $3
+         AND asset_id IS NULL
+         AND playback_id IS NULL
+         AND s3path IS NOT NULL
+         AND "isClipCreated" = true
+       RETURNING id`,
+      [HIGHLIGHT_STATUS.PENDING, recording.mux_asset_id, recordingId],
+    );
+    if (s3OnlyReset.length > 0) {
+      this.logger.log(
+        `Re-queued ${s3OnlyReset.length} S3-only highlight(s) for Mux clip creation on recording ${recordingId}`,
+      );
     }
 
     const pendingCount = await this.dataSource.manager
