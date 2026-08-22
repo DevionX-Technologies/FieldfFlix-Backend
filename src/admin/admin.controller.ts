@@ -394,6 +394,21 @@ export class AdminController {
     return this.recordingService.retryMuxIngestion(id);
   }
 
+  /** Run sequential Mux ingest for all S3-ready recordings on an IST date */
+  @Public()
+  @Post('extraction-pipeline/mux-cycle')
+  async runMuxIngestionCycle(@Body() body: { date?: string }) {
+    const date =
+      body?.date ||
+      new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+      }).format(new Date());
+    return this.recordingService.runMuxIngestionCycleForDate(date);
+  }
+
   /** Get fresh playable stream URL for a recording */
   @Public()
   @Get('recordings/:id/playback-url')

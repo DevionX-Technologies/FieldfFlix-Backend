@@ -10,7 +10,14 @@ import {
 } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, IsNull, Not, QueryRunner, Repository } from 'typeorm';
+import {
+  DataSource,
+  Between,
+  IsNull,
+  Not,
+  QueryRunner,
+  Repository,
+} from 'typeorm';
 import { StartRecordingDto } from '../dto/start-recording.dto';
 import {
   ExtractSessionRequestDto,
@@ -107,6 +114,7 @@ export class RecordingService {
   private static readonly MAX_EXTRACT_ATTEMPTS = 3;
   private staleExtractionRunning = false;
   private staleMuxHealRunning = false;
+  private muxCycleRunning = false;
 
   private static defaultMediaBucket(): string {
     return process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
@@ -501,6 +509,92 @@ export class RecordingService {
       status: 'uploaded',
     });
     return { ok: true, action: 'mux_upload_started' };
+  }
+
+  /**
+   * Admin: sequentially retry Mux ingest for every recording on a given IST day
+   * that still lacks a playback ID (S3 → Mux, one video at a time).
+   */
+  async runMuxIngestionCycleForDate(date: string): Promise<{
+    date: string;
+    totalCandidates: number;
+    processed: number;
+    summary: Record<string, number>;
+    results: Array<{
+      recordingId: string;
+      ok: boolean;
+      action: string;
+      error?: string;
+    }>;
+  }> {
+    if (this.muxCycleRunning) {
+      throw new ConflictException('Mux ingestion cycle is already running');
+    }
+    this.muxCycleRunning = true;
+
+    const summary: Record<string, number> = {};
+    const results: Array<{
+      recordingId: string;
+      ok: boolean;
+      action: string;
+      error?: string;
+    }> = [];
+
+    try {
+      const dayStart = new Date(`${date}T00:00:00+05:30`);
+      const dayEnd = new Date(`${date}T23:59:59.999+05:30`);
+
+      const candidates = await this.recordingRepositoryForMedia.find({
+        where: {
+          startTime: Between(dayStart, dayEnd),
+          mux_playback_id: IsNull(),
+        },
+        order: { startTime: 'ASC', id: 'ASC' },
+      });
+
+      this.logger.log(
+        `Starting Mux ingestion cycle for ${date}: ${candidates.length} candidate(s)`,
+      );
+
+      for (const rec of candidates) {
+        try {
+          const result = await this.retryMuxIngestion(rec.id);
+          summary[result.action] = (summary[result.action] ?? 0) + 1;
+          results.push({
+            recordingId: rec.id,
+            ok: result.ok,
+            action: result.action,
+          });
+          this.logger.log(
+            `Mux cycle ${date}: ${rec.id.slice(0, 8)} → ${result.action}`,
+          );
+          // Space out Mux API calls when uploading from S3.
+          if (result.action === 'mux_upload_started') {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+          }
+        } catch (e) {
+          summary.failed = (summary.failed ?? 0) + 1;
+          const message = (e as Error)?.message ?? String(e);
+          results.push({
+            recordingId: rec.id,
+            ok: false,
+            action: 'failed',
+            error: message,
+          });
+          this.logger.warn(`Mux cycle failed for ${rec.id}: ${message}`);
+        }
+      }
+
+      return {
+        date,
+        totalCandidates: candidates.length,
+        processed: results.length,
+        summary,
+        results,
+      };
+    } finally {
+      this.muxCycleRunning = false;
+    }
   }
 
   /**
