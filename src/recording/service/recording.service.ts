@@ -116,6 +116,65 @@ export class RecordingService {
   private staleExtractionRunning = false;
   private staleMuxHealRunning = false;
   private muxCycleRunning = false;
+  private muxCycleProgress: {
+    status: 'idle' | 'running' | 'complete' | 'failed';
+    phase: 'video' | 'highlights' | null;
+    date: string | null;
+    startedAt: string | null;
+    completedAt: string | null;
+    totalCandidates: number;
+    processed: number;
+    summary: Record<string, number>;
+    results: Array<{
+      recordingId: string;
+      ok: boolean;
+      action: string;
+      error?: string;
+    }>;
+    highlightPhase?: Awaited<
+      ReturnType<RecordingHighlightsService['runHighlightMuxCycleForDate']>
+    > | null;
+    error?: string | null;
+  } = {
+    status: 'idle',
+    phase: null,
+    date: null,
+    startedAt: null,
+    completedAt: null,
+    totalCandidates: 0,
+    processed: 0,
+    summary: {},
+    results: [],
+    highlightPhase: null,
+    error: null,
+  };
+
+  getMuxCycleProgress() {
+    return {
+      running: this.muxCycleRunning,
+      ...this.muxCycleProgress,
+    };
+  }
+
+  private resetMuxCycleProgress(date: string, phase: 'video' | 'highlights') {
+    this.muxCycleProgress = {
+      status: 'running',
+      phase,
+      date,
+      startedAt: new Date().toISOString(),
+      completedAt: null,
+      totalCandidates: 0,
+      processed: 0,
+      summary: {},
+      results: [],
+      highlightPhase: null,
+      error: null,
+    };
+  }
+
+  private touchMuxCycleProgress() {
+    this.muxCycleProgress = { ...this.muxCycleProgress };
+  }
 
   private static defaultMediaBucket(): string {
     return process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
@@ -545,6 +604,7 @@ export class RecordingService {
       throw new ConflictException('Mux ingestion cycle is already running');
     }
     this.muxCycleRunning = true;
+    this.resetMuxCycleProgress(date, 'video');
 
     const summary: Record<string, number> = {};
     const results: Array<{
@@ -573,6 +633,9 @@ export class RecordingService {
       this.logger.log(
         `Starting Mux ingestion cycle for ${date}: ${needingIngest.length} candidate(s) (${candidates.length} with S3)`,
       );
+
+      this.muxCycleProgress.totalCandidates = needingIngest.length;
+      this.touchMuxCycleProgress();
 
       const concurrency = Math.max(
         1,
@@ -616,13 +679,27 @@ export class RecordingService {
           }
           results.push(row);
         }
+
+        this.muxCycleProgress.processed = results.length;
+        this.muxCycleProgress.summary = { ...summary };
+        this.muxCycleProgress.results = [...results];
+        this.touchMuxCycleProgress();
       }
+
+      this.muxCycleProgress.phase = 'highlights';
+      this.touchMuxCycleProgress();
 
       const highlightPhase =
         await this.recordingHighlightsService.runHighlightMuxCycleForDate(date);
       for (const [action, count] of Object.entries(highlightPhase.summary)) {
         summary[`hl_${action}`] = count;
       }
+
+      this.muxCycleProgress.status = 'complete';
+      this.muxCycleProgress.completedAt = new Date().toISOString();
+      this.muxCycleProgress.summary = { ...summary };
+      this.muxCycleProgress.highlightPhase = highlightPhase;
+      this.touchMuxCycleProgress();
 
       return {
         date,
@@ -632,6 +709,55 @@ export class RecordingService {
         results,
         highlightPhase,
       };
+    } catch (err) {
+      this.muxCycleProgress.status = 'failed';
+      this.muxCycleProgress.error = (err as Error)?.message ?? String(err);
+      this.muxCycleProgress.completedAt = new Date().toISOString();
+      this.touchMuxCycleProgress();
+      throw err;
+    } finally {
+      this.muxCycleRunning = false;
+      if (this.muxCycleProgress.status === 'running') {
+        this.muxCycleProgress.status = 'complete';
+        this.muxCycleProgress.completedAt = new Date().toISOString();
+        this.touchMuxCycleProgress();
+      }
+    }
+  }
+
+  /** Admin: highlight-only Mux clip backfill for an IST date. */
+  async runHighlightMuxCycleForDate(
+    date: string,
+  ): Promise<
+    Awaited<
+      ReturnType<RecordingHighlightsService['runHighlightMuxCycleForDate']>
+    >
+  > {
+    if (this.muxCycleRunning) {
+      throw new ConflictException('Mux ingestion cycle is already running');
+    }
+    this.muxCycleRunning = true;
+    this.resetMuxCycleProgress(date, 'highlights');
+
+    try {
+      const highlightPhase =
+        await this.recordingHighlightsService.runHighlightMuxCycleForDate(date);
+      this.muxCycleProgress.status = 'complete';
+      this.muxCycleProgress.completedAt = new Date().toISOString();
+      this.muxCycleProgress.totalCandidates = highlightPhase.totalCandidates;
+      this.muxCycleProgress.processed = highlightPhase.processed;
+      this.muxCycleProgress.summary = Object.fromEntries(
+        Object.entries(highlightPhase.summary).map(([k, v]) => [`hl_${k}`, v]),
+      );
+      this.muxCycleProgress.highlightPhase = highlightPhase;
+      this.touchMuxCycleProgress();
+      return highlightPhase;
+    } catch (err) {
+      this.muxCycleProgress.status = 'failed';
+      this.muxCycleProgress.error = (err as Error)?.message ?? String(err);
+      this.muxCycleProgress.completedAt = new Date().toISOString();
+      this.touchMuxCycleProgress();
+      throw err;
     } finally {
       this.muxCycleRunning = false;
     }

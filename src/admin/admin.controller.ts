@@ -409,6 +409,13 @@ export class AdminController {
     return this.recordingService.runMuxIngestionCycleForDate(date);
   }
 
+  /** Poll in-progress / last completed Mux cycle (video + highlight phases). */
+  @Public()
+  @Get('extraction-pipeline/mux-cycle/status')
+  async getMuxIngestionCycleStatus() {
+    return this.recordingService.getMuxCycleProgress();
+  }
+
   /** Run highlight Mux clip backfill for an IST date (separate from full-video ingest). */
   @Public()
   @Post('extraction-pipeline/highlight-mux-cycle')
@@ -421,7 +428,7 @@ export class AdminController {
         month: '2-digit',
         day: '2-digit',
       }).format(new Date());
-    return this.recordingHighlightsService.runHighlightMuxCycleForDate(date);
+    return this.recordingService.runHighlightMuxCycleForDate(date);
   }
 
   /** Get fresh playable stream URL for a recording */

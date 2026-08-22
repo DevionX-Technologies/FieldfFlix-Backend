@@ -13,7 +13,7 @@ import { CommonService } from 'src/common/service/common.service';
 import { RecordingService } from 'src/recording/service/recording.service';
 import { successResponse } from 'src/responses/response-utils';
 
-const ANDROID_PACKAGE = 'com.loki123123.fieldflix';
+const ANDROID_PACKAGE = process.env.ANDROID_APP_PACKAGE || 'com.fieldflicks';
 const PLAY_STORE_URL = `https://play.google.com/store/apps/details?id=${ANDROID_PACKAGE}`;
 
 /**
