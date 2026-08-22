@@ -835,27 +835,29 @@ export class AdminAnalyticsService {
 
   /** Count pipeline objects stuck before Mux (DB + S3 hints). */
   async getPipelineStorageAudit(): Promise<any> {
-    const byStatusRows: Array<{ status: string; count: string }> = await this
-      .dataSource.query(`
-        SELECT status, COUNT(*)::text AS count
-        FROM recordings
-        WHERE mux_playback_id IS NULL OR mux_playback_id = ''
-        GROUP BY status
-        ORDER BY count DESC
-      `);
+    const noMuxClause =
+      '(r.mux_playback_id IS NULL OR r.mux_playback_id = :empty)';
 
-    const withoutMuxRow = await this.dataSource.query(`
-      SELECT COUNT(*)::text AS count
-      FROM recordings
-      WHERE mux_playback_id IS NULL OR mux_playback_id = ''
-    `);
+    const byStatusRows: Array<{ status: string; count: string }> =
+      await this.recordingRepo
+        .createQueryBuilder('r')
+        .select('r.status', 'status')
+        .addSelect('COUNT(*)', 'count')
+        .where(noMuxClause, { empty: '' })
+        .groupBy('r.status')
+        .orderBy('count', 'DESC')
+        .getRawMany();
 
-    const s3NoMuxRow = await this.dataSource.query(`
-      SELECT COUNT(*)::text AS count
-      FROM recordings
-      WHERE s3Path IS NOT NULL AND s3Path <> ''
-        AND (mux_playback_id IS NULL OR mux_playback_id = '')
-    `);
+    const withoutMuxTotal = await this.recordingRepo
+      .createQueryBuilder('r')
+      .where(noMuxClause, { empty: '' })
+      .getCount();
+
+    const withS3NoMux = await this.recordingRepo
+      .createQueryBuilder('r')
+      .where('r.s3Path IS NOT NULL AND r.s3Path <> :empty', { empty: '' })
+      .andWhere(noMuxClause, { empty: '' })
+      .getCount();
 
     const recentS3NoMux = await this.recordingRepo.find({
       where: {},
@@ -879,8 +881,8 @@ export class AdminAnalyticsService {
       }));
 
     return {
-      withoutMuxTotal: Number(withoutMuxRow?.[0]?.count ?? 0),
-      withS3NoMux: Number(s3NoMuxRow?.[0]?.count ?? 0),
+      withoutMuxTotal,
+      withS3NoMux,
       byStatusWithoutMux: byStatusRows.map((row) => ({
         status: row.status,
         count: Number(row.count),
