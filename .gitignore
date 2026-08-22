@@ -74,3 +74,6 @@ logs/
 LOGS_AUDIT_PLAYBOOK.md
 recording-logs.txt
 test-db.js
+
+# Infra reference — contains live DB password, do not commit
+INFRASTRUCTURE.md

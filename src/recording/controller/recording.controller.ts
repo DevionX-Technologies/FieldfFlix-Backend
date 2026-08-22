@@ -10,7 +10,6 @@ import {
   Get,
   NotFoundException,
   Res,
-  StreamableFile,
   HttpCode,
   Logger,
   Req,
@@ -467,26 +466,16 @@ export class RecordingController {
   })
   async streamRecording(
     @Param('id') recordingId: string,
-    @Res({ passthrough: true }) res: Response,
-  ): Promise<StreamableFile> {
+    @Res() res: Response,
+  ): Promise<void> {
     const s3Key = await this.recordingService.getRecordingS3Path(recordingId);
-    // Construct bucket name based on FileServiceService pattern
-    const bucketName = `${process.env.APP_NAME}-${process.env.ENVIRONMENT}-media`;
 
-    // Get the video stream from FileServiceService
-    const videoStream = await this.fileServiceService.getVideoStream(
-      s3Key,
-      bucketName,
-    );
-
-    // Set headers for video streaming (adjust content type as needed)
-    // Note: In a real scenario, you might want to get content type from S3 object metadata
-    res.set({
-      'Content-Type': 'video/mp4', // Or appropriate video type
-      'Content-Disposition': `inline; filename="recording-${recordingId}.mp4"`, // Suggest filename
-    });
-
-    return new StreamableFile(videoStream);
+    // Redirect to a short-lived presigned S3 URL instead of piping the whole file
+    // through this server. Keeps video bytes off the app (no double egress / CPU)
+    // and lets S3 handle HTTP Range requests so seeking works.
+    // To serve via CDN later, swap this for a CloudFront signed URL.
+    const url = await this.fileServiceService.getSignedUrlFromS3(s3Key);
+    res.redirect(HttpStatus.FOUND, url);
   }
 
   /**

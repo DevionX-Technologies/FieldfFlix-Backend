@@ -105,6 +105,12 @@ variable "manage_media_buckets" {
   description = "When true, Terraform creates/manages the S3 media buckets + CloudFront. Set false to deploy the app without touching media storage (e.g. the desired bucket name is owned elsewhere, or live data already exists). The ECS task role still gets access to the expected bucket ARNs either way."
 }
 
+variable "enable_container_insights" {
+  type        = bool
+  default     = false
+  description = "ECS Container Insights. Off by default to save cost — the essential alarms use free AWS/ECS + AWS/ApplicationELB metrics. Turn on for deeper per-container/network dashboards."
+}
+
 variable "db_free_tier" {
   type        = bool
   default     = false

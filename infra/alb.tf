@@ -14,6 +14,13 @@ resource "aws_lb" "main" {
   idle_timeout               = 120 # long enough for video proxy responses
   enable_deletion_protection = true
 
+  # Per-request access logs for bandwidth attribution (see monitoring.tf / Athena).
+  access_logs {
+    bucket  = aws_s3_bucket.alb_logs.id
+    prefix  = "alb"
+    enabled = true
+  }
+
   tags = { Name = "${local.name_prefix}-alb" }
 }
 

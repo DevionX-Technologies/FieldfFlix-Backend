@@ -11,6 +11,15 @@ resource "aws_budgets_budget" "monthly" {
   limit_unit   = "USD"
   time_unit    = "MONTHLY"
 
+  # Early tripwire: 50% of budget already spent (actual).
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 50
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "ACTUAL"
+    subscriber_email_addresses = [var.alert_email]
+  }
+
   # Alert at 80% forecasted and 100% actual.
   notification {
     comparison_operator        = "GREATER_THAN"
