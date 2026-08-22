@@ -350,16 +350,15 @@ export class RecordingHighlightsService {
     const s3OnlyReset: Array<{ id: string }> = await this.dataSource.query(
       `UPDATE recording_highlights
        SET "isClipCreated" = false,
-           status = $1,
-           source_asset_id = $2,
+           source_asset_id = $1,
            updated_at = NOW()
-       WHERE recording_id = $3
+       WHERE recording_id = $2
          AND asset_id IS NULL
          AND playback_id IS NULL
          AND s3path IS NOT NULL
          AND "isClipCreated" = true
        RETURNING id`,
-      [HIGHLIGHT_STATUS.PENDING, recording.mux_asset_id, recordingId],
+      [recording.mux_asset_id, recordingId],
     );
     if (s3OnlyReset.length > 0) {
       this.logger.log(

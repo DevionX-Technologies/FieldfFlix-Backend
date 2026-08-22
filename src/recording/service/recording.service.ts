@@ -2671,6 +2671,19 @@ export class RecordingService {
     const recordingIds =
       sessionRows.length > 0 ? sessionRows.map((row) => row.id) : [recordingId];
 
+    // Heal rows broken by an earlier deploy that reset S3 highlights to pending.
+    if (recordingIds.length > 0) {
+      await this.recordingHighlightsRepository
+        .createQueryBuilder()
+        .update()
+        .set({ status: HIGHLIGHT_STATUS.READY })
+        .where('recording_id IN (:...recordingIds)', { recordingIds })
+        .andWhere('status = :pending', { pending: HIGHLIGHT_STATUS.PENDING })
+        .andWhere('s3path IS NOT NULL')
+        .andWhere('mux_public_playback_url IS NOT NULL')
+        .execute();
+    }
+
     for (const id of recordingIds) {
       const rec = await this.recordingRepository.findOne({
         where: { id },
@@ -2712,21 +2725,7 @@ export class RecordingService {
       ) {
         return false;
       }
-
-      const playbackId = h.playback_id?.trim?.() ?? '';
-      const muxUrl = h.mux_public_playback_url?.trim?.() ?? '';
-      const s3Url =
-        h.s3path?.trim?.() && String(h.s3path).startsWith('http')
-          ? String(h.s3path)
-          : '';
-
-      const hasStream = Boolean(muxUrl || s3Url || playbackId);
-      if (!hasStream) return false;
-
-      return (
-        st === HIGHLIGHT_STATUS.READY ||
-        (Boolean(playbackId) && st === HIGHLIGHT_STATUS.CLIP_CREATED)
-      );
+      return Boolean(resolveHighlightStreamUrl(h));
     });
 
     const ids = filtered.map((h) => h.id);

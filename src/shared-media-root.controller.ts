@@ -55,6 +55,13 @@ export class SharedMediaRootController {
       viewerUserId,
     );
 
+    const highlightId =
+      typeof req.query.highlight === 'string'
+        ? req.query.highlight.trim()
+        : typeof req.query.highlightId === 'string'
+          ? req.query.highlightId.trim()
+          : '';
+
     if (wantsHtml) {
       if (!resolved) {
         return res
@@ -67,7 +74,7 @@ export class SharedMediaRootController {
       return res
         .status(200)
         .type('text/html; charset=utf-8')
-        .send(shareLinkBridgeHtml(shareToken));
+        .send(shareLinkBridgeHtml(shareToken, highlightId || undefined));
     }
 
     if (!resolved) {
@@ -86,11 +93,14 @@ export class SharedMediaRootController {
   }
 }
 
-function shareLinkBridgeHtml(shareToken: string): string {
-  const appScheme = `fieldflix://shared/media/${encodeURIComponent(shareToken)}`;
+function shareLinkBridgeHtml(shareToken: string, highlightId?: string): string {
+  const highlightQuery = highlightId
+    ? `?highlight=${encodeURIComponent(highlightId)}`
+    : '';
+  const appScheme = `fieldflix://shared/media/${encodeURIComponent(shareToken)}${highlightQuery}`;
   // intent:// is the typical Android "open app or market" pattern.
   const intentUrl =
-    `intent://shared/media/${encodeURIComponent(shareToken)}#Intent;` +
+    `intent://shared/media/${encodeURIComponent(shareToken)}${highlightQuery}#Intent;` +
     `package=${ANDROID_PACKAGE};` +
     `scheme=fieldflix;` +
     `S.browser_fallback_url=${encodeURIComponent(PLAY_STORE_URL)};end`;
