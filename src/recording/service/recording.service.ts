@@ -102,6 +102,7 @@ import {
   muxHighlightHlsUrl,
   resolveHighlightStreamUrl,
 } from 'src/utils/s3-highlight-key.util';
+import { resolveHighlightThumbnailUrl } from 'src/utils/highlight-thumbnail.util';
 
 /**
  * Service for managing recordings.
@@ -2735,19 +2736,33 @@ export class RecordingService {
         ids,
       );
 
+    const parentRecordings = await this.recordingRepository.find({
+      where: { id: In(recordingIds) },
+      select: ['id', 'mux_playback_id'],
+    });
+    const parentMuxByRecordingId = new Map(
+      parentRecordings.map((rec) => [
+        rec.id,
+        rec.mux_playback_id?.trim() || null,
+      ]),
+    );
+
     return filtered.map((h) => {
       const v = viewer.get(h.id);
       const streamUrl = resolveHighlightStreamUrl(h);
       const playbackId = h.playback_id?.trim() || null;
+      const parentMux = parentMuxByRecordingId.get(h.recordingId) ?? null;
       return {
         id: h.id,
         relative_timestamp: h.relative_timestamp ?? null,
         button_click_timestamp: h.button_click_timestamp,
         playback_id: playbackId,
         mux_public_playback_url: streamUrl,
-        thumbnail_url: playbackId
-          ? `https://image.mux.com/${playbackId}/thumbnail.jpg?time=2`
-          : null,
+        thumbnail_url: resolveHighlightThumbnailUrl({
+          playback_id: playbackId,
+          relative_timestamp: h.relative_timestamp,
+          parent_mux_playback_id: parentMux,
+        }),
         status: h.status ?? 'unknown',
         likesCount: Number(h.likesCount ?? 0),
         viewerLiked: v?.liked ?? false,
