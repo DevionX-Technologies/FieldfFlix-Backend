@@ -98,7 +98,7 @@ export class RecordingService {
   private static readonly STALE_IN_PROGRESS_MS = 2 * 60 * 60 * 1000; // 2 hours
 
   /** On-demand extractions without Mux playback older than this are failed (max 3 attempts). */
-  private static readonly STALE_EXTRACTION_MS = 45 * 60 * 1000; // 45 minutes
+  private static readonly STALE_EXTRACTION_MS = 6 * 60 * 60 * 1000; // 6 hours
   private static readonly MAX_EXTRACT_ATTEMPTS = 3;
   private staleExtractionRunning = false;
 
@@ -353,7 +353,7 @@ export class RecordingService {
             metadata: {
               ...meta,
               extract_failed_reason:
-                'Pi/Mux pipeline timed out after 3 attempts',
+                'No playable video after 6 hours — extraction timed out',
             },
           });
           this.logger.warn(
@@ -366,7 +366,7 @@ export class RecordingService {
               ...meta,
               extract_attempts: attempts,
               extract_failed_reason:
-                'Pi/Mux pipeline timed out — retry on next claim',
+                'No playable video after 6 hours — please try claiming again',
             },
           });
         }
