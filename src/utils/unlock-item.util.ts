@@ -5,10 +5,9 @@ export type UnlockItem = 'highlights' | 'shorts' | 'full_match';
 const VALID_ITEMS = new Set<UnlockItem>(['highlights', 'shorts', 'full_match']);
 
 /** Normalize checkout / client item keys to a canonical unlock item. */
-export function normalizeUnlockItem(raw?: string | null): UnlockItem {
-  const value = String(raw || 'full_match')
-    .trim()
-    .toLowerCase();
+export function normalizeUnlockItem(raw?: string | null | unknown): UnlockItem {
+  if (raw == null || raw === '') return 'full_match';
+  const value = String(raw).trim().toLowerCase();
   if (value === 'highlights' || value === 'highlight') return 'highlights';
   if (value === 'shorts' || value === 'timeline' || value === 'reels') {
     return 'shorts';
