@@ -9,11 +9,11 @@ export type ParsedHighlightS3Key = {
   key: string;
   court: number;
   nvrCam: number;
-  /** Window start encoded in the key (venue local IST). */
+  /** Window start encoded in the key (Pi gateway UTC, aligns with S3 LastModified). */
   windowStart: Date;
 };
 
-/** Parse timestamp in key as IST (UTC+5:30), matching gateway/NVR local time. */
+/** Parse timestamp in key as UTC — Botanical Pi keys match upload time in UTC. */
 export function parseHighlightKeyTimestamp(
   datePart: string,
   timePart: string,
@@ -24,8 +24,7 @@ export function parseHighlightKeyTimestamp(
   const hour = parseInt(timePart.slice(0, 2), 10);
   const minute = parseInt(timePart.slice(2, 4), 10);
   const second = parseInt(timePart.slice(4, 6), 10);
-  const istAsUtcMs = Date.UTC(year, month, day, hour, minute, second);
-  return new Date(istAsUtcMs - 5.5 * 60 * 60 * 1000);
+  return new Date(Date.UTC(year, month, day, hour, minute, second));
 }
 
 export function parseHighlightS3Key(key: string): ParsedHighlightS3Key | null {

@@ -62,6 +62,7 @@ import { PointsModule } from 'src/points/points.module';
     RecordingService,
     RecordingPaymentService,
     RecordingHighlightEngagementService,
+    RecordingHighlightsService,
   ],
 })
 export class RecordingModule {}

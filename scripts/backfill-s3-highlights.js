@@ -22,8 +22,7 @@ function parseHighlightKeyTimestamp(datePart, timePart) {
   const hour = parseInt(timePart.slice(0, 2), 10);
   const minute = parseInt(timePart.slice(2, 4), 10);
   const second = parseInt(timePart.slice(4, 6), 10);
-  const istAsUtcMs = Date.UTC(year, month, day, hour, minute, second);
-  return new Date(istAsUtcMs - 5.5 * 60 * 60 * 1000);
+  return new Date(Date.UTC(year, month, day, hour, minute, second));
 }
 
 function parseHighlightS3Key(key) {

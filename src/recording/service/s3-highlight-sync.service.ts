@@ -18,6 +18,10 @@ import {
   LiveStreamSlot,
 } from 'src/utils/live-stream-slots.util';
 import { resolveNvrChannelsForCamera } from 'src/utils/nvr-channels.util';
+import {
+  isBotanicalVenueLabel,
+  resolveBotanicalLogicalCourtNumber,
+} from 'src/utils/botanical-logical-court.util';
 
 @Injectable()
 export class S3HighlightSyncService {
@@ -117,14 +121,17 @@ export class S3HighlightSyncService {
       where: { id: cameraId },
       relations: ['turf'],
     });
-    if (!camera?.court_number) {
+    if (!camera) return 0;
+    if (!camera.court_number && !isBotanicalVenueLabel(camera.turf?.name)) {
       this.logger.debug(
         `S3 highlight sync skipped — camera ${cameraId} has no court_number`,
       );
       return 0;
     }
 
-    const court = camera.court_number;
+    const court = isBotanicalVenueLabel(camera.turf?.name)
+      ? resolveBotanicalLogicalCourtNumber(camera)
+      : camera.court_number;
     const nvrCams = this.nvrChannelsForCamera(camera);
 
     const existingRows = await this.dataSource.manager.find(

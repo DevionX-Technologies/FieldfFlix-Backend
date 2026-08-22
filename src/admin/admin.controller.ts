@@ -17,6 +17,10 @@ import {
 import { Request } from 'express';
 import { ILocalLoginPayload } from 'src/auth/strategy/jwt.strategy';
 import { RecordingService } from 'src/recording/service/recording.service';
+import { RecordingHighlightsService } from 'src/recording/service/recording-highlight.service';
+import { Recording } from 'src/recording/entities/recording.entity';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { UserService } from 'src/user/user.service';
 import { AdminRoleService } from './admin-role.service';
 import { AdminAnalyticsService } from './admin-analytics.service';
@@ -83,6 +87,10 @@ export class AdminController {
     private readonly userService: UserService,
     @Inject(forwardRef(() => RecordingService))
     private readonly recordingService: RecordingService,
+    @Inject(forwardRef(() => RecordingHighlightsService))
+    private readonly recordingHighlightsService: RecordingHighlightsService,
+    @InjectRepository(Recording)
+    private readonly recordingRepo: Repository<Recording>,
     private readonly pricingConfigService: PricingConfigService,
   ) {}
 
@@ -357,6 +365,26 @@ export class AdminController {
       this.recordingService,
       body,
     );
+  }
+
+  /** Re-scan S3 and attach highlight clips for a recording's time window */
+  @Public()
+  @Post('recordings/:id/reattach-highlights')
+  async reattachHighlights(@Param('id') id: string) {
+    const rec = await this.recordingRepo.findOne({ where: { id } });
+    if (!rec?.cameraId || !rec.startTime || !rec.endTime) {
+      throw new NotFoundException(
+        'Recording not found or missing camera/time window',
+      );
+    }
+    const attached =
+      await this.recordingHighlightsService.attachHighlightsInTimeWindow(
+        id,
+        rec.cameraId,
+        rec.startTime,
+        rec.endTime,
+      );
+    return { recordingId: id, attached };
   }
 
   /** Get fresh playable stream URL for a recording */
