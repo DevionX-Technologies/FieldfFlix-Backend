@@ -181,6 +181,69 @@ export class RecordingService {
     this.muxCycleProgress = { ...this.muxCycleProgress };
   }
 
+  private summarizeMuxCycleResults(
+    results: Array<{
+      recordingId: string;
+      ok: boolean;
+      action: string;
+      error?: string;
+    }>,
+  ): Record<string, number> {
+    const latest = new Map<string, (typeof results)[number]>();
+    for (const row of results) {
+      latest.set(row.recordingId, row);
+    }
+    const summary: Record<string, number> = {};
+    for (const row of latest.values()) {
+      if (row.error) {
+        summary.failed = (summary.failed ?? 0) + 1;
+      } else {
+        summary[row.action] = (summary[row.action] ?? 0) + 1;
+      }
+    }
+    return summary;
+  }
+
+  private isMuxCycleTerminalAction(action: string, ok: boolean): boolean {
+    if (!ok && action === 'failed') return true;
+    return action === 'already_ready' || action === 'no_source_video';
+  }
+
+  private upsertMuxCycleResult(
+    results: Array<{
+      recordingId: string;
+      ok: boolean;
+      action: string;
+      error?: string;
+    }>,
+    row: (typeof results)[number],
+  ): void {
+    const idx = results.findIndex((r) => r.recordingId === row.recordingId);
+    if (idx >= 0) {
+      results[idx] = row;
+    } else {
+      results.push(row);
+    }
+  }
+
+  private async listMuxCycleVideoCandidates(
+    date: string,
+  ): Promise<Recording[]> {
+    const dayStart = new Date(`${date}T00:00:00+05:30`);
+    const dayEnd = new Date(`${date}T23:59:59.999+05:30`);
+    const candidates = await this.recordingRepositoryForMedia.find({
+      where: {
+        startTime: Between(dayStart, dayEnd),
+        status: Not(In(['failed', 'cancelled'])),
+      },
+      order: { startTime: 'ASC', id: 'ASC' },
+    });
+    return candidates.filter((rec) => !this.isRecordingMuxPlayable(rec));
+  }
+
+  private static readonly MUX_CYCLE_MAX_SCAN_ROUNDS = 24;
+  private static readonly MUX_CYCLE_MAX_IDLE_ROUNDS = 2;
+
   private static defaultMediaBucket(): string {
     return process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
   }
@@ -625,6 +688,8 @@ export class RecordingService {
    */
   async runMuxIngestionCycleForDate(date: string): Promise<{
     date: string;
+    alreadyRunning?: boolean;
+    message?: string;
     totalCandidates: number;
     processed: number;
     summary: Record<string, number>;
@@ -639,12 +704,26 @@ export class RecordingService {
     >;
   }> {
     if (this.muxCycleRunning) {
-      throw new ConflictException('Mux ingestion cycle is already running');
+      if (this.muxCycleProgress.date === date) {
+        return {
+          alreadyRunning: true,
+          message:
+            'Mux cycle is already running for this date. The current run is not interrupted; new uploads for this day are picked up automatically on the next rescan.',
+          date,
+          totalCandidates: this.muxCycleProgress.totalCandidates,
+          processed: this.muxCycleProgress.processed,
+          summary: { ...this.muxCycleProgress.summary },
+          results: [...this.muxCycleProgress.results],
+          highlightPhase: this.muxCycleProgress.highlightPhase ?? undefined,
+        };
+      }
+      throw new ConflictException(
+        `Mux ingestion cycle is already running for ${this.muxCycleProgress.date ?? 'another date'}`,
+      );
     }
     this.muxCycleRunning = true;
     this.resetMuxCycleProgress(date, 'video');
 
-    const summary: Record<string, number> = {};
     const results: Array<{
       recordingId: string;
       ok: boolean;
@@ -653,76 +732,99 @@ export class RecordingService {
     }> = [];
 
     try {
-      const dayStart = new Date(`${date}T00:00:00+05:30`);
-      const dayEnd = new Date(`${date}T23:59:59.999+05:30`);
-
-      const candidates = await this.recordingRepositoryForMedia.find({
-        where: {
-          startTime: Between(dayStart, dayEnd),
-          status: Not(In(['failed', 'cancelled'])),
-        },
-        order: { startTime: 'ASC', id: 'ASC' },
-      });
-
-      const needingIngest = candidates.filter(
-        (rec) => !this.isRecordingMuxPlayable(rec),
-      );
-
-      this.logger.log(
-        `Starting Mux ingestion cycle for ${date}: ${needingIngest.length} candidate(s) (${candidates.length} total for day, ${candidates.filter((r) => r.s3Path).length} with s3Path)`,
-      );
-
-      this.muxCycleProgress.totalCandidates = needingIngest.length;
-      this.touchMuxCycleProgress();
-
       const concurrency = Math.max(
         1,
         Math.min(8, Number(process.env.MUX_CYCLE_CONCURRENCY ?? 5)),
       );
 
-      for (let i = 0; i < needingIngest.length; i += concurrency) {
-        const chunk = needingIngest.slice(i, i + concurrency);
-        const chunkResults = await Promise.all(
-          chunk.map(async (rec) => {
-            try {
-              const result = await this.retryMuxIngestion(rec.id);
-              return {
-                recordingId: rec.id,
-                ok: result.ok,
-                action: result.action,
-              };
-            } catch (e) {
-              const message = (e as Error)?.message ?? String(e);
-              return {
-                recordingId: rec.id,
-                ok: false,
-                action: 'failed',
-                error: message,
-              };
-            }
-          }),
+      let scanRound = 0;
+      let idleRounds = 0;
+
+      while (
+        scanRound < RecordingService.MUX_CYCLE_MAX_SCAN_ROUNDS &&
+        idleRounds < RecordingService.MUX_CYCLE_MAX_IDLE_ROUNDS
+      ) {
+        scanRound += 1;
+        const needingIngest = await this.listMuxCycleVideoCandidates(date);
+
+        const skipTerminal = new Set(
+          results
+            .filter((row) => this.isMuxCycleTerminalAction(row.action, row.ok))
+            .map((row) => row.recordingId),
         );
 
-        for (const row of chunkResults) {
-          if ('error' in row && row.error) {
-            summary.failed = (summary.failed ?? 0) + 1;
-            this.logger.warn(
-              `Mux cycle failed for ${row.recordingId}: ${row.error}`,
-            );
-          } else {
-            summary[row.action] = (summary[row.action] ?? 0) + 1;
-            this.logger.log(
-              `Mux cycle ${date}: ${row.recordingId.slice(0, 8)} → ${row.action}`,
-            );
-          }
-          results.push(row);
+        const toProcess = needingIngest.filter(
+          (rec) => !skipTerminal.has(rec.id),
+        );
+
+        if (scanRound === 1) {
+          this.logger.log(
+            `Starting Mux ingestion cycle for ${date}: ${needingIngest.length} initial candidate(s)`,
+          );
+        } else if (toProcess.length > 0) {
+          this.logger.log(
+            `Mux cycle ${date} rescan #${scanRound}: ${toProcess.length} additional/still-pending candidate(s)`,
+          );
         }
 
-        this.muxCycleProgress.processed = results.length;
-        this.muxCycleProgress.summary = { ...summary };
-        this.muxCycleProgress.results = [...results];
+        if (toProcess.length === 0) {
+          idleRounds += 1;
+          continue;
+        }
+        idleRounds = 0;
+
+        const seenIds = new Set([
+          ...results.map((r) => r.recordingId),
+          ...toProcess.map((r) => r.id),
+        ]);
+        this.muxCycleProgress.totalCandidates = seenIds.size;
         this.touchMuxCycleProgress();
+
+        for (let i = 0; i < toProcess.length; i += concurrency) {
+          const chunk = toProcess.slice(i, i + concurrency);
+          const chunkResults = await Promise.all(
+            chunk.map(async (rec) => {
+              try {
+                const result = await this.retryMuxIngestion(rec.id);
+                return {
+                  recordingId: rec.id,
+                  ok: result.ok,
+                  action: result.action,
+                };
+              } catch (e) {
+                const message = (e as Error)?.message ?? String(e);
+                return {
+                  recordingId: rec.id,
+                  ok: false,
+                  action: 'failed',
+                  error: message,
+                };
+              }
+            }),
+          );
+
+          for (const row of chunkResults) {
+            if (row.error) {
+              this.logger.warn(
+                `Mux cycle failed for ${row.recordingId}: ${row.error}`,
+              );
+            } else {
+              this.logger.log(
+                `Mux cycle ${date}: ${row.recordingId.slice(0, 8)} → ${row.action}`,
+              );
+            }
+            this.upsertMuxCycleResult(results, row);
+          }
+
+          const summary = this.summarizeMuxCycleResults(results);
+          this.muxCycleProgress.processed = results.length;
+          this.muxCycleProgress.summary = summary;
+          this.muxCycleProgress.results = [...results];
+          this.touchMuxCycleProgress();
+        }
       }
+
+      const summary = this.summarizeMuxCycleResults(results);
 
       this.muxCycleProgress.phase = 'highlights';
       this.touchMuxCycleProgress();
@@ -741,7 +843,7 @@ export class RecordingService {
 
       return {
         date,
-        totalCandidates: needingIngest.length,
+        totalCandidates: this.muxCycleProgress.totalCandidates,
         processed: results.length,
         summary,
         results,
