@@ -354,7 +354,7 @@ export class RecordingService {
               ...meta,
               extract_failed_reason:
                 'No playable video after 6 hours — extraction timed out',
-            },
+            } as Recording['metadata'],
           });
           this.logger.warn(
             `Marked stale extraction ${rec.id} as failed (${attempts} attempts)`,
@@ -367,7 +367,7 @@ export class RecordingService {
               extract_attempts: attempts,
               extract_failed_reason:
                 'No playable video after 6 hours — please try claiming again',
-            },
+            } as Recording['metadata'],
           });
         }
       }
@@ -3310,7 +3310,7 @@ export class RecordingService {
               ...(recording.metadata as Record<string, unknown>),
               extract_failed_reason:
                 (error as Error)?.message ?? 'Setup failed',
-            },
+            } as Recording['metadata'],
           });
           this.logger.error(
             `Error during on-demand extraction setup for camera ${camera.id} NVR ch ${channelNumber}: ${error.message}`,
@@ -3451,15 +3451,12 @@ export class RecordingService {
       const meta = (recording.metadata ?? {}) as Record<string, unknown>;
       const attempts = Number(meta.extract_attempts ?? 1);
       await this.recordingRepositoryForMedia.update(recording.id, {
-        status:
-          attempts >= RecordingService.MAX_EXTRACT_ATTEMPTS
-            ? 'failed'
-            : 'failed',
+        status: 'failed',
         metadata: {
           ...meta,
           extract_attempts: attempts,
           extract_failed_reason: dto.error ?? 'Pi reported extraction failure',
-        },
+        } as Recording['metadata'],
       });
     }
 
