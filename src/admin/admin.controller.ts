@@ -319,6 +319,28 @@ export class AdminController {
     );
   }
 
+  /** Date-wise on-demand extraction requests with live pipeline status */
+  @Public()
+  @Get('extraction-requests')
+  async listExtractionRequests(
+    @Query('date') date: string,
+    @Query('page') page: string,
+    @Query('limit') limit: string,
+  ) {
+    return this.adminAnalytics.listExtractionRequests(
+      date || undefined,
+      page ? parseInt(page, 10) : 1,
+      limit ? parseInt(limit, 10) : 100,
+    );
+  }
+
+  /** DB audit: recordings with S3 upload but no Mux playback yet */
+  @Public()
+  @Get('pipeline-storage-audit')
+  async pipelineStorageAudit() {
+    return this.adminAnalytics.getPipelineStorageAudit();
+  }
+
   /** Trigger on-demand test match extraction from Dahua NVR */
   @Public()
   @Post('recordings/test-extract')

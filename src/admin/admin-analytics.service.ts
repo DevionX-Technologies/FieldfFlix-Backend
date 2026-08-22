@@ -5,11 +5,12 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository, In } from 'typeorm';
+import { DataSource, Repository, In, Between } from 'typeorm';
 import axios from 'axios';
 // S3 SDK imports removed as we migrated to Mux
 import { User } from 'src/user/entities/user.entity';
 import { Recording } from 'src/recording/entities/recording.entity';
+import { RecordingHighlights } from 'src/recording/entities/recording-highlights.entity';
 import { PaymentEntity } from 'src/payment/entities/payment.entity';
 import { TurfEntity } from 'src/turfs/entities/turfs.entity';
 import { Camera } from 'src/camera/camera.entity';
@@ -21,6 +22,7 @@ import { FireBaseNotificationService } from 'src/common/service/fire-base.servic
 import { Fast2SmsService } from 'src/common/service/fast2sms.service';
 import { NotificationEntity } from 'src/notification/entities/notification.entity';
 import { MessageStatus, NotificationType } from 'src/constant/enum';
+import { readRecordingNvrChannel } from 'src/utils/nvr-channels.util';
 
 function calculateLevel(xp: number): { level: number; levelName: string } {
   if (xp >= 100) return { level: 5, levelName: 'Legend' };
@@ -726,6 +728,164 @@ export class AdminAnalyticsService {
       limit,
       totalPages: Math.ceil(total / limit),
       recordings: items,
+    };
+  }
+
+  /**
+   * Date-wise extraction request ledger for admin diagnostics (live DB status).
+   */
+  async listExtractionRequests(
+    date?: string,
+    page = 1,
+    limit = 100,
+  ): Promise<any> {
+    const where: any = {};
+    if (date) {
+      const dayStart = new Date(`${date}T00:00:00+05:30`);
+      const dayEnd = new Date(`${date}T23:59:59.999+05:30`);
+      where.startTime = Between(dayStart, dayEnd);
+    }
+
+    const [recordings, total] = await this.recordingRepo.findAndCount({
+      where,
+      relations: ['turf', 'camera', 'user', 'recordingHighlights'],
+      order: { startTime: 'DESC', updated_at: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    const items = await Promise.all(
+      recordings.map(async (rec) => {
+        const metadata =
+          rec.metadata && typeof rec.metadata === 'object'
+            ? (rec.metadata as Record<string, unknown>)
+            : {};
+        const nvrChannel = readRecordingNvrChannel(
+          metadata,
+          rec.camera?.court_number ?? 1,
+        );
+
+        let highlightsInWindow = 0;
+        if (rec.startTime && rec.endTime && rec.cameraId) {
+          highlightsInWindow = await this.dataSource
+            .getRepository(RecordingHighlights)
+            .createQueryBuilder('rh')
+            .innerJoin('rh.recording', 'r')
+            .where('r.cameraId = :cameraId', { cameraId: rec.cameraId })
+            .andWhere('rh.button_click_timestamp >= :startTime', {
+              startTime: rec.startTime,
+            })
+            .andWhere('rh.button_click_timestamp <= :endTime', {
+              endTime: rec.endTime,
+            })
+            .getCount();
+        }
+
+        const linkedHighlightCount = rec.recordingHighlights?.length ?? 0;
+        const durationMinutes =
+          rec.startTime && rec.endTime
+            ? Math.max(
+                1,
+                Math.round(
+                  (new Date(rec.endTime).getTime() -
+                    new Date(rec.startTime).getTime()) /
+                    60000,
+                ),
+              )
+            : null;
+
+        return {
+          id: rec.id,
+          userId: rec.userId,
+          userName: rec.user?.name || 'FieldFlix Athlete',
+          userPhone: rec.user?.phone_number || '—',
+          venueName: rec.turf?.name || 'Unknown Venue',
+          courtName:
+            rec.camera?.name || `Court ${rec.camera?.court_number || 1}`,
+          courtNumber: rec.camera?.court_number || 1,
+          cameraId: rec.cameraId,
+          nvrChannel,
+          status: rec.status,
+          startTime: rec.startTime,
+          endTime: rec.endTime,
+          durationMinutes,
+          linkedHighlightCount,
+          highlightsInWindow,
+          muxPlaybackId: rec.mux_playback_id,
+          muxAssetId: rec.mux_asset_id,
+          s3Path: rec.s3Path,
+          hasMux: !!rec.mux_playback_id,
+          hasS3: !!rec.s3Path,
+          updatedAt: rec.updated_at,
+          extractAttempts: Number(metadata.extract_attempts ?? 1),
+          extractSessionKey: String(metadata.extract_session_key ?? ''),
+        };
+      }),
+    );
+
+    return {
+      date: date ?? null,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      requests: items,
+    };
+  }
+
+  /** Count pipeline objects stuck before Mux (DB + S3 hints). */
+  async getPipelineStorageAudit(): Promise<any> {
+    const byStatusRows: Array<{ status: string; count: string }> = await this
+      .dataSource.query(`
+        SELECT status, COUNT(*)::text AS count
+        FROM recordings
+        WHERE mux_playback_id IS NULL OR mux_playback_id = ''
+        GROUP BY status
+        ORDER BY count DESC
+      `);
+
+    const withoutMuxRow = await this.dataSource.query(`
+      SELECT COUNT(*)::text AS count
+      FROM recordings
+      WHERE mux_playback_id IS NULL OR mux_playback_id = ''
+    `);
+
+    const s3NoMuxRow = await this.dataSource.query(`
+      SELECT COUNT(*)::text AS count
+      FROM recordings
+      WHERE s3Path IS NOT NULL AND s3Path <> ''
+        AND (mux_playback_id IS NULL OR mux_playback_id = '')
+    `);
+
+    const recentS3NoMux = await this.recordingRepo.find({
+      where: {},
+      relations: ['user', 'camera', 'turf'],
+      order: { updated_at: 'DESC' },
+      take: 25,
+    });
+
+    const recentStuck = recentS3NoMux
+      .filter((rec) => !rec.mux_playback_id && rec.s3Path)
+      .slice(0, 15)
+      .map((rec) => ({
+        id: rec.id,
+        status: rec.status,
+        s3Path: rec.s3Path,
+        userName: rec.user?.name || '—',
+        courtName: rec.camera?.name || 'Court',
+        venueName: rec.turf?.name || 'Venue',
+        startTime: rec.startTime,
+        updatedAt: rec.updated_at,
+      }));
+
+    return {
+      withoutMuxTotal: Number(withoutMuxRow?.[0]?.count ?? 0),
+      withS3NoMux: Number(s3NoMuxRow?.[0]?.count ?? 0),
+      byStatusWithoutMux: byStatusRows.map((row) => ({
+        status: row.status,
+        count: Number(row.count),
+      })),
+      recentS3NoMux: recentStuck,
     };
   }
 

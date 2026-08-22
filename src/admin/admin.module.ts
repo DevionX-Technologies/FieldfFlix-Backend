@@ -8,6 +8,7 @@ import { AdminRoleService } from './admin-role.service';
 import { AdminAnalyticsService } from './admin-analytics.service';
 import { User } from 'src/user/entities/user.entity';
 import { Recording } from 'src/recording/entities/recording.entity';
+import { RecordingHighlights } from 'src/recording/entities/recording-highlights.entity';
 import { PaymentEntity } from 'src/payment/entities/payment.entity';
 import { TurfEntity } from 'src/turfs/entities/turfs.entity';
 import { Camera } from 'src/camera/camera.entity';
@@ -25,6 +26,7 @@ import { CommonModule } from 'src/common/common.module';
       AdminPhone,
       User,
       Recording,
+      RecordingHighlights,
       PaymentEntity,
       TurfEntity,
       Camera,
