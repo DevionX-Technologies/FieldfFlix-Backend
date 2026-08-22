@@ -1246,16 +1246,32 @@ export class RecordingHighlightsService {
 
     // ────────────────────────────────────────────────────────────────────
     // NOT A CLIP — CHECK IF THIS IS A SOURCE RECORDING ASSET
-    // This only fires once per recording (when the source video is ready)
+    // Direct uploads set passthrough=recordingId before mux_asset_id exists.
     // ────────────────────────────────────────────────────────────────────
-    const recording = await queryRunner.manager.findOne(Recording, {
+    const passthroughId =
+      typeof webhookData?.passthrough === 'string'
+        ? webhookData.passthrough.trim()
+        : '';
+
+    let recording = await queryRunner.manager.findOne(Recording, {
       where: { mux_asset_id: assetId },
     });
+
+    if (!recording && passthroughId) {
+      recording = await queryRunner.manager.findOne(Recording, {
+        where: { id: passthroughId },
+      });
+      if (recording) {
+        this.logger.log(
+          `Resolved recording ${recording.id} via Mux passthrough for asset ${assetId}`,
+        );
+      }
+    }
 
     if (!recording) {
       this.logger.warn(
         `No highlight or recording found for asset ${assetId}, ignoring`,
-        { assetId },
+        { assetId, passthroughId: passthroughId || undefined },
       );
       return null;
     }
@@ -1273,6 +1289,7 @@ export class RecordingHighlightsService {
     const recordingUpdate: Partial<Recording> = {
       status: 'ready',
       isVideoCreated: true,
+      mux_asset_id: assetId,
     };
     if (webhookPlaybackId && !recording.mux_playback_id) {
       recordingUpdate.mux_playback_id = webhookPlaybackId;

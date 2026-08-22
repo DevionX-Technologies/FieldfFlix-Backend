@@ -14,14 +14,26 @@ export class PricingConfigEntity {
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 300 })
   cricket_hourly_rate: number;
 
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 150 })
+  cricket_half_hourly_rate: number;
+
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 200 })
   pickleball_hourly_rate: number;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 100 })
+  pickleball_half_hourly_rate: number;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 250 })
   padel_hourly_rate: number;
 
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 125 })
+  padel_half_hourly_rate: number;
+
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 250 })
   default_hourly_rate: number;
+
+  @Column({ type: 'decimal', precision: 10, scale: 2, default: 125 })
+  default_half_hourly_rate: number;
 
   @Column({ type: 'decimal', precision: 10, scale: 2, default: 100 })
   highlight_base_price: number;

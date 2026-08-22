@@ -157,13 +157,18 @@ export class PaymentController {
       },
     },
   })
-  async getUnlockedRecordings(
-    @Request() req: any,
-  ): Promise<{ recording_ids: string[] }> {
-    const ids = await this.paymentService.getUnlockedRecordingIdsForUser(
-      req.user.user_id,
-    );
-    return { recording_ids: ids };
+  async getUnlockedRecordings(@Request() req: any): Promise<{
+    recording_ids: string[];
+    unlocked_items_by_recording: Record<string, string[]>;
+  }> {
+    const unlocked_items_by_recording =
+      await this.paymentService.getUnlockedItemsByRecordingForUser(
+        req.user.user_id,
+      );
+    return {
+      recording_ids: Object.keys(unlocked_items_by_recording),
+      unlocked_items_by_recording,
+    };
   }
 
   /**
@@ -312,13 +317,14 @@ export class PaymentController {
   async createRecordingPaymentOrder(
     @Request() req: any,
     @Param('recordingId') recordingId: string,
-    @Body() body?: { couponCode?: string },
+    @Body() body?: { couponCode?: string; item?: string },
   ) {
     try {
       return await this.paymentService.createPaymentOrderForRecording(
         req,
         recordingId,
         body?.couponCode ?? null,
+        body?.item ?? null,
       );
     } catch (error: any) {
       this.paymentService['logger'].error(

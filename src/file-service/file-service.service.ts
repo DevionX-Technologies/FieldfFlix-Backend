@@ -9,6 +9,7 @@ import {
 import { UploadFileInS3Dto } from './dto/file.dto';
 import {
   DeleteObjectCommand,
+  ListObjectsV2Command,
   ObjectCannedACL,
   PutObjectCommand,
 } from '@aws-sdk/client-s3';
@@ -110,13 +111,27 @@ export class FileServiceService {
     return deleteResult;
   }
 
+  /** First object key under a prefix (e.g. recordings/{uuid}_). */
+  async findFirstObjectKeyWithPrefix(prefix: string): Promise<string | null> {
+    const bucketName =
+      process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
+    const resp = await this.s3.send(
+      new ListObjectsV2Command({
+        Bucket: bucketName,
+        Prefix: prefix,
+        MaxKeys: 1,
+      }),
+    );
+    return resp.Contents?.[0]?.Key ?? null;
+  }
+
   async getSignedUrlFromS3(
     param1: string,
     param2?: string,
     expiresInSeconds = 604800,
   ): Promise<string> {
     const defaultBucket =
-      process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
+      process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
 
     let bucket = defaultBucket;
     let key = param1 || '';

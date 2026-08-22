@@ -73,6 +73,7 @@ export class MuxService {
         playback_policy: ['public'],
         mp4_support: 'standard',
         encoding_tier: 'smart',
+        passthrough: recordingId,
       };
 
       // Make axios request to Mux API with raw JSON string

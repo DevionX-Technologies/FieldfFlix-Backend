@@ -387,6 +387,13 @@ export class AdminController {
     return { recordingId: id, attached };
   }
 
+  /** Retry Mux ingest for a recording stuck without playback */
+  @Public()
+  @Post('recordings/:id/retry-mux-ingest')
+  async retryMuxIngest(@Param('id') id: string) {
+    return this.recordingService.retryMuxIngestion(id);
+  }
+
   /** Get fresh playable stream URL for a recording */
   @Public()
   @Get('recordings/:id/playback-url')

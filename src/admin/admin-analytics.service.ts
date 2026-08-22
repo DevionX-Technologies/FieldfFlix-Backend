@@ -823,14 +823,68 @@ export class AdminAnalyticsService {
       }),
     );
 
+    const grouped = this.groupExtractionRequestRows(items);
+
     return {
       date: date ?? null,
-      total,
+      total: grouped.length,
+      totalRecordings: total,
       page,
       limit,
-      totalPages: Math.ceil(total / limit),
-      requests: items,
+      totalPages: Math.ceil(grouped.length / limit),
+      requests: grouped,
     };
+  }
+
+  /** One admin row per match session (dual NVR channels grouped like the app). */
+  private groupExtractionRequestRows(items: any[]): any[] {
+    const groups = new Map<string, any[]>();
+    for (const row of items) {
+      const key =
+        row.extractSessionKey ||
+        `${row.cameraId}_${row.startTime}_${row.endTime || ''}`;
+      const list = groups.get(key) ?? [];
+      list.push(row);
+      groups.set(key, list);
+    }
+
+    return Array.from(groups.values()).map((rows) => {
+      const sorted = [...rows].sort(
+        (a, b) => (a.nvrChannel ?? 0) - (b.nvrChannel ?? 0),
+      );
+      const primary = sorted[0];
+      const nvrChannels = sorted.map((r) => r.nvrChannel);
+      const nvrChannelLabel =
+        nvrChannels.length > 1
+          ? `Ch ${nvrChannels.join(' + ')}`
+          : `Ch ${nvrChannels[0]}`;
+
+      const latestUpdated = sorted.reduce((latest, row) => {
+        const rowTime = new Date(row.updatedAt).getTime();
+        return rowTime > new Date(latest).getTime() ? row.updatedAt : latest;
+      }, primary.updatedAt);
+
+      const muxRow = sorted.find((r) => r.hasMux) ?? primary;
+      const s3Row = sorted.find((r) => r.hasS3) ?? primary;
+
+      return {
+        ...primary,
+        id: primary.id,
+        recordingIds: sorted.map((r) => r.id),
+        nvrChannels,
+        nvrChannelLabel,
+        channelCount: sorted.length,
+        nvrChannel: primary.nvrChannel,
+        linkedHighlightCount: primary.linkedHighlightCount,
+        highlightsInWindow: primary.highlightsInWindow,
+        hasS3: sorted.some((r) => r.hasS3),
+        hasMux: sorted.some((r) => r.hasMux),
+        muxPlaybackId: muxRow.muxPlaybackId,
+        s3Path: s3Row.s3Path,
+        extractAttempts: Math.max(...sorted.map((r) => r.extractAttempts ?? 1)),
+        updatedAt: latestUpdated,
+      };
+    });
   }
 
   /** Count pipeline objects stuck before Mux (DB + S3 hints). */

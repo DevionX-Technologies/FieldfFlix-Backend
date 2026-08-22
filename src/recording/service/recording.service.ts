@@ -41,6 +41,7 @@ import { RecordingHighlights } from '../entities/recording-highlights.entity';
 import {
   PaymentStatus,
   PaymentEntity,
+  PaymentType,
 } from 'src/payment/entities/payment.entity';
 import { deriveFlickSportFromTurf } from 'src/common/turf-flick-sport.util';
 import { formatDurationToHHMMSS } from 'src/utils/utils';
@@ -85,6 +86,10 @@ import {
   type LiveStreamSlot,
 } from 'src/utils/live-stream-slots.util';
 import { getBotanicalMuxKey } from 'src/utils/botanical-mux-keys.util';
+import {
+  mergeUnlockItems,
+  unlockItemsFromPaymentMetadata,
+} from 'src/utils/unlock-item.util';
 
 /**
  * Service for managing recordings.
@@ -101,6 +106,11 @@ export class RecordingService {
   private static readonly STALE_EXTRACTION_MS = 6 * 60 * 60 * 1000; // 6 hours
   private static readonly MAX_EXTRACT_ATTEMPTS = 3;
   private staleExtractionRunning = false;
+  private staleMuxHealRunning = false;
+
+  private static defaultMediaBucket(): string {
+    return process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
+  }
 
   /**
    * @param recordingRepository The repository for the Recording entity.
@@ -378,6 +388,119 @@ export class RecordingService {
     } finally {
       this.staleExtractionRunning = false;
     }
+  }
+
+  /**
+   * Re-trigger Mux ingest for recordings stuck at uploaded/processing without playback.
+   */
+  @Cron(CronExpression.EVERY_10_MINUTES)
+  async sweepStuckMuxIngestion(): Promise<void> {
+    if (this.staleMuxHealRunning) return;
+    this.staleMuxHealRunning = true;
+    try {
+      const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+      const stuck = await this.recordingRepositoryForMedia.find({
+        where: [{ status: 'uploaded' }, { status: 'processing' }],
+      });
+
+      const targets = stuck.filter(
+        (rec) =>
+          !rec.mux_playback_id &&
+          rec.updated_at &&
+          new Date(rec.updated_at) >= cutoff,
+      );
+
+      for (const rec of targets.slice(0, 10)) {
+        try {
+          const result = await this.retryMuxIngestion(rec.id);
+          if (
+            result.action !== 'already_ready' &&
+            result.action !== 'no_source_video'
+          ) {
+            this.logger.log(`Mux heal for ${rec.id}: ${result.action}`);
+          }
+        } catch (e) {
+          this.logger.warn(
+            `Mux heal failed for ${rec.id}: ${(e as Error)?.message ?? e}`,
+          );
+        }
+      }
+    } catch (e) {
+      this.logger.error(
+        `sweepStuckMuxIngestion: ${(e as Error)?.message ?? e}`,
+      );
+    } finally {
+      this.staleMuxHealRunning = false;
+    }
+  }
+
+  /**
+   * Heal a single recording: poll existing Mux asset or upload from S3.
+   */
+  async retryMuxIngestion(
+    recordingId: string,
+  ): Promise<{ ok: boolean; action: string }> {
+    const recording = await this.recordingRepositoryForMedia.findOne({
+      where: { id: recordingId },
+    });
+    if (!recording) {
+      throw new NotFoundException(`Recording not found: ${recordingId}`);
+    }
+    if (recording.mux_playback_id) {
+      return { ok: true, action: 'already_ready' };
+    }
+
+    const bucketName = RecordingService.defaultMediaBucket();
+
+    if (recording.mux_asset_id) {
+      try {
+        const asset = await this.muxService.getAssetDetails(
+          recording.mux_asset_id,
+        );
+        const playbackId =
+          asset?.playback_ids?.find(
+            (p: { policy?: string }) => p?.policy === 'public',
+          )?.id || asset?.playback_ids?.[0]?.id;
+        if (playbackId) {
+          await this.recordingRepositoryForMedia.update(recordingId, {
+            mux_playback_id: playbackId,
+            mux_media_url: `https://stream.mux.com/${playbackId}.m3u8`,
+            status: 'ready',
+            isVideoCreated: true,
+          });
+          return { ok: true, action: 'polled_mux_asset' };
+        }
+      } catch (e) {
+        this.logger.warn(
+          `Could not poll Mux asset ${recording.mux_asset_id} for ${recordingId}: ${(e as Error)?.message}`,
+        );
+      }
+    }
+
+    let key =
+      recording.s3Path?.replace(`s3://${bucketName}/`, '') ||
+      recording.s3Path?.replace(/^s3:\/\/[^/]+\//, '') ||
+      null;
+    if (!key) {
+      key = await this.fileServiceService.findFirstObjectKeyWithPrefix(
+        `recordings/${recordingId}_`,
+      );
+    }
+
+    if (!key) {
+      return { ok: false, action: 'no_source_video' };
+    }
+
+    const signedUrl = await this.fileServiceService.getSignedUrlFromS3(
+      key,
+      bucketName,
+    );
+    await this.muxService.uploadFromS3(signedUrl, key, recordingId);
+    await this.recordingRepositoryForMedia.update(recordingId, {
+      s3Path: `s3://${bucketName}/${key}`,
+      status: 'uploaded',
+    });
+    return { ok: true, action: 'mux_upload_started' };
   }
 
   /**
@@ -1531,7 +1654,26 @@ export class RecordingService {
           promises.push(Promise.resolve(null));
         }
 
-        // Check for existing payment with PENDING or COMPLETED status
+        // Group unlock items from any completed payment on this recording or session siblings.
+        promises.push(
+          this.recordingRepository.manager
+            .createQueryBuilder(PaymentEntity, 'payment')
+            .where('payment.recording_id = :recordingId', {
+              recordingId: recording.id,
+            })
+            .andWhere('payment.status = :completed', {
+              completed: PaymentStatus.COMPLETED,
+            })
+            .andWhere('payment.payment_type IN (:...types)', {
+              types: [
+                PaymentType.RECORDING_ACCESS,
+                PaymentType.HIGHLIGHT_ACCESS,
+                PaymentType.MEDIA_ACCESS,
+              ],
+            })
+            .getMany(),
+        );
+
         promises.push(
           this.recordingRepository.manager
             .createQueryBuilder(PaymentEntity, 'payment')
@@ -1542,11 +1684,12 @@ export class RecordingService {
             .andWhere('payment.status IN (:...statuses)', {
               statuses: [PaymentStatus.PENDING, PaymentStatus.COMPLETED],
             })
+            .orderBy('payment.created_at', 'DESC')
             .getOne(),
         );
 
-        // Wait for all promises to resolve
-        const [assetDetails, existingPayment] = await Promise.all(promises);
+        const [assetDetails, groupPayments, existingPayment] =
+          await Promise.all(promises);
 
         // Process asset details
         if (assetDetails && assetDetails.duration) {
@@ -1595,6 +1738,51 @@ export class RecordingService {
                 ),
               );
           }
+        }
+
+        const siblingRows =
+          recording.cameraId && recording.startTime && recording.endTime
+            ? await this.recordingRepository.find({
+                where: {
+                  cameraId: recording.cameraId,
+                  startTime: recording.startTime,
+                  endTime: recording.endTime,
+                },
+                select: ['id'],
+              })
+            : [{ id: recording.id }];
+
+        const siblingIds = siblingRows.map((row) => String(row.id));
+        let siblingPayments: PaymentEntity[] = [];
+        if (siblingIds.length > 1) {
+          siblingPayments = await this.recordingRepository.manager
+            .createQueryBuilder(PaymentEntity, 'payment')
+            .where('payment.recording_id IN (:...ids)', { ids: siblingIds })
+            .andWhere('payment.status = :completed', {
+              completed: PaymentStatus.COMPLETED,
+            })
+            .andWhere('payment.payment_type IN (:...types)', {
+              types: [
+                PaymentType.RECORDING_ACCESS,
+                PaymentType.HIGHLIGHT_ACCESS,
+                PaymentType.MEDIA_ACCESS,
+              ],
+            })
+            .getMany();
+        }
+
+        const purchasedItems = mergeUnlockItems(
+          ...(Array.isArray(groupPayments) ? groupPayments : []).map(
+            (payment) => unlockItemsFromPaymentMetadata(payment.metadata),
+          ),
+          ...(Array.isArray(siblingPayments) ? siblingPayments : []).map(
+            (payment) => unlockItemsFromPaymentMetadata(payment.metadata),
+          ),
+        );
+
+        paymentInfo.purchased_items = purchasedItems;
+        if (purchasedItems.length > 0) {
+          paymentInfo.status = PaymentStatus.COMPLETED;
         }
 
         // Process existing payment
@@ -3428,8 +3616,7 @@ export class RecordingService {
     }
 
     if (dto.status === 'SUCCESS') {
-      const bucketName =
-        process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
+      const bucketName = RecordingService.defaultMediaBucket();
       const key =
         dto.s3Key || recording.s3Path?.replace(`s3://${bucketName}/`, '');
 

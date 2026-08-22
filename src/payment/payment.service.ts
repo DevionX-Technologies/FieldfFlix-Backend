@@ -31,7 +31,8 @@ import { CommonService } from 'src/common/service/common.service';
 import { HOURLY_RATE } from 'src/constant/constant';
 
 import {
-  HOUR_SEC,
+  HALF_HOUR_SEC,
+  halfHourBlocksFromDuration,
   recordingUnlockBaseInr,
   recordingUnlockTotalInr,
   parsePlannedDurationSecFromMetadata,
@@ -40,6 +41,13 @@ import {
 } from 'src/utils/recording-pricing';
 import { PricingConfigService } from './pricing-config.service';
 import { PricingConfigEntity } from './entities/pricing-config.entity';
+import {
+  mergeUnlockItems,
+  normalizeUnlockItem,
+  paymentTypeForUnlockItem,
+  unlockItemsFromPaymentMetadata,
+  type UnlockItem,
+} from 'src/utils/unlock-item.util';
 
 /**
  * Payment service for handling payment operations
@@ -78,16 +86,61 @@ export class PaymentService {
   } {
     const tier = resolveUnlockTierFromRecording(recording);
     const plannedSec =
-      parsePlannedDurationSecFromMetadata(recording.metadata) ?? HOUR_SEC;
+      parsePlannedDurationSecFromMetadata(recording.metadata) ?? HALF_HOUR_SEC;
     const base = recordingUnlockBaseInr(tier, plannedSec, config);
     const total = recordingUnlockTotalInr(base, config);
     return { tier, base, total };
+  }
+
+  private async getSessionSiblingRecordingIds(
+    recordingId: string,
+  ): Promise<string[]> {
+    const anchor = await this.recordingRepository.findOne({
+      where: { id: recordingId },
+      select: ['id', 'cameraId', 'startTime', 'endTime'],
+    });
+    if (!anchor?.cameraId || !anchor.startTime || !anchor.endTime) {
+      return [recordingId];
+    }
+    const siblings = await this.recordingRepository.find({
+      where: {
+        cameraId: anchor.cameraId,
+        startTime: anchor.startTime,
+        endTime: anchor.endTime,
+      },
+      select: ['id'],
+    });
+    const ids = siblings.map((row) => String(row.id)).filter(Boolean);
+    return ids.length > 0 ? ids : [recordingId];
+  }
+
+  /** Completed group payments → unlocked media items for one recording row. */
+  async getGroupPurchasedItemsForRecording(
+    recordingId: string,
+  ): Promise<UnlockItem[]> {
+    const payments = await this.paymentRepository.find({
+      where: {
+        recording_id: recordingId,
+        status: PaymentStatus.COMPLETED,
+        payment_type: In([
+          PaymentType.RECORDING_ACCESS,
+          PaymentType.HIGHLIGHT_ACCESS,
+          PaymentType.MEDIA_ACCESS,
+        ]),
+      },
+    });
+    return mergeUnlockItems(
+      ...payments.map((payment) =>
+        unlockItemsFromPaymentMetadata(payment.metadata),
+      ),
+    );
   }
 
   async createPaymentOrderForRecording(
     req: Request,
     recordingId: string,
     couponCode?: string | null,
+    unlockItemRaw?: string | null,
   ): Promise<PaymentResponseDto> {
     try {
       this.logger.log(`Creating payment order for recording: ${recordingId}`);
@@ -113,51 +166,69 @@ export class PaymentService {
         throw new NotFoundException('Recording not found');
       }
 
-      // Check if user already has a valid payment for this recording
-      const existingPayment = await this.paymentRepository.findOne({
+      const unlockItem = normalizeUnlockItem(unlockItemRaw);
+      const paymentType = paymentTypeForUnlockItem(unlockItem);
+
+      const groupItems =
+        await this.getGroupPurchasedItemsForRecording(recordingId);
+      if (groupItems.includes(unlockItem)) {
+        const completed = await this.paymentRepository.findOne({
+          where: {
+            recording_id: recordingId,
+            status: PaymentStatus.COMPLETED,
+            payment_type: paymentType,
+          },
+          order: { created_at: 'DESC' },
+        });
+        if (completed) {
+          return {
+            id: completed.id,
+            razorpay_order_id: completed.razorpay_order_id,
+            amount: completed.amount,
+            currency: completed.currency,
+            base_amount: completed.base_amount,
+            status: completed.status,
+            payment_type: completed.payment_type,
+            created_at: completed.created_at,
+            expires_at: completed.expires_at,
+          };
+        }
+      }
+
+      const userPayments = await this.paymentRepository.find({
         where: {
           user_id: tokenData.user_id,
           recording_id: recordingId,
         },
+        order: { created_at: 'DESC' },
       });
 
-      if (existingPayment) {
-        if (existingPayment.status === PaymentStatus.COMPLETED) {
-          return {
-            id: existingPayment.id,
-            razorpay_order_id: existingPayment.razorpay_order_id,
-            amount: existingPayment.amount,
-            currency: existingPayment.currency,
-            base_amount: existingPayment.base_amount,
-            status: existingPayment.status,
-            payment_type: existingPayment.payment_type,
-            created_at: existingPayment.created_at,
-            expires_at: existingPayment.expires_at,
-          };
-        }
+      const matchingPending = userPayments.find(
+        (payment) =>
+          payment.status === PaymentStatus.PENDING &&
+          normalizeUnlockItem(
+            (payment.metadata as Record<string, unknown> | null)?.unlocked_item,
+          ) === unlockItem,
+      );
 
-        // Re-use an in-flight Razorpay order when we already have an order id.
-        if (
-          existingPayment.status === PaymentStatus.PENDING &&
-          existingPayment.razorpay_order_id
-        ) {
-          return {
-            id: existingPayment.id,
-            razorpay_order_id: existingPayment.razorpay_order_id,
-            amount: existingPayment.amount,
-            currency: existingPayment.currency,
-            base_amount: existingPayment.base_amount,
-            status: existingPayment.status,
-            payment_type: existingPayment.payment_type,
-            created_at: existingPayment.created_at,
-            expires_at: existingPayment.expires_at,
-          };
-        }
+      if (matchingPending?.razorpay_order_id) {
+        return {
+          id: matchingPending.id,
+          razorpay_order_id: matchingPending.razorpay_order_id,
+          amount: matchingPending.amount,
+          currency: matchingPending.currency,
+          base_amount: matchingPending.base_amount,
+          status: matchingPending.status,
+          payment_type: matchingPending.payment_type,
+          created_at: matchingPending.created_at,
+          expires_at: matchingPending.expires_at,
+        };
+      }
 
-        // Stale PENDING row (Razorpay never created) blocks new orders — remove it.
-        if (existingPayment.status === PaymentStatus.PENDING) {
-          await this.paymentRepository.remove(existingPayment);
-        }
+      for (const stale of userPayments.filter(
+        (payment) => payment.status === PaymentStatus.PENDING,
+      )) {
+        await this.paymentRepository.remove(stale);
       }
 
       // Get pricing configuration
@@ -206,6 +277,13 @@ export class PaymentService {
         }
       }
 
+      const itemLabel =
+        unlockItem === 'highlights'
+          ? 'highlights'
+          : unlockItem === 'shorts'
+            ? 'reels'
+            : 'full match';
+
       if (total <= 0) {
         const payment = this.paymentRepository.create({
           user_id: tokenData.user_id,
@@ -214,23 +292,26 @@ export class PaymentService {
           base_amount: 0,
           currency: 'INR',
           status: PaymentStatus.COMPLETED,
-          payment_type: PaymentType.RECORDING_ACCESS,
-          description: `${label} recording unlock (free)`,
+          payment_type: paymentType,
+          description: `${label} ${itemLabel} unlock (free)`,
           razorpay_order_id: `ff_rcfree_${randomUUID()}`.slice(0, 100),
           razorpay_payment_id: null,
           paid_at: new Date(),
           expires_at: null,
-          metadata: couponAssignmentId
-            ? {
-                coupon: {
-                  assignmentId: couponAssignmentId,
-                  discountInr: couponDiscountInr,
-                  label: couponLabel,
-                  undiscountedBase: baseRounded,
-                  undiscountedTotal,
-                },
-              }
-            : null,
+          metadata: {
+            unlocked_item: unlockItem,
+            ...(couponAssignmentId
+              ? {
+                  coupon: {
+                    assignmentId: couponAssignmentId,
+                    discountInr: couponDiscountInr,
+                    label: couponLabel,
+                    undiscountedBase: baseRounded,
+                    undiscountedTotal,
+                  },
+                }
+              : {}),
+          },
         });
         const saved = await this.paymentRepository.save(payment);
 
@@ -262,16 +343,15 @@ export class PaymentService {
 
       const createPaymentDto: CreatePaymentOrderDto = {
         amount: total,
-        // `base_amount` reflects the discounted base — the receipt math
-        // (base + GST = total) stays consistent end-to-end. Original base
-        // is preserved on `metadata.coupon.undiscountedBase` if we need to
-        // explain "you saved ₹X" later.
         base_amount: discountedBase,
-        payment_type: PaymentType.RECORDING_ACCESS,
+        payment_type: paymentType,
         recording_id: recordingId,
         description: couponAssignmentId
-          ? `${label} full recording unlock — ${couponLabel} applied`
-          : `${label} full recording unlock`,
+          ? `${label} ${itemLabel} unlock — ${couponLabel} applied`
+          : `${label} ${itemLabel} unlock`,
+        metadata: {
+          unlocked_item: unlockItem,
+        },
       };
 
       const order = await this.createPaymentOrder(
@@ -333,6 +413,7 @@ export class PaymentService {
     has_paid_access: boolean;
     planned_duration_sec: number;
     billed_hours: number;
+    billed_half_hours: number;
   }> {
     const tokenData = await this.commonService.extractDataFromToken(req);
 
@@ -346,10 +427,10 @@ export class PaymentService {
 
     const config = this.pricingConfigService.getConfig();
     const plannedSec =
-      parsePlannedDurationSecFromMetadata(recording.metadata) ?? HOUR_SEC;
+      parsePlannedDurationSecFromMetadata(recording.metadata) ?? HALF_HOUR_SEC;
     const { tier, base, total } = this.unlockTierAndAmounts(recording, config);
     const baseRounded = Math.round(base);
-    const billedHours = Math.max(1, Math.ceil(plannedSec / HOUR_SEC));
+    const billedHalfHours = halfHourBlocksFromDuration(plannedSec);
 
     const existingPayment = await this.paymentRepository.findOne({
       where: {
@@ -371,7 +452,8 @@ export class PaymentService {
       tier,
       has_paid_access: hasPaidAccess,
       planned_duration_sec: plannedSec,
-      billed_hours: billedHours,
+      billed_hours: billedHalfHours,
+      billed_half_hours: billedHalfHours,
     };
   }
 
@@ -819,9 +901,10 @@ export class PaymentService {
    * the moment a single group member completes payment — even if a different
    * user actually paid.
    */
-  async getUnlockedRecordingIdsForUser(userId: string): Promise<string[]> {
+  async getUnlockedItemsByRecordingForUser(
+    userId: string,
+  ): Promise<Record<string, string[]>> {
     try {
-      // 1. Recording IDs visible to this user (owner + shared with).
       const ownedRows = await this.recordingRepository.find({
         where: { userId },
         select: ['id'],
@@ -832,38 +915,46 @@ export class PaymentService {
       });
 
       const visibleIds = new Set<string>();
-      for (const r of ownedRows) {
-        if (r?.id) visibleIds.add(String(r.id));
+      for (const row of ownedRows) {
+        if (row?.id) visibleIds.add(String(row.id));
       }
-      for (const s of sharedRows) {
-        if (s?.recording_id) visibleIds.add(String(s.recording_id));
+      for (const row of sharedRows) {
+        if (row?.recording_id) visibleIds.add(String(row.recording_id));
       }
-      if (visibleIds.size === 0) return [];
+      if (visibleIds.size === 0) return {};
 
-      // 2. Of those, find the ones with any completed RECORDING_ACCESS or
-      //    HIGHLIGHT_ACCESS payment (from anyone in the group).
-      const paid = await this.paymentRepository
-        .createQueryBuilder('payment')
-        .select('DISTINCT payment.recording_id', 'recording_id')
-        .where('payment.recording_id IN (:...ids)', {
-          ids: [...visibleIds],
-        })
-        .andWhere('payment.status = :completed', {
-          completed: PaymentStatus.COMPLETED,
-        })
-        .andWhere('payment.payment_type IN (:...types)', {
-          types: [PaymentType.RECORDING_ACCESS, PaymentType.HIGHLIGHT_ACCESS],
-        })
-        .getRawMany<{ recording_id: string }>();
+      const perRecording = new Map<string, UnlockItem[]>();
+      for (const recordingId of visibleIds) {
+        perRecording.set(
+          recordingId,
+          await this.getGroupPurchasedItemsForRecording(recordingId),
+        );
+      }
 
-      return paid.map((p) => String(p.recording_id ?? '')).filter((id) => !!id);
+      const result: Record<string, string[]> = {};
+      for (const recordingId of visibleIds) {
+        const sessionIds =
+          await this.getSessionSiblingRecordingIds(recordingId);
+        const merged = mergeUnlockItems(
+          ...sessionIds.map((id) => perRecording.get(id) ?? []),
+        );
+        if (merged.length > 0) {
+          result[recordingId] = merged;
+        }
+      }
+      return result;
     } catch (error) {
       this.logger.error(
-        'Failed to compute unlocked recording ids for user',
+        'Failed to compute unlocked items by recording for user',
         error,
       );
-      return [];
+      return {};
     }
+  }
+
+  async getUnlockedRecordingIdsForUser(userId: string): Promise<string[]> {
+    const byRecording = await this.getUnlockedItemsByRecordingForUser(userId);
+    return Object.keys(byRecording);
   }
 
   async getPaymentById(

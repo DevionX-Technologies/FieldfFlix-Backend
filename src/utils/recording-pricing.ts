@@ -1,6 +1,6 @@
 /**
- * Recording unlock pricing — hourly rate, billed in full-hour blocks.
- * Any session from 1 second up to 1 hour costs 1 hour; 61 minutes costs 2 hours, etc.
+ * Recording unlock pricing — half-hourly rate, billed in 30-minute blocks.
+ * Any session from 1 second up to 30 minutes costs one block; 31 minutes costs two, etc.
  */
 
 import { ESportsSupported } from 'src/turfs/enum/turfs.enum';
@@ -8,19 +8,43 @@ import { PricingConfigEntity } from 'src/payment/entities/pricing-config.entity'
 
 export type RecordingUnlockSport = 'cricket' | 'pickleball' | 'padel';
 
-export const HOUR_SEC = 60 * 60;
+export const HALF_HOUR_SEC = 30 * 60;
 
-/** @deprecated Use HOUR_SEC — kept for imports that still reference the old default. */
-export const HALF_HOUR_SEC = HOUR_SEC;
+/** @deprecated Billing uses half-hour blocks; kept for legacy imports. */
+export const HOUR_SEC = HALF_HOUR_SEC * 2;
 
-export function hourlyBlocksFromDuration(plannedDurationSec: number): number {
+export function halfHourBlocksFromDuration(plannedDurationSec: number): number {
   const sec = Math.max(1, Math.floor(plannedDurationSec));
-  return Math.max(1, Math.ceil(sec / HOUR_SEC));
+  return Math.max(1, Math.ceil(sec / HALF_HOUR_SEC));
 }
 
-/** @deprecated Use hourlyBlocksFromDuration */
-export function halfHourBlocksFromDuration(plannedDurationSec: number): number {
-  return hourlyBlocksFromDuration(plannedDurationSec);
+/** @deprecated Use halfHourBlocksFromDuration */
+export function hourlyBlocksFromDuration(plannedDurationSec: number): number {
+  return halfHourBlocksFromDuration(plannedDurationSec);
+}
+
+function halfHourlyRateForTier(
+  tier: RecordingUnlockSport,
+  config: PricingConfigEntity,
+): number {
+  if (tier === 'cricket') {
+    return Number(
+      config.cricket_half_hourly_rate ?? config.cricket_hourly_rate / 2,
+    );
+  }
+  if (tier === 'pickleball') {
+    return Number(
+      config.pickleball_half_hourly_rate ?? config.pickleball_hourly_rate / 2,
+    );
+  }
+  if (tier === 'padel') {
+    return Number(
+      config.padel_half_hourly_rate ?? config.padel_hourly_rate / 2,
+    );
+  }
+  return Number(
+    config.default_half_hourly_rate ?? config.default_hourly_rate / 2,
+  );
 }
 
 /** Pre-tax total. */
@@ -29,17 +53,9 @@ export function recordingUnlockBaseInr(
   plannedDurationSec: number,
   config: PricingConfigEntity,
 ): number {
-  let hourlyRate = config.default_hourly_rate;
-  if (tier === 'cricket') {
-    hourlyRate = config.cricket_hourly_rate;
-  } else if (tier === 'pickleball') {
-    hourlyRate = config.pickleball_hourly_rate;
-  } else if (tier === 'padel') {
-    hourlyRate = config.padel_hourly_rate;
-  }
-
-  const blocks = hourlyBlocksFromDuration(plannedDurationSec);
-  return Math.round(blocks * hourlyRate);
+  const halfHourlyRate = halfHourlyRateForTier(tier, config);
+  const blocks = halfHourBlocksFromDuration(plannedDurationSec);
+  return Math.round(blocks * halfHourlyRate);
 }
 
 export function recordingUnlockTotalInr(
