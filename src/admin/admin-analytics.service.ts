@@ -952,7 +952,8 @@ export class AdminAnalyticsService {
 
       const muxRow = sorted.find((r) => r.hasMux) ?? primary;
       const s3Row = sorted.find((r) => r.hasS3) ?? primary;
-      const anyMuxReady = sorted.some((r) => r.hasMux);
+      const allMuxReady =
+        sorted.length > 0 && sorted.every((r) => r.hasMux || !r.hasS3);
 
       const mergedHighlightMux = sorted.reduce(
         (acc, row) => {
@@ -994,7 +995,7 @@ export class AdminAnalyticsService {
       }
 
       const sessionStatus =
-        anyMuxReady || mergedHighlightMux.ready > 0
+        allMuxReady || mergedHighlightMux.ready > 0
           ? 'ready'
           : pickBestExtractionStatus(sorted.map((r) => r.status));
 
@@ -1016,10 +1017,10 @@ export class AdminAnalyticsService {
           0,
         ),
         hasS3: sorted.some((r) => r.hasS3),
-        hasMux: anyMuxReady,
+        hasMux: allMuxReady,
         muxProcessing:
           sorted.some((r) => r.muxProcessing || (r.hasS3 && !r.hasMux)) &&
-          !anyMuxReady,
+          !allMuxReady,
         muxPlaybackId: muxRow.muxPlaybackId,
         s3Path: s3Row.s3Path,
         extractAttempts: Math.max(...sorted.map((r) => r.extractAttempts ?? 1)),
