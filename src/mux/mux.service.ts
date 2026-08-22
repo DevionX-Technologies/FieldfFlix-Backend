@@ -111,20 +111,15 @@ export class MuxService {
 
         if (recording) {
           recording.mux_asset_id = asset.id;
-          if (asset.playback_ids && asset.playback_ids.length > 0) {
-            const playbackId = asset.playback_ids[0].id;
-            recording.mux_playback_id = playbackId;
-            recording.mux_media_url = `https://stream.mux.com/${playbackId}.m3u8`;
-            this.logger.log(
-              `Updated mux_media_url to ${recording.mux_media_url} in process for recordingId: ${recordingId}`,
-            );
-          }
+          // Do NOT persist playback_id yet — Mux returns IDs while status is still
+          // `preparing`. Webhook (video.asset.ready) or getRecordingById self-heal
+          // will set mux_playback_id once the HLS manifest is actually playable.
           await this.recordingRepository.save(recording);
           await this.recordingRepository.update(recordingId, {
-            status: 'completed',
+            status: 'processing',
           });
           this.logger.log(
-            `Saved Mux details to database for recordingId: ${recordingId}`,
+            `Mux asset ${asset.id} created for ${recordingId}; waiting for ready webhook`,
           );
         } else {
           this.logger.warn(

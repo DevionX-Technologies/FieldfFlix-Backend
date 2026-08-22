@@ -654,7 +654,7 @@ export class RecordingController {
     }
 
     const playbackId = recording.mux_playback_id;
-    if (!playbackId) {
+    if (!playbackId || recording.status !== 'ready') {
       return {
         recording_id: recording.id,
         playback_id: null,
@@ -662,6 +662,8 @@ export class RecordingController {
         signed_token: null,
         signed_url: null,
         expires_at: null,
+        playable: false,
+        status: recording.status ?? 'processing',
       };
     }
 
@@ -676,6 +678,8 @@ export class RecordingController {
         ? `${publicUrl}?token=${encodeURIComponent(signed.token)}`
         : publicUrl,
       expires_at: signed?.expires_at ?? null,
+      playable: true,
+      status: 'ready',
     };
   }
 

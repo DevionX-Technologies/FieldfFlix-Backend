@@ -454,7 +454,7 @@ export class RecordingService {
     if (!recording) {
       throw new NotFoundException(`Recording not found: ${recordingId}`);
     }
-    if (recording.mux_playback_id) {
+    if (recording.mux_playback_id && recording.status === 'ready') {
       return { ok: true, action: 'already_ready' };
     }
 
@@ -469,7 +469,7 @@ export class RecordingService {
           asset?.playback_ids?.find(
             (p: { policy?: string }) => p?.policy === 'public',
           )?.id || asset?.playback_ids?.[0]?.id;
-        if (playbackId) {
+        if (asset?.status === 'ready' && playbackId) {
           await this.recordingRepositoryForMedia.update(recordingId, {
             mux_playback_id: playbackId,
             mux_media_url: `https://stream.mux.com/${playbackId}.m3u8`,
@@ -477,6 +477,9 @@ export class RecordingService {
             isVideoCreated: true,
           });
           return { ok: true, action: 'polled_mux_asset' };
+        }
+        if (asset?.status && asset.status !== 'ready') {
+          return { ok: true, action: 'mux_still_processing' };
         }
       } catch (e) {
         this.logger.warn(
@@ -1055,10 +1058,7 @@ export class RecordingService {
       );
     }
 
-    if (
-      recording.mux_asset_id &&
-      (recording.status !== 'ready' || !recording.mux_playback_id)
-    ) {
+    if (recording.mux_asset_id && recording.status !== 'ready') {
       try {
         const asset = await this.muxService.getAssetDetails(
           recording.mux_asset_id,
@@ -1071,16 +1071,19 @@ export class RecordingService {
               null)
             : null;
 
-          const patch: Partial<Recording> = {};
-          if (recording.status !== 'ready') patch.status = 'ready';
-          if (livePlaybackId && !recording.mux_playback_id) {
+          const patch: Partial<Recording> = {
+            status: 'ready',
+            isVideoCreated: true,
+          };
+          if (livePlaybackId) {
             patch.mux_playback_id = livePlaybackId;
             patch.mux_media_url = `https://stream.mux.com/${livePlaybackId}.m3u8`;
           }
-          if (Object.keys(patch).length > 0) {
-            await this.recordingRepository.update(recording.id, patch);
-            Object.assign(recording, patch);
-          }
+          await this.recordingRepository.update(recording.id, patch);
+          Object.assign(recording, patch);
+        } else {
+          recording.mux_playback_id = null;
+          recording.mux_media_url = null;
         }
       } catch (err: any) {
         this.logger.warn(
@@ -1126,12 +1129,8 @@ export class RecordingService {
     });
     if (!recording) return null;
 
-    // If the asset is already published on Mux but the DB still says "processing"
-    // (because a webhook didn't land), trust Mux and patch the row + response.
-    if (
-      recording.mux_asset_id &&
-      (recording.status !== 'ready' || !recording.mux_playback_id)
-    ) {
+    // Self-heal from Mux when webhook was missed or uploadFromS3 wrote IDs too early.
+    if (recording.mux_asset_id) {
       try {
         const asset = await this.muxService.getAssetDetails(
           recording.mux_asset_id,
@@ -1144,16 +1143,25 @@ export class RecordingService {
               null)
             : null;
 
-          const patch: Partial<Recording> = {};
-          if (recording.status !== 'ready') patch.status = 'ready';
-          if (livePlaybackId && !recording.mux_playback_id) {
+          const patch: Partial<Recording> = {
+            status: 'ready',
+            isVideoCreated: true,
+          };
+          if (livePlaybackId) {
             patch.mux_playback_id = livePlaybackId;
             patch.mux_media_url = `https://stream.mux.com/${livePlaybackId}.m3u8`;
           }
-          if (Object.keys(patch).length > 0) {
+          if (
+            recording.status !== 'ready' ||
+            (livePlaybackId && recording.mux_playback_id !== livePlaybackId)
+          ) {
             await this.recordingRepository.update(recording.id, patch);
             Object.assign(recording, patch);
           }
+        } else {
+          // Hide premature playback IDs until Mux finishes encoding.
+          (recording as Recording).mux_playback_id = null;
+          (recording as Recording).mux_media_url = null;
         }
       } catch (err: any) {
         this.logger.warn(
@@ -1819,8 +1827,11 @@ export class RecordingService {
             recording.status !== 'ready' ||
             (livePlaybackId && !recording.mux_playback_id);
           if (needsDbPatch) {
-            const patch: Partial<Recording> = { status: 'ready' };
-            if (livePlaybackId && !recording.mux_playback_id) {
+            const patch: Partial<Recording> = {
+              status: 'ready',
+              isVideoCreated: true,
+            };
+            if (livePlaybackId) {
               patch.mux_playback_id = livePlaybackId;
               patch.mux_media_url = `https://stream.mux.com/${livePlaybackId}.m3u8`;
             }
@@ -1831,6 +1842,12 @@ export class RecordingService {
                   `Self-heal recording ${recording.id} failed: ${err?.message ?? err}`,
                 ),
               );
+          }
+        } else if (assetDetails && assetDetails.status !== 'ready') {
+          (recording as any).mux_playback_id = null;
+          (recording as any).mux_media_url = null;
+          if (String(recording.status ?? '').toLowerCase() === 'completed') {
+            (recording as any).status = 'processing';
           }
         }
 
@@ -2360,13 +2377,10 @@ export class RecordingService {
         return false;
       }
       const hasStream =
-        Boolean(h.playback_id?.trim?.()) ||
-        Boolean(h.mux_public_playback_url) ||
-        Boolean(h.s3path?.trim?.());
+        Boolean(h.mux_public_playback_url?.trim?.()) ||
+        Boolean(h.s3path?.trim?.() && String(h.s3path).startsWith('http'));
       if (!hasStream) return false;
-      return (
-        st === HIGHLIGHT_STATUS.READY || st === HIGHLIGHT_STATUS.CLIP_CREATED
-      );
+      return st === HIGHLIGHT_STATUS.READY;
     });
 
     const ids = filtered.map((h) => h.id);
