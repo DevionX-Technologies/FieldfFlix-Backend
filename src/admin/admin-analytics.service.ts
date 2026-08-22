@@ -900,6 +900,10 @@ export class AdminAnalyticsService {
           updatedAt: rec.updated_at,
           extractAttempts: Number(metadata.extract_attempts ?? 1),
           extractSessionKey: String(metadata.extract_session_key ?? ''),
+          extractFailedReason:
+            typeof metadata.extract_failed_reason === 'string'
+              ? metadata.extract_failed_reason.trim()
+              : '',
           highlightMux,
         };
       }),
@@ -948,12 +952,7 @@ export class AdminAnalyticsService {
 
       const muxRow = sorted.find((r) => r.hasMux) ?? primary;
       const s3Row = sorted.find((r) => r.hasS3) ?? primary;
-      const s3Channels = sorted.filter((r) => r.hasS3);
-      const allMuxReady =
-        s3Channels.length > 0 && s3Channels.every((r) => r.hasMux);
-      const sessionStatus = allMuxReady
-        ? 'ready'
-        : pickBestExtractionStatus(sorted.map((r) => r.status));
+      const anyMuxReady = sorted.some((r) => r.hasMux);
 
       const mergedHighlightMux = sorted.reduce(
         (acc, row) => {
@@ -994,6 +993,11 @@ export class AdminAnalyticsService {
         mergedHighlightMux.status = 'pending';
       }
 
+      const sessionStatus =
+        anyMuxReady || mergedHighlightMux.ready > 0
+          ? 'ready'
+          : pickBestExtractionStatus(sorted.map((r) => r.status));
+
       return {
         ...primary,
         id: primary.id,
@@ -1012,13 +1016,17 @@ export class AdminAnalyticsService {
           0,
         ),
         hasS3: sorted.some((r) => r.hasS3),
-        hasMux: allMuxReady,
+        hasMux: anyMuxReady,
         muxProcessing:
-          s3Channels.some((r) => r.muxProcessing || (!r.hasMux && r.hasS3)) &&
-          !allMuxReady,
+          sorted.some((r) => r.muxProcessing || (r.hasS3 && !r.hasMux)) &&
+          !anyMuxReady,
         muxPlaybackId: muxRow.muxPlaybackId,
         s3Path: s3Row.s3Path,
         extractAttempts: Math.max(...sorted.map((r) => r.extractAttempts ?? 1)),
+        extractFailedReason:
+          sorted
+            .map((r) => String(r.extractFailedReason ?? '').trim())
+            .find(Boolean) ?? '',
         updatedAt: latestUpdated,
         highlightMux: mergedHighlightMux,
         hasHighlightMux:

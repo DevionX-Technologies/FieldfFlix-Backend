@@ -79,6 +79,7 @@ import {
   readRecordingNvrChannel,
   resolveNvrChannelsForCamera,
 } from 'src/utils/nvr-channels.util';
+import { classifyNoSourceVideoAction } from 'src/utils/no-source-video.util';
 import {
   HOUR_SEC,
   recordingUnlockBaseInr,
@@ -206,7 +207,11 @@ export class RecordingService {
 
   private isMuxCycleTerminalAction(action: string, ok: boolean): boolean {
     if (!ok && action === 'failed') return true;
-    return action === 'already_ready' || action === 'no_source_video';
+    return (
+      action === 'already_ready' ||
+      action === 'no_source_video' ||
+      action.startsWith('no_source_video_')
+    );
   }
 
   private upsertMuxCycleResult(
@@ -551,7 +556,7 @@ export class RecordingService {
           const result = await this.retryMuxIngestion(rec.id);
           if (
             result.action !== 'already_ready' &&
-            result.action !== 'no_source_video'
+            !result.action.startsWith('no_source_video')
           ) {
             this.logger.log(`Mux heal for ${rec.id}: ${result.action}`);
           }
@@ -667,7 +672,12 @@ export class RecordingService {
     }
 
     if (!key) {
-      return { ok: false, action: 'no_source_video' };
+      const action = classifyNoSourceVideoAction({
+        status: recording.status,
+        s3Path: recording.s3Path,
+        metadata: meta,
+      });
+      return { ok: false, action };
     }
 
     const signedUrl = await this.fileServiceService.getSignedUrlFromS3(

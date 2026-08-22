@@ -667,11 +667,18 @@ export class RecordingController {
       throw new NotFoundException(`Recording with ID ${recordingId} not found`);
     }
 
-    const playbackId = recording.mux_playback_id;
-    if (!playbackId || recording.status !== 'ready') {
+    const playbackId = recording.mux_playback_id?.trim() || null;
+    const status = String(recording.status ?? '').toLowerCase();
+    const blocked = ['failed', 'cancelled', 'interrupted'].includes(status);
+
+    if (
+      !playbackId ||
+      blocked ||
+      !this.recordingService.isRecordingMuxPlayable(recording)
+    ) {
       return {
         recording_id: recording.id,
-        playback_id: null,
+        playback_id: playbackId,
         mux_public_url: null,
         signed_token: null,
         signed_url: null,
