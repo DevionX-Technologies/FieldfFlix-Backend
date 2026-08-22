@@ -394,7 +394,7 @@ export class AdminController {
     return this.recordingService.retryMuxIngestion(id);
   }
 
-  /** Run sequential Mux ingest for all S3-ready recordings on an IST date */
+  /** Run parallel Mux ingest for S3-ready recordings on an IST date (backfill). */
   @Public()
   @Post('extraction-pipeline/mux-cycle')
   async runMuxIngestionCycle(@Body() body: { date?: string }) {

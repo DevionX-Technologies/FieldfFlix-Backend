@@ -13,6 +13,7 @@ import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import {
   DataSource,
   Between,
+  In,
   IsNull,
   Not,
   QueryRunner,
@@ -476,6 +477,13 @@ export class RecordingService {
             status: 'ready',
             isVideoCreated: true,
           });
+          await this.recordingHighlightsService
+            .ensureHighlightClipsForRecording(recordingId)
+            .catch((err) =>
+              this.logger.warn(
+                `Highlight clip enqueue after Mux poll failed for ${recordingId}: ${(err as Error)?.message || err}`,
+              ),
+            );
           return { ok: true, action: 'polled_mux_asset' };
         }
         if (asset?.status && asset.status !== 'ready') {
@@ -515,8 +523,8 @@ export class RecordingService {
   }
 
   /**
-   * Admin: sequentially retry Mux ingest for every recording on a given IST day
-   * that still lacks a playback ID (S3 → Mux, one video at a time).
+   * Admin: parallel Mux ingest for S3-ready recordings on an IST day
+   * (backfill only — new Pi callbacks auto-trigger Mux on upload).
    */
   async runMuxIngestionCycleForDate(date: string): Promise<{
     date: string;
@@ -550,47 +558,66 @@ export class RecordingService {
       const candidates = await this.recordingRepositoryForMedia.find({
         where: {
           startTime: Between(dayStart, dayEnd),
-          mux_playback_id: IsNull(),
+          s3Path: Not(IsNull()),
         },
         order: { startTime: 'ASC', id: 'ASC' },
       });
 
-      this.logger.log(
-        `Starting Mux ingestion cycle for ${date}: ${candidates.length} candidate(s)`,
+      const needingIngest = candidates.filter(
+        (rec) => !this.isRecordingMuxPlayable(rec),
       );
 
-      for (const rec of candidates) {
-        try {
-          const result = await this.retryMuxIngestion(rec.id);
-          summary[result.action] = (summary[result.action] ?? 0) + 1;
-          results.push({
-            recordingId: rec.id,
-            ok: result.ok,
-            action: result.action,
-          });
-          this.logger.log(
-            `Mux cycle ${date}: ${rec.id.slice(0, 8)} → ${result.action}`,
-          );
-          // Space out Mux API calls when uploading from S3.
-          if (result.action === 'mux_upload_started') {
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+      this.logger.log(
+        `Starting Mux ingestion cycle for ${date}: ${needingIngest.length} candidate(s) (${candidates.length} with S3)`,
+      );
+
+      const concurrency = Math.max(
+        1,
+        Math.min(8, Number(process.env.MUX_CYCLE_CONCURRENCY ?? 5)),
+      );
+
+      for (let i = 0; i < needingIngest.length; i += concurrency) {
+        const chunk = needingIngest.slice(i, i + concurrency);
+        const chunkResults = await Promise.all(
+          chunk.map(async (rec) => {
+            try {
+              const result = await this.retryMuxIngestion(rec.id);
+              return {
+                recordingId: rec.id,
+                ok: result.ok,
+                action: result.action,
+              };
+            } catch (e) {
+              const message = (e as Error)?.message ?? String(e);
+              return {
+                recordingId: rec.id,
+                ok: false,
+                action: 'failed',
+                error: message,
+              };
+            }
+          }),
+        );
+
+        for (const row of chunkResults) {
+          if ('error' in row && row.error) {
+            summary.failed = (summary.failed ?? 0) + 1;
+            this.logger.warn(
+              `Mux cycle failed for ${row.recordingId}: ${row.error}`,
+            );
+          } else {
+            summary[row.action] = (summary[row.action] ?? 0) + 1;
+            this.logger.log(
+              `Mux cycle ${date}: ${row.recordingId.slice(0, 8)} → ${row.action}`,
+            );
           }
-        } catch (e) {
-          summary.failed = (summary.failed ?? 0) + 1;
-          const message = (e as Error)?.message ?? String(e);
-          results.push({
-            recordingId: rec.id,
-            ok: false,
-            action: 'failed',
-            error: message,
-          });
-          this.logger.warn(`Mux cycle failed for ${rec.id}: ${message}`);
+          results.push(row);
         }
       }
 
       return {
         date,
-        totalCandidates: candidates.length,
+        totalCandidates: needingIngest.length,
         processed: results.length,
         summary,
         results,
@@ -1022,6 +1049,139 @@ export class RecordingService {
     }
   }
 
+  /** True when the recording has a Mux asset that is actually playable. */
+  isRecordingMuxPlayable(recording: {
+    status?: string | null;
+    mux_playback_id?: string | null;
+  }): boolean {
+    const status = String(recording.status ?? '').toLowerCase();
+    return (
+      (status === 'ready' || status === 'completed') &&
+      !!recording.mux_playback_id
+    );
+  }
+
+  /**
+   * Poll Mux for asset readiness and patch DB when the HLS manifest is playable.
+   * Returns the latest status fields for admin/list endpoints.
+   */
+  async syncMuxReadyStatus(recordingId: string): Promise<{
+    status: string;
+    mux_playback_id: string | null;
+    mux_asset_id: string | null;
+  } | null> {
+    const recording = await this.recordingRepository.findOne({
+      where: { id: recordingId },
+      select: [
+        'id',
+        'status',
+        'mux_asset_id',
+        'mux_playback_id',
+        'mux_media_url',
+      ],
+    });
+
+    if (!recording) {
+      return null;
+    }
+
+    if (!recording.mux_asset_id || this.isRecordingMuxPlayable(recording)) {
+      return {
+        status: recording.status,
+        mux_playback_id: recording.mux_playback_id ?? null,
+        mux_asset_id: recording.mux_asset_id ?? null,
+      };
+    }
+
+    try {
+      const asset = await this.muxService.getAssetDetails(
+        recording.mux_asset_id,
+      );
+      if (asset?.status === 'ready') {
+        const livePlaybackId = Array.isArray(asset.playback_ids)
+          ? (asset.playback_ids.find((p: any) => p?.policy === 'public')?.id ??
+            asset.playback_ids[0]?.id ??
+            null)
+          : null;
+
+        const patch: Partial<Recording> = {
+          status: 'ready',
+          isVideoCreated: true,
+        };
+        if (livePlaybackId) {
+          patch.mux_playback_id = livePlaybackId;
+          patch.mux_media_url = `https://stream.mux.com/${livePlaybackId}.m3u8`;
+        }
+        await this.recordingRepository.update(recording.id, patch);
+        await this.recordingHighlightsService
+          .ensureHighlightClipsForRecording(recording.id)
+          .catch((err) =>
+            this.logger.warn(
+              `Highlight clip enqueue after Mux ready failed for ${recording.id}: ${err?.message ?? err}`,
+            ),
+          );
+        return {
+          status: 'ready',
+          mux_playback_id: livePlaybackId,
+          mux_asset_id: recording.mux_asset_id,
+        };
+      }
+
+      if (recording.mux_playback_id || recording.mux_media_url) {
+        await this.recordingRepository.update(recording.id, {
+          mux_playback_id: null,
+          mux_media_url: null,
+        });
+      }
+
+      return {
+        status: recording.status,
+        mux_playback_id: null,
+        mux_asset_id: recording.mux_asset_id,
+      };
+    } catch (err: any) {
+      this.logger.warn(
+        `Mux self-heal for ${recordingId} failed: ${err?.message ?? err}`,
+      );
+      return {
+        status: recording.status,
+        mux_playback_id: recording.mux_playback_id ?? null,
+        mux_asset_id: recording.mux_asset_id ?? null,
+      };
+    }
+  }
+
+  async syncMuxReadyStatusBatch(
+    recordingIds: string[],
+    concurrency = 5,
+  ): Promise<Map<string, { status: string; mux_playback_id: string | null }>> {
+    const results = new Map<
+      string,
+      { status: string; mux_playback_id: string | null }
+    >();
+    const uniqueIds = [...new Set(recordingIds.filter(Boolean))];
+
+    for (let i = 0; i < uniqueIds.length; i += concurrency) {
+      const chunk = uniqueIds.slice(i, i + concurrency);
+      const synced = await Promise.all(
+        chunk.map(async (id) => {
+          const row = await this.syncMuxReadyStatus(id);
+          return row ? ([id, row] as const) : null;
+        }),
+      );
+      for (const entry of synced) {
+        if (entry) {
+          results.set(entry[0], {
+            status: entry[1].status,
+            mux_playback_id: entry[1].mux_playback_id,
+          });
+        }
+      }
+    }
+
+    return results;
+  }
+
   /**
    * Get the current status of a recording.
    * Useful for clients to poll after calling stop recording.
@@ -1058,38 +1218,10 @@ export class RecordingService {
       );
     }
 
-    if (recording.mux_asset_id && recording.status !== 'ready') {
-      try {
-        const asset = await this.muxService.getAssetDetails(
-          recording.mux_asset_id,
-        );
-        if (asset?.status === 'ready') {
-          const livePlaybackId = Array.isArray(asset.playback_ids)
-            ? (asset.playback_ids.find((p: any) => p?.policy === 'public')
-                ?.id ??
-              asset.playback_ids[0]?.id ??
-              null)
-            : null;
-
-          const patch: Partial<Recording> = {
-            status: 'ready',
-            isVideoCreated: true,
-          };
-          if (livePlaybackId) {
-            patch.mux_playback_id = livePlaybackId;
-            patch.mux_media_url = `https://stream.mux.com/${livePlaybackId}.m3u8`;
-          }
-          await this.recordingRepository.update(recording.id, patch);
-          Object.assign(recording, patch);
-        } else {
-          recording.mux_playback_id = null;
-          recording.mux_media_url = null;
-        }
-      } catch (err: any) {
-        this.logger.warn(
-          `Mux self-heal in getRecordingStatus(${recordingId}) failed: ${err?.message ?? err}`,
-        );
-      }
+    const synced = await this.syncMuxReadyStatus(recordingId);
+    if (synced) {
+      recording.status = synced.status;
+      recording.mux_playback_id = synced.mux_playback_id ?? undefined;
     }
 
     return {
@@ -2362,13 +2494,44 @@ export class RecordingService {
       viewerSaved: boolean;
     }>
   > {
+    const sessionRows = await this.getSessionRecordings(recordingId);
+    const recordingIds =
+      sessionRows.length > 0 ? sessionRows.map((row) => row.id) : [recordingId];
+
+    for (const id of recordingIds) {
+      const rec = await this.recordingRepository.findOne({
+        where: { id },
+        select: [
+          'id',
+          'status',
+          'mux_playback_id',
+          'mux_asset_id',
+          'isVideoCreated',
+        ],
+      });
+      if (rec && this.isRecordingMuxPlayable(rec)) {
+        await this.recordingHighlightsService
+          .ensureHighlightClipsForRecording(id)
+          .catch((err) =>
+            this.logger.warn(
+              `ensureHighlightClipsForRecording(${id}) failed: ${(err as Error)?.message || err}`,
+            ),
+          );
+      }
+    }
+
     const rows = await this.recordingHighlightsRepository.find({
-      where: { recordingId },
+      where: { recordingId: In(recordingIds) },
       order: { processing_order: 'ASC', createdAt: 'ASC' },
     });
 
-    /** Include mux-ready clips stuck in `clip_created` (webhook sometimes never flips to `ready`). */
-    const filtered = rows.filter((h) => {
+    const healedRows = await Promise.all(
+      rows.map((row) =>
+        this.recordingHighlightsService.syncHighlightClipFromMux(row),
+      ),
+    );
+
+    const filtered = healedRows.filter((h) => {
       const st = String(h.status ?? '').toLowerCase();
       if (
         st === HIGHLIGHT_STATUS.FAILED ||
@@ -2376,11 +2539,21 @@ export class RecordingService {
       ) {
         return false;
       }
-      const hasStream =
-        Boolean(h.mux_public_playback_url?.trim?.()) ||
-        Boolean(h.s3path?.trim?.() && String(h.s3path).startsWith('http'));
+
+      const playbackId = h.playback_id?.trim?.() ?? '';
+      const muxUrl = h.mux_public_playback_url?.trim?.() ?? '';
+      const s3Url =
+        h.s3path?.trim?.() && String(h.s3path).startsWith('http')
+          ? String(h.s3path)
+          : '';
+
+      const hasStream = Boolean(muxUrl || s3Url || playbackId);
       if (!hasStream) return false;
-      return st === HIGHLIGHT_STATUS.READY;
+
+      return (
+        st === HIGHLIGHT_STATUS.READY ||
+        (Boolean(playbackId) && st === HIGHLIGHT_STATUS.CLIP_CREATED)
+      );
     });
 
     const ids = filtered.map((h) => h.id);
@@ -3729,13 +3902,11 @@ export class RecordingService {
         dto.s3Key || recording.s3Path?.replace(`s3://${bucketName}/`, '');
 
       if (key) {
-        const s3SignedReadUrl =
-          await this.fileServiceService.getSignedUrlFromS3(key, bucketName);
-        await this.muxService.uploadFromS3(s3SignedReadUrl, key, recording.id);
         await this.recordingRepositoryForMedia.update(recording.id, {
           status: 'uploaded',
           s3Path: `s3://${bucketName}/${key}`,
         });
+        await this.retryMuxIngestion(recording.id);
       } else {
         // Pi uploaded via Mux direct upload — Mux webhook will finalize the asset.
         await this.recordingRepositoryForMedia.update(recording.id, {

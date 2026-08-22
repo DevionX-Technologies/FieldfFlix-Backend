@@ -263,6 +263,143 @@ export class RecordingHighlightsService {
     return attachedCount;
   }
 
+  /**
+   * Poll Mux for clip assets stuck in clip_created and patch playback URLs.
+   */
+  async syncHighlightClipFromMux(
+    highlight: RecordingHighlights,
+  ): Promise<RecordingHighlights> {
+    const st = String(highlight.status ?? '').toLowerCase();
+    if (
+      st === HIGHLIGHT_STATUS.READY &&
+      highlight.mux_public_playback_url?.trim()
+    ) {
+      return highlight;
+    }
+    if (!highlight.asset_id) {
+      return highlight;
+    }
+
+    try {
+      const assetStatus = await this.checkMuxAssetStatus(highlight.asset_id);
+      if (assetStatus.status !== 'ready') {
+        return highlight;
+      }
+
+      const playbackId = assetStatus.playback_id || highlight.playback_id;
+      const playbackUrl = playbackId
+        ? `https://stream.mux.com/${playbackId}.m3u8`
+        : null;
+
+      await this.dataSource.manager.update(
+        RecordingHighlights,
+        { id: highlight.id },
+        {
+          status: HIGHLIGHT_STATUS.READY,
+          playback_id: playbackId,
+          mux_public_playback_url: playbackUrl,
+          isClipCreated: true,
+        },
+      );
+
+      return {
+        ...highlight,
+        status: HIGHLIGHT_STATUS.READY,
+        playback_id: playbackId,
+        mux_public_playback_url: playbackUrl,
+        isClipCreated: true,
+      };
+    } catch (err) {
+      this.logger.warn(
+        `Highlight Mux self-heal failed for ${highlight.id}: ${(err as Error)?.message || err}`,
+      );
+      return highlight;
+    }
+  }
+
+  /**
+   * Queue pending highlight clips once the source recording Mux asset is ready.
+   */
+  async ensureHighlightClipsForRecording(recordingId: string): Promise<void> {
+    const recording = await this.dataSource.manager.findOne(Recording, {
+      where: { id: recordingId },
+      select: [
+        'id',
+        'mux_asset_id',
+        'isVideoCreated',
+        'status',
+        'mux_playback_id',
+      ],
+    });
+
+    if (!recording?.mux_asset_id) {
+      return;
+    }
+
+    const isPlayable =
+      !!recording.mux_playback_id &&
+      ['ready', 'completed'].includes(
+        String(recording.status ?? '').toLowerCase(),
+      );
+    if (!isPlayable && !recording.isVideoCreated) {
+      return;
+    }
+
+    const pendingCount = await this.dataSource.manager
+      .createQueryBuilder(RecordingHighlights, 'rh')
+      .where('rh.recording_id = :recordingId', { recordingId })
+      .andWhere('rh.asset_id IS NULL')
+      .andWhere('rh.status = :pending', { pending: HIGHLIGHT_STATUS.PENDING })
+      .getCount();
+
+    const stuckClipCount = await this.dataSource.manager
+      .createQueryBuilder(RecordingHighlights, 'rh')
+      .where('rh.recording_id = :recordingId', { recordingId })
+      .andWhere('rh.asset_id IS NOT NULL')
+      .andWhere('rh.status != :ready', { ready: HIGHLIGHT_STATUS.READY })
+      .getCount();
+
+    if (pendingCount > 0) {
+      await this.dataSource.query(
+        `UPDATE recording_highlights
+         SET status = $1, source_asset_id = $2, updated_at = NOW()
+         WHERE recording_id = $3
+           AND status = $4
+           AND asset_id IS NULL`,
+        [
+          HIGHLIGHT_STATUS.QUEUED,
+          recording.mux_asset_id,
+          recordingId,
+          HIGHLIGHT_STATUS.PENDING,
+        ],
+      );
+
+      try {
+        await this.enqueueService.enqueueRecording(
+          recordingId,
+          'single_highlight',
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Failed to enqueue highlight clips for ${recordingId}: ${(err as Error)?.message || err}`,
+        );
+      }
+    }
+
+    if (stuckClipCount > 0) {
+      try {
+        await this.enqueueService.enqueueRecording(
+          recordingId,
+          'single_highlight',
+        );
+      } catch (err) {
+        this.logger.warn(
+          `Failed to re-enqueue stuck highlight clips for ${recordingId}: ${(err as Error)?.message || err}`,
+        );
+      }
+    }
+  }
+
   async createRecordingHighlight(
     recordingId: string,
   ): Promise<RecordingHighlights> {

@@ -1,4 +1,6 @@
 import {
+  forwardRef,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
@@ -23,6 +25,35 @@ import { Fast2SmsService } from 'src/common/service/fast2sms.service';
 import { NotificationEntity } from 'src/notification/entities/notification.entity';
 import { MessageStatus, NotificationType } from 'src/constant/enum';
 import { readRecordingNvrChannel } from 'src/utils/nvr-channels.util';
+import { RecordingService } from 'src/recording/service/recording.service';
+
+const EXTRACTION_STATUS_RANK: Record<string, number> = {
+  ready: 100,
+  completed: 90,
+  processing: 60,
+  uploaded: 50,
+  uploading: 45,
+  extracting: 40,
+  requested: 35,
+  pending: 30,
+  in_progress: 25,
+  failed: 10,
+  cancelled: 5,
+};
+
+function pickBestExtractionStatus(statuses: string[]): string {
+  return statuses.reduce(
+    (best, status) => {
+      const normalized = String(status ?? '').toLowerCase();
+      const bestNormalized = String(best ?? '').toLowerCase();
+      return (EXTRACTION_STATUS_RANK[normalized] ?? 0) >
+        (EXTRACTION_STATUS_RANK[bestNormalized] ?? 0)
+        ? normalized
+        : bestNormalized;
+    },
+    String(statuses[0] ?? 'unknown').toLowerCase(),
+  );
+}
 
 function calculateLevel(xp: number): { level: number; levelName: string } {
   if (xp >= 100) return { level: 5, levelName: 'Legend' };
@@ -61,6 +92,8 @@ export class AdminAnalyticsService {
     private readonly fast2SmsService: Fast2SmsService,
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    @Inject(forwardRef(() => RecordingService))
+    private readonly recordingService: RecordingService,
   ) {}
 
   /**
@@ -754,8 +787,29 @@ export class AdminAnalyticsService {
       take: limit,
     });
 
+    const muxSyncIds = recordings
+      .filter(
+        (rec) =>
+          rec.mux_asset_id &&
+          !this.recordingService.isRecordingMuxPlayable(rec),
+      )
+      .map((rec) => rec.id);
+    const muxSynced =
+      await this.recordingService.syncMuxReadyStatusBatch(muxSyncIds);
+
     const items = await Promise.all(
       recordings.map(async (rec) => {
+        const synced = muxSynced.get(rec.id);
+        const status = synced?.status ?? rec.status;
+        const muxPlaybackId = synced?.mux_playback_id ?? rec.mux_playback_id;
+        const muxAssetId = rec.mux_asset_id;
+        const isMuxPlayable = this.recordingService.isRecordingMuxPlayable({
+          status,
+          mux_playback_id: muxPlaybackId,
+        });
+        const muxProcessing =
+          !!muxAssetId && !isMuxPlayable && status !== 'failed';
+
         const metadata =
           rec.metadata && typeof rec.metadata === 'object'
             ? (rec.metadata as Record<string, unknown>)
@@ -805,16 +859,17 @@ export class AdminAnalyticsService {
           courtNumber: rec.camera?.court_number || 1,
           cameraId: rec.cameraId,
           nvrChannel,
-          status: rec.status,
+          status,
           startTime: rec.startTime,
           endTime: rec.endTime,
           durationMinutes,
           linkedHighlightCount,
           highlightsInWindow,
-          muxPlaybackId: rec.mux_playback_id,
-          muxAssetId: rec.mux_asset_id,
+          muxPlaybackId,
+          muxAssetId,
           s3Path: rec.s3Path,
-          hasMux: !!rec.mux_playback_id,
+          hasMux: isMuxPlayable,
+          muxProcessing,
           hasS3: !!rec.s3Path,
           updatedAt: rec.updated_at,
           extractAttempts: Number(metadata.extract_attempts ?? 1),
@@ -866,19 +921,35 @@ export class AdminAnalyticsService {
 
       const muxRow = sorted.find((r) => r.hasMux) ?? primary;
       const s3Row = sorted.find((r) => r.hasS3) ?? primary;
+      const s3Channels = sorted.filter((r) => r.hasS3);
+      const allMuxReady =
+        s3Channels.length > 0 && s3Channels.every((r) => r.hasMux);
+      const sessionStatus = allMuxReady
+        ? 'ready'
+        : pickBestExtractionStatus(sorted.map((r) => r.status));
 
       return {
         ...primary,
         id: primary.id,
+        status: sessionStatus,
         recordingIds: sorted.map((r) => r.id),
         nvrChannels,
         nvrChannelLabel,
         channelCount: sorted.length,
         nvrChannel: primary.nvrChannel,
-        linkedHighlightCount: primary.linkedHighlightCount,
-        highlightsInWindow: primary.highlightsInWindow,
+        linkedHighlightCount: sorted.reduce(
+          (sum, r) => sum + (r.linkedHighlightCount ?? 0),
+          0,
+        ),
+        highlightsInWindow: sorted.reduce(
+          (sum, r) => sum + (r.highlightsInWindow ?? 0),
+          0,
+        ),
         hasS3: sorted.some((r) => r.hasS3),
-        hasMux: sorted.some((r) => r.hasMux),
+        hasMux: allMuxReady,
+        muxProcessing:
+          s3Channels.some((r) => r.muxProcessing || (!r.hasMux && r.hasS3)) &&
+          !allMuxReady,
         muxPlaybackId: muxRow.muxPlaybackId,
         s3Path: s3Row.s3Path,
         extractAttempts: Math.max(...sorted.map((r) => r.extractAttempts ?? 1)),
