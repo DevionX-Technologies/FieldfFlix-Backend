@@ -172,9 +172,6 @@ export class S3HighlightSyncService {
     const existingS3Paths = new Set(
       existingRows.map((r) => r.s3path).filter(Boolean) as string[],
     );
-    const existingClickTimes = new Set(
-      existingRows.map((r) => new Date(r.button_click_timestamp).getTime()),
-    );
 
     let maxProcessingOrder =
       existingRows.reduce(
@@ -198,7 +195,6 @@ export class S3HighlightSyncService {
         const clickMs = obj.windowStart.getTime();
         if (clickMs < startMs || clickMs > endMs) continue;
         if (existingS3Paths.has(obj.key)) continue;
-        if (existingClickTimes.has(clickMs)) continue;
 
         const relativeSeconds = calculateRelativeSeconds(
           targetRecording.startTime,
@@ -225,7 +221,6 @@ export class S3HighlightSyncService {
         });
 
         existingS3Paths.add(obj.key);
-        existingClickTimes.add(clickMs);
         attached += 1;
       }
     }
