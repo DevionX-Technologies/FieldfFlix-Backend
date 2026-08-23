@@ -104,6 +104,28 @@ export class S3HighlightSyncService {
    * Pull gateway S3 highlights into the target extracted recording when their
    * window start falls inside [startTime, endTime].
    */
+  highlightCacheKey(court: number, nvrCam: number): string {
+    return `${court}:${nvrCam}`;
+  }
+
+  /** Pre-load S3 highlight keys for court/cam pairs (one list per heal cycle). */
+  async buildHighlightCache(
+    pairs: Array<{ court: number; nvrCam: number }>,
+  ): Promise<
+    Map<string, Array<{ key: string; windowStart: Date; publicUrl: string }>>
+  > {
+    const cache = new Map<
+      string,
+      Array<{ key: string; windowStart: Date; publicUrl: string }>
+    >();
+    for (const { court, nvrCam } of pairs) {
+      const key = this.highlightCacheKey(court, nvrCam);
+      if (cache.has(key)) continue;
+      cache.set(key, await this.listS3HighlightsForCourtCam(court, nvrCam));
+    }
+    return cache;
+  }
+
   async attachS3HighlightsInTimeWindow(
     targetRecordingId: string,
     cameraId: string,
@@ -111,6 +133,10 @@ export class S3HighlightSyncService {
     endTime: Date,
     formatRelativeTime: (seconds: number) => string,
     calculateRelativeSeconds: (recordingStart: Date, clickTime: Date) => number,
+    highlightCache?: Map<
+      string,
+      Array<{ key: string; windowStart: Date; publicUrl: string }>
+    >,
   ): Promise<number> {
     const targetRecording = await this.dataSource.manager.findOne(Recording, {
       where: { id: targetRecordingId },
@@ -164,7 +190,10 @@ export class S3HighlightSyncService {
     let attached = 0;
 
     for (const nvrCam of nvrCams) {
-      const objects = await this.listS3HighlightsForCourtCam(court, nvrCam);
+      const cacheKey = this.highlightCacheKey(court, nvrCam);
+      const objects =
+        highlightCache?.get(cacheKey) ??
+        (await this.listS3HighlightsForCourtCam(court, nvrCam));
       for (const obj of objects) {
         const clickMs = obj.windowStart.getTime();
         if (clickMs < startMs || clickMs > endMs) continue;

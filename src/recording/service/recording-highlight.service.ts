@@ -129,6 +129,10 @@ export class RecordingHighlightsService {
     cameraId: string,
     startTime: Date,
     endTime: Date,
+    highlightCache?: Map<
+      string,
+      Array<{ key: string; windowStart: Date; publicUrl: string }>
+    >,
   ): Promise<number> {
     const targetRecording = await this.dataSource.manager.findOne(Recording, {
       where: { id: targetRecordingId },
@@ -157,6 +161,7 @@ export class RecordingHighlightsService {
         (seconds) => this.formatRelativeTime(seconds),
         (recordingStart, clickTime) =>
           this.calculateRelativeSeconds(recordingStart, clickTime),
+        highlightCache,
       );
 
     const existingRows = await this.dataSource.manager.find(

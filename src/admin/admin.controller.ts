@@ -18,6 +18,7 @@ import { Request } from 'express';
 import { ILocalLoginPayload } from 'src/auth/strategy/jwt.strategy';
 import { RecordingService } from 'src/recording/service/recording.service';
 import { RecordingHighlightsService } from 'src/recording/service/recording-highlight.service';
+import { HighlightGapHealService } from 'src/recording/service/highlight-gap-heal.service';
 import { Recording } from 'src/recording/entities/recording.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -89,6 +90,8 @@ export class AdminController {
     private readonly recordingService: RecordingService,
     @Inject(forwardRef(() => RecordingHighlightsService))
     private readonly recordingHighlightsService: RecordingHighlightsService,
+    @Inject(forwardRef(() => HighlightGapHealService))
+    private readonly highlightGapHealService: HighlightGapHealService,
     @InjectRepository(Recording)
     private readonly recordingRepo: Repository<Recording>,
     private readonly pricingConfigService: PricingConfigService,
@@ -385,6 +388,13 @@ export class AdminController {
         rec.endTime,
       );
     return { recordingId: id, attached };
+  }
+
+  /** Clean failed partial extracts + re-link S3 highlights for playable sessions. */
+  @Public()
+  @Post('highlight-gap-heal/run')
+  async runHighlightGapHeal() {
+    return this.highlightGapHealService.runHealCycle('admin');
   }
 
   /** Retry Mux ingest for a recording stuck without playback */

@@ -15,6 +15,7 @@ import { UserModule } from 'src/user/user.module';
 import { RecordingService } from './service/recording.service';
 import { RecordingHighlightsService } from './service/recording-highlight.service';
 import { S3HighlightSyncService } from './service/s3-highlight-sync.service';
+import { HighlightGapHealService } from './service/highlight-gap-heal.service';
 import { RecordingHighlightEngagementService } from './service/recording-highlight-engagement.service';
 import { RecordingPaymentService } from './service/recording-payment.service';
 import { MuxWebhookController } from './controller/mux-webhook.controller';
@@ -55,6 +56,7 @@ import { PointsModule } from 'src/points/points.module';
     RaspberryPiApiService,
     RecordingHighlightsService,
     S3HighlightSyncService,
+    HighlightGapHealService,
     RecordingHighlightEngagementService,
     RecordingPaymentService,
   ],
@@ -63,6 +65,7 @@ import { PointsModule } from 'src/points/points.module';
     RecordingPaymentService,
     RecordingHighlightEngagementService,
     RecordingHighlightsService,
+    HighlightGapHealService,
   ],
 })
 export class RecordingModule {}

@@ -113,16 +113,39 @@ export class FileServiceService {
 
   /** First object key under a prefix (e.g. recordings/{uuid}_). */
   async findFirstObjectKeyWithPrefix(prefix: string): Promise<string | null> {
+    const keys = await this.listObjectKeysWithPrefix(prefix, 1);
+    return keys[0] ?? null;
+  }
+
+  /** All object keys under a prefix (paginated). */
+  async listObjectKeysWithPrefix(
+    prefix: string,
+    maxKeys?: number,
+  ): Promise<string[]> {
     const bucketName =
       process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
-    const resp = await this.s3.send(
-      new ListObjectsV2Command({
-        Bucket: bucketName,
-        Prefix: prefix,
-        MaxKeys: 1,
-      }),
-    );
-    return resp.Contents?.[0]?.Key ?? null;
+    const keys: string[] = [];
+    let continuationToken: string | undefined;
+
+    do {
+      const resp = await this.s3.send(
+        new ListObjectsV2Command({
+          Bucket: bucketName,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+          MaxKeys: maxKeys ? Math.min(maxKeys - keys.length, 1000) : undefined,
+        }),
+      );
+      for (const obj of resp.Contents ?? []) {
+        if (obj.Key) keys.push(obj.Key);
+      }
+      if (maxKeys && keys.length >= maxKeys) break;
+      continuationToken = resp.IsTruncated
+        ? resp.NextContinuationToken
+        : undefined;
+    } while (continuationToken);
+
+    return keys;
   }
 
   async getSignedUrlFromS3(
