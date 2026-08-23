@@ -24,7 +24,7 @@ function parseIstTimestamp(datePart, timePart) {
   const h = timePart.slice(0, 2);
   const mi = timePart.slice(2, 4);
   const s = timePart.slice(4, 6);
-  return new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}+05:30`);
+  return new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}Z`);
 }
 
 async function listS3ByCourt(s3, ymd, courtFilter) {

@@ -9,11 +9,11 @@ export type ParsedHighlightS3Key = {
   key: string;
   court: number;
   nvrCam: number;
-  /** Window start encoded in the key (Pi gateway local IST wall clock). */
+  /** Window start encoded in the key (Pi gateway UTC wall clock). */
   windowStart: Date;
 };
 
-/** Parse timestamp in key as IST (Asia/Kolkata) — Pi gateway encodes local wall clock. */
+/** Parse timestamp in key as UTC — Pi gateway encodes UTC in S3 object keys. */
 export function parseHighlightKeyTimestamp(
   datePart: string,
   timePart: string,
@@ -24,7 +24,7 @@ export function parseHighlightKeyTimestamp(
   const hour = timePart.slice(0, 2);
   const minute = timePart.slice(2, 4);
   const second = timePart.slice(4, 6);
-  return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}+05:30`);
+  return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`);
 }
 
 export function parseHighlightS3Key(key: string): ParsedHighlightS3Key | null {

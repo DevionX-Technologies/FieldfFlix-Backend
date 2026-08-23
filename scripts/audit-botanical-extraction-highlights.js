@@ -32,14 +32,14 @@ function arg(name, fallback) {
   return hit ? hit.slice(name.length + 1) : fallback;
 }
 
-function parseIstKey(datePart, timePart) {
+function parseHighlightKeyUtc(datePart, timePart) {
   const y = datePart.slice(0, 4);
   const mo = datePart.slice(4, 6);
   const d = datePart.slice(6, 8);
   const h = timePart.slice(0, 2);
   const mi = timePart.slice(2, 4);
   const s = timePart.slice(4, 6);
-  return new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}+05:30`);
+  return new Date(`${y}-${mo}-${d}T${h}:${mi}:${s}Z`);
 }
 
 function fmtIst(iso) {
@@ -96,7 +96,7 @@ async function loadAllS3Highlights() {
         key: obj.Key,
         court,
         nvrCam: parseInt(m[2], 10),
-        at: parseIstKey(m[3], m[4]),
+        at: parseHighlightKeyUtc(m[3], m[4]),
         ymd: m[3],
       });
     }
@@ -212,8 +212,8 @@ async function main() {
     console.log('');
   }
 
-  // S3 totals by court/date (IST filename date)
-  console.log('--- S3 highlight files by court & IST filename date ---');
+  // S3 totals by court/date (UTC calendar date in filename)
+  console.log('--- S3 highlight files by court & filename date (UTC) ---');
   for (const date of dates) {
     const ymd = date.replace(/-/g, '');
     console.log(`  ${date}:`);
@@ -235,7 +235,7 @@ async function main() {
   const issues = [];
   if (summary.gapLinkedVsS3 > 0) {
     issues.push(
-      'attachS3HighlightsInTimeWindow not linking all S3 clips to sessions (IST parse or window mismatch)',
+      'attachS3HighlightsInTimeWindow not linking all S3 clips to sessions (UTC key parse or window mismatch)',
     );
   }
   const inWindowMismatch = rows.filter((r) => r.mismatchInWindow);

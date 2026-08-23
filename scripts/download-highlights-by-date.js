@@ -34,7 +34,7 @@ function arg(name) {
   return hit ? hit.slice(pref.length) : undefined;
 }
 
-/** Parse Pi filename timestamp as IST (+05:30). */
+/** Parse Pi filename timestamp as UTC (matches s3-highlight-key.util.ts). */
 function parseHighlightKeyTimestamp(datePart, timePart) {
   const year = datePart.slice(0, 4);
   const month = datePart.slice(4, 6);
@@ -42,7 +42,7 @@ function parseHighlightKeyTimestamp(datePart, timePart) {
   const hour = timePart.slice(0, 2);
   const minute = timePart.slice(2, 4);
   const second = timePart.slice(4, 6);
-  return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}+05:30`);
+  return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`);
 }
 
 function parseHighlightS3Key(key) {
@@ -142,7 +142,8 @@ async function main() {
 
   const manifest = {
     date: dateArg,
-    timezone: 'Asia/Kolkata (IST, encoded in S3 key filenames)',
+    timezone:
+      'UTC (encoded in S3 key filenames; display filters by IST day overlap)',
     bucket: BUCKET,
     downloadedAt: new Date().toISOString(),
     courts: {},

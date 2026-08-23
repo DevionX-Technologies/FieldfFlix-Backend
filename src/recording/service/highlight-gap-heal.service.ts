@@ -113,19 +113,22 @@ export class HighlightGapHealService {
       const healTargets = recent.filter((rec) =>
         this.isPrimaryChannelRecording(rec),
       );
-      const playableTargets = healTargets.filter((rec) =>
-        this.recordingService.isRecordingMuxPlayable(rec),
-      );
+      // Link S3 highlights for any non-failed session — including extracting,
+      // so button clips appear while full-match Mux ingest is still running.
+      const attachTargets = healTargets.filter((rec) => {
+        const status = String(rec.status ?? '').toLowerCase();
+        return status !== 'failed' && status !== 'cancelled';
+      });
 
-      summary.healCandidates = playableTargets.length;
+      summary.healCandidates = attachTargets.length;
 
-      const cachePairs = this.collectCourtCamPairs(playableTargets);
+      const cachePairs = this.collectCourtCamPairs(attachTargets);
       const highlightCache =
         cachePairs.length > 0
           ? await this.s3HighlightSyncService.buildHighlightCache(cachePairs)
           : undefined;
 
-      for (const rec of playableTargets) {
+      for (const rec of attachTargets) {
         if (!rec.cameraId || !rec.startTime || !rec.endTime) continue;
         try {
           const attached =

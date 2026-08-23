@@ -22,8 +22,8 @@ function parseHighlightKeyTimestamp(datePart, timePart) {
   const hour = timePart.slice(0, 2);
   const minute = timePart.slice(2, 4);
   const second = timePart.slice(4, 6);
-  // Pi gateway encodes IST wall clock in the key — not UTC.
-  return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}+05:30`);
+  // Pi gateway encodes UTC wall clock in the S3 key — not IST.
+  return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}Z`);
 }
 
 function parseHighlightS3Key(key) {

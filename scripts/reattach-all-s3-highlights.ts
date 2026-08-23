@@ -1,6 +1,6 @@
 /**
  * Re-run S3 highlight attach for every recording with a valid time window.
- * Uses IST parsing from s3-highlight-key.util (Pi gateway local wall clock).
+ * Uses UTC parsing from s3-highlight-key.util (Pi gateway UTC wall clock).
  *
  * Usage:
  *   npx ts-node -r tsconfig-paths/register scripts/reattach-all-s3-highlights.ts --dry-run
