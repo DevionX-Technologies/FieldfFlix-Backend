@@ -7,7 +7,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository, In, Between } from 'typeorm';
+import { DataSource, Repository, In } from 'typeorm';
 import axios from 'axios';
 // S3 SDK imports removed as we migrated to Mux
 import { User } from 'src/user/entities/user.entity';
@@ -768,6 +768,15 @@ export class AdminAnalyticsService {
   }
 
   /**
+   * IST calendar-day bounds for admin date filters (Asia/Kolkata).
+   */
+  private istDayBounds(date: string): { dayStart: Date; dayEnd: Date } {
+    const dayStart = new Date(`${date}T00:00:00+05:30`);
+    const dayEnd = new Date(`${date}T23:59:59.999+05:30`);
+    return { dayStart, dayEnd };
+  }
+
+  /**
    * Date-wise extraction request ledger for admin diagnostics (live DB status).
    */
   async listExtractionRequests(
@@ -775,20 +784,35 @@ export class AdminAnalyticsService {
     page = 1,
     limit = 100,
   ): Promise<any> {
-    const where: any = {};
+    const safePage = Math.max(1, page);
+    const safeLimit = Math.max(1, Math.min(500, limit));
+    const maxFetch = date ? 5000 : safeLimit;
+
+    const qb = this.recordingRepo
+      .createQueryBuilder('rec')
+      .leftJoinAndSelect('rec.turf', 'turf')
+      .leftJoinAndSelect('rec.camera', 'camera')
+      .leftJoinAndSelect('rec.user', 'user')
+      .leftJoinAndSelect('rec.recordingHighlights', 'recordingHighlights');
+
     if (date) {
-      const dayStart = new Date(`${date}T00:00:00+05:30`);
-      const dayEnd = new Date(`${date}T23:59:59.999+05:30`);
-      where.startTime = Between(dayStart, dayEnd);
+      const { dayStart, dayEnd } = this.istDayBounds(date);
+      // Include any session whose window overlaps the IST day (not only startTime inside the day).
+      qb.andWhere('rec.startTime <= :dayEnd', { dayEnd }).andWhere(
+        '(rec.endTime IS NULL OR rec.endTime >= :dayStart)',
+        { dayStart },
+      );
     }
 
-    const [recordings, total] = await this.recordingRepo.findAndCount({
-      where,
-      relations: ['turf', 'camera', 'user', 'recordingHighlights'],
-      order: { startTime: 'DESC', updated_at: 'DESC' },
-      skip: (page - 1) * limit,
-      take: limit,
-    });
+    qb.orderBy('rec.startTime', 'DESC').addOrderBy('rec.updated_at', 'DESC');
+
+    if (!date) {
+      qb.skip((safePage - 1) * safeLimit).take(safeLimit);
+    } else {
+      qb.take(maxFetch);
+    }
+
+    const [recordings, totalRaw] = await qb.getManyAndCount();
 
     const muxSyncIds = recordings
       .filter(
@@ -822,13 +846,13 @@ export class AdminAnalyticsService {
           rec.camera?.court_number ?? 1,
         );
 
+        // Highlights linked to this recording row (not camera-wide duplicates).
         let highlightsInWindow = 0;
-        if (rec.startTime && rec.endTime && rec.cameraId) {
+        if (rec.startTime && rec.endTime) {
           highlightsInWindow = await this.dataSource
             .getRepository(RecordingHighlights)
             .createQueryBuilder('rh')
-            .innerJoin('rh.recording', 'r')
-            .where('r.cameraId = :cameraId', { cameraId: rec.cameraId })
+            .where('rh.recordingId = :recordingId', { recordingId: rec.id })
             .andWhere('rh.button_click_timestamp >= :startTime', {
               startTime: rec.startTime,
             })
@@ -909,16 +933,21 @@ export class AdminAnalyticsService {
       }),
     );
 
-    const grouped = this.groupExtractionRequestRows(items);
+    const groupedAll = this.groupExtractionRequestRows(items);
+    const totalGrouped = groupedAll.length;
+    const pagedRequests = date
+      ? groupedAll.slice((safePage - 1) * safeLimit, safePage * safeLimit)
+      : groupedAll;
 
     return {
       date: date ?? null,
-      total: grouped.length,
-      totalRecordings: total,
-      page,
-      limit,
-      totalPages: Math.ceil(grouped.length / limit),
-      requests: grouped,
+      total: totalGrouped,
+      totalRecordings: totalRaw,
+      page: safePage,
+      limit: safeLimit,
+      totalPages: Math.max(1, Math.ceil(totalGrouped / safeLimit)),
+      requests: pagedRequests,
+      truncated: date ? totalRaw >= maxFetch : false,
     };
   }
 
@@ -953,7 +982,19 @@ export class AdminAnalyticsService {
       const muxRow = sorted.find((r) => r.hasMux) ?? primary;
       const s3Row = sorted.find((r) => r.hasS3) ?? primary;
       const allMuxReady =
-        sorted.length > 0 && sorted.every((r) => r.hasMux || !r.hasS3);
+        sorted.length > 0 &&
+        sorted.every(
+          (r) =>
+            r.hasMux &&
+            !r.muxProcessing &&
+            String(r.status ?? '').toLowerCase() === 'ready',
+        );
+      const anyStillProcessing = sorted.some(
+        (r) =>
+          String(r.status ?? '').toLowerCase() === 'extracting' ||
+          r.muxProcessing ||
+          (r.hasS3 && !r.hasMux),
+      );
 
       const mergedHighlightMux = sorted.reduce(
         (acc, row) => {
@@ -994,9 +1035,11 @@ export class AdminAnalyticsService {
         mergedHighlightMux.status = 'pending';
       }
 
-      const sessionStatus = allMuxReady
-        ? 'ready'
-        : pickBestExtractionStatus(sorted.map((r) => r.status));
+      const sessionStatus = anyStillProcessing
+        ? 'extracting'
+        : allMuxReady
+          ? 'ready'
+          : pickBestExtractionStatus(sorted.map((r) => r.status));
 
       const channelDetails = sorted.map((r) => ({
         id: r.id,

@@ -132,7 +132,12 @@ export class S3HighlightSyncService {
     const court = isBotanicalVenueLabel(camera.turf?.name)
       ? resolveBotanicalLogicalCourtNumber(camera)
       : camera.court_number;
-    const nvrCams = this.nvrChannelsForCamera(camera);
+    // Botanical dual-angle courts: link highlights from both NVR cams to the session.
+    const botanicalMap = court != null ? botanicalNvrChannels(court) : null;
+    const nvrCams =
+      isBotanicalVenueLabel(camera.turf?.name) && botanicalMap
+        ? [botanicalMap.ch1, botanicalMap.ch2]
+        : this.nvrChannelsForCamera(camera);
 
     const existingRows = await this.dataSource.manager.find(
       RecordingHighlights,
@@ -170,7 +175,7 @@ export class S3HighlightSyncService {
           targetRecording.startTime,
           obj.windowStart,
         );
-        if (relativeSeconds < 5 || relativeSeconds > windowSeconds) continue;
+        if (relativeSeconds < 0 || relativeSeconds > windowSeconds) continue;
 
         maxProcessingOrder += 1;
         const publicUrl = obj.publicUrl;

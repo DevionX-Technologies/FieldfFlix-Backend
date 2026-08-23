@@ -16,13 +16,14 @@ const HIGHLIGHT_KEY_RE =
   /^highlights\/court(\d+)_cam(\d+)_(\d{8})-(\d{6})_highlight\.mp4$/;
 
 function parseHighlightKeyTimestamp(datePart, timePart) {
-  const year = parseInt(datePart.slice(0, 4), 10);
-  const month = parseInt(datePart.slice(4, 6), 10) - 1;
-  const day = parseInt(datePart.slice(6, 8), 10);
-  const hour = parseInt(timePart.slice(0, 2), 10);
-  const minute = parseInt(timePart.slice(2, 4), 10);
-  const second = parseInt(timePart.slice(4, 6), 10);
-  return new Date(Date.UTC(year, month, day, hour, minute, second));
+  const year = datePart.slice(0, 4);
+  const month = datePart.slice(4, 6);
+  const day = datePart.slice(6, 8);
+  const hour = timePart.slice(0, 2);
+  const minute = timePart.slice(2, 4);
+  const second = timePart.slice(4, 6);
+  // Pi gateway encodes IST wall clock in the key — not UTC.
+  return new Date(`${year}-${month}-${day}T${hour}:${minute}:${second}+05:30`);
 }
 
 function parseHighlightS3Key(key) {

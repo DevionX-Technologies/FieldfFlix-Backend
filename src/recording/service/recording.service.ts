@@ -576,6 +576,54 @@ export class RecordingService {
   }
 
   /**
+   * Attach S3 highlights once per session (primary NVR channel only).
+   * Re-run when Mux becomes ready so late-arriving Pi clips get linked.
+   */
+  private async attachSessionHighlightsIfPrimary(
+    recording: Pick<
+      Recording,
+      'id' | 'cameraId' | 'startTime' | 'endTime' | 'metadata'
+    >,
+  ): Promise<void> {
+    if (!recording.cameraId || !recording.startTime || !recording.endTime) {
+      return;
+    }
+
+    const camera = await this.recordingRepositoryForMedia.manager.findOne(
+      Camera,
+      { where: { id: recording.cameraId }, relations: ['turf'] },
+    );
+    if (!camera) return;
+
+    const meta = (recording.metadata ?? {}) as Record<string, unknown>;
+    const nvrChannels = resolveNvrChannelsForCamera(camera);
+    const logicalCourt = isBotanicalVenueLabel(camera.turf?.name)
+      ? resolveBotanicalLogicalCourtNumber(camera)
+      : camera.court_number;
+    const defaultChannel =
+      logicalCourt != null && Number(logicalCourt) > 0
+        ? Number(logicalCourt)
+        : camera.court_number && camera.court_number > 0
+          ? camera.court_number
+          : nvrChannels[0];
+    const channelNumber = readRecordingNvrChannel(meta, defaultChannel);
+    if (channelNumber !== nvrChannels[0]) return;
+
+    try {
+      await this.recordingHighlightsService.attachHighlightsInTimeWindow(
+        recording.id,
+        camera.id,
+        recording.startTime,
+        recording.endTime,
+      );
+    } catch (attachErr) {
+      this.logger.warn(
+        `Failed to attach highlights for recording ${recording.id}: ${(attachErr as Error)?.message || attachErr}`,
+      );
+    }
+  }
+
+  /**
    * Heal a single recording: poll existing Mux asset, recover direct upload, or upload from S3.
    */
   async retryMuxIngestion(
@@ -610,6 +658,7 @@ export class RecordingService {
             status: 'ready',
             isVideoCreated: true,
           });
+          await this.attachSessionHighlightsIfPrimary(recording);
           await this.recordingHighlightsService
             .ensureHighlightClipsForRecording(recordingId)
             .catch((err) =>
