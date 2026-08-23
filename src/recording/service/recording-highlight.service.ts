@@ -199,7 +199,7 @@ export class RecordingHighlightsService {
         new Date(source.button_click_timestamp),
       );
 
-      if (relativeSeconds < 5 || relativeSeconds > windowSeconds) {
+      if (relativeSeconds < 0 || relativeSeconds > windowSeconds) {
         continue;
       }
 
