@@ -68,9 +68,9 @@ export class PointsController {
     summary: 'Leaderboard for a period (weekly / monthly / all)',
   })
   async getLeaderboard(
+    @Req() req: Request & { user: ILocalLoginPayload },
     @Query('period') periodRaw?: string,
     @Query('limit') limitRaw?: string,
-    @Req() req: Request & { user: ILocalLoginPayload },
   ) {
     const period =
       periodRaw === 'monthly' || periodRaw === 'all' ? periodRaw : 'weekly';
