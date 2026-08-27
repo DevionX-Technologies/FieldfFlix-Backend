@@ -70,11 +70,12 @@ export class PointsController {
   async getLeaderboard(
     @Query('period') periodRaw?: string,
     @Query('limit') limitRaw?: string,
+    @Req() req: Request & { user: ILocalLoginPayload },
   ) {
     const period =
       periodRaw === 'monthly' || periodRaw === 'all' ? periodRaw : 'weekly';
     const limit = limitRaw ? Number(limitRaw) : 50;
-    return this.points.getLeaderboard(period, limit);
+    return this.points.getLeaderboard(period, limit, req?.user?.user_id);
   }
 
   /** Admin: list all point configs. */

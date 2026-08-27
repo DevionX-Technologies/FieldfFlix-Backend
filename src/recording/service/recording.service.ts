@@ -4245,6 +4245,20 @@ export class RecordingService {
       createdRecordings.find((row) => row.cameraId === primaryCamera.id) ??
       createdRecordings[0];
 
+    if (resolvedUserId) {
+      const sessionRefId = `${primaryCamera.id}_${startDate.toISOString()}_${endDate.toISOString()}`;
+      this.awardPointsBestEffort({
+        userId: resolvedUserId,
+        eventType: PointEventType.RECORDING_CREATE,
+        refId: sessionRefId,
+        metadata: {
+          recordingId: primaryRecording.id,
+          turfId: primaryCamera.turfId,
+          source: 'on_demand_extraction',
+        },
+      });
+    }
+
     return {
       cached: ['completed', 'ready'].includes(
         String(primaryRecording.status ?? ''),

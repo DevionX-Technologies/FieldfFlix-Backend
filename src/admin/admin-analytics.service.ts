@@ -266,8 +266,8 @@ export class AdminAnalyticsService {
         COALESCE(NULLIF(TRIM(u.email), ''), '—') AS email,
         'Mumbai' AS city,
         'Pickleball' AS "preferredSport",
-        COALESCE(up."totalPoints", (
-          SELECT COALESCE(SUM(pe.points), 0) FROM point_events pe WHERE pe."userId" = u.id
+        COALESCE((
+          SELECT COALESCE(SUM(pe.points), 0)::int FROM point_events pe WHERE pe."userId" = u.id
         ), 0)::int AS "xpPoints",
         (
           SELECT COUNT(*)::int FROM recordings r WHERE r."userId" = u.id

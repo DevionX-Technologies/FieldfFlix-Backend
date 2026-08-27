@@ -194,43 +194,14 @@ export class PointsService implements OnModuleInit {
           throw err;
         }
 
-        // Upsert user_points total. INSERT ... ON CONFLICT keeps writes atomic.
-        await manager
-          .getRepository(UserPoints)
-          .createQueryBuilder()
-          .insert()
-          .values({ userId, totalPoints: value })
-          .orUpdate(['totalPoints'], ['userId'], {
-            skipUpdateIfNoValuesChanged: false,
-          })
-          .setParameter('inc', value)
-          .execute()
-          .catch(async () => {
-            // Fallback path for environments where ON CONFLICT setParameter isn't
-            // honoured the way we want. Issue an explicit UPDATE that increments.
-            await manager
-              .getRepository(UserPoints)
-              .createQueryBuilder()
-              .update()
-              .set({
-                totalPoints: () => `"totalPoints" + ${value}`,
-              })
-              .where('userId = :userId', { userId })
-              .execute();
-          });
-
-        // Make doubly sure: if the user had no prior row and the upsert above
-        // inserted a fresh row with totalPoints=value, the explicit increment
-        // path would double-count. Resolve by reading + reconciling.
-        const row = await manager
-          .getRepository(UserPoints)
-          .findOne({ where: { userId } });
-        if (!row) {
-          await manager.getRepository(UserPoints).insert({
-            userId,
-            totalPoints: value,
-          });
-        }
+        // Upsert user_points total — must INCREMENT on conflict, not overwrite.
+        await manager.query(
+          `INSERT INTO user_points ("userId", "totalPoints")
+           VALUES ($1, $2)
+           ON CONFLICT ("userId")
+           DO UPDATE SET "totalPoints" = user_points."totalPoints" + EXCLUDED."totalPoints"`,
+          [userId, value],
+        );
 
         this.logger.debug(
           `Awarded ${value} pts to user ${userId} for ${eventType} (ref=${refId ?? '-'})`,
@@ -373,7 +344,6 @@ export class PointsService implements OnModuleInit {
     nextLevelPoints: number | null;
     levelProgress: number;
   }> {
-    const total = await this.userPointsRepo.findOne({ where: { userId } });
     const rows = await this.eventRepo
       .createQueryBuilder('e')
       .select('e.eventType', 'eventType')
@@ -392,7 +362,9 @@ export class PointsService implements OnModuleInit {
       count: Number(r.count ?? 0),
     }));
 
-    const totalPoints = total?.totalPoints ?? 0;
+    const totalPoints = perEvent.reduce((sum, row) => sum + row.points, 0);
+    await this.reconcileUserPointsCache(userId, totalPoints);
+
     const levelData = await this.calculateLevel(totalPoints);
 
     return {
@@ -400,6 +372,31 @@ export class PointsService implements OnModuleInit {
       perEvent,
       ...levelData,
     };
+  }
+
+  /** Keep denormalized cache aligned with point_events ledger. */
+  async reconcileUserPointsCache(
+    userId: string,
+    totalPoints?: number,
+  ): Promise<void> {
+    const total =
+      totalPoints ??
+      Number(
+        (
+          await this.eventRepo
+            .createQueryBuilder('e')
+            .select('COALESCE(SUM(e.points), 0)', 'total')
+            .where('e.userId = :userId', { userId })
+            .getRawOne<{ total: string }>()
+        )?.total ?? 0,
+      );
+
+    await this.userPointsRepo
+      .createQueryBuilder()
+      .insert()
+      .values({ userId, totalPoints: total })
+      .orUpdate(['totalPoints'], ['userId'])
+      .execute();
   }
 
   /** Recent point-award timeline for a user (newest first). */
@@ -496,6 +493,7 @@ export class PointsService implements OnModuleInit {
   async getLeaderboard(
     period: 'weekly' | 'monthly' | 'all',
     limit = 50,
+    currentUserId?: string,
   ): Promise<{
     period: 'weekly' | 'monthly' | 'all';
     periodStart: string | null;
@@ -509,6 +507,15 @@ export class PointsService implements OnModuleInit {
       streak: number;
       accuracy: number;
     }>;
+    me: {
+      rank: number | null;
+      userId: string;
+      name: string | null;
+      profileImagePath: string | null;
+      points: number;
+      streak: number;
+      accuracy: number;
+    } | null;
   }> {
     const safeLimit = Math.max(1, Math.min(100, Math.floor(limit)));
     const { start, end } = this.periodWindow(period);
@@ -570,6 +577,93 @@ export class PointsService implements OnModuleInit {
       periodStart: start ? start.toISOString() : null,
       periodEnd: end ? end.toISOString() : null,
       rows,
+      me: currentUserId
+        ? await this.getUserPeriodRank(currentUserId, period, rows)
+        : null,
+    };
+  }
+
+  /** Rank + stats for one user in a leaderboard period (even if outside top N). */
+  private async getUserPeriodRank(
+    userId: string,
+    period: 'weekly' | 'monthly' | 'all',
+    topRows: Array<{ userId: string; points: number; rank: number }>,
+  ): Promise<{
+    rank: number | null;
+    userId: string;
+    name: string | null;
+    profileImagePath: string | null;
+    points: number;
+    streak: number;
+    accuracy: number;
+  }> {
+    const inTop = topRows.find((r) => r.userId === userId);
+    if (inTop) {
+      const full = await this.userRepo.findOne({
+        where: { id: userId },
+        select: ['id', 'name', 'profile_image_path'],
+      });
+      const up = await this.userPointsRepo.findOne({ where: { userId } });
+      return {
+        rank: inTop.rank,
+        userId,
+        name: full?.name ?? null,
+        profileImagePath: full?.profile_image_path ?? null,
+        points: inTop.points,
+        streak: up?.currentStreak ?? 0,
+        accuracy: Number(up?.accuracyPercent ?? 0),
+      };
+    }
+
+    const { start, end } = this.periodWindow(period);
+    const ptsQb = this.eventRepo
+      .createQueryBuilder('e')
+      .select('COALESCE(SUM(e.points), 0)', 'points')
+      .where('e."userId" = :userId', { userId });
+    if (start) ptsQb.andWhere('e."createdAt" >= :start', { start });
+    if (end) ptsQb.andWhere('e."createdAt" < :end', { end });
+    const ptsRow = await ptsQb.getRawOne<{ points: string }>();
+    const points = Number(ptsRow?.points ?? 0);
+    if (points <= 0) {
+      const full = await this.userRepo.findOne({
+        where: { id: userId },
+        select: ['id', 'name', 'profile_image_path'],
+      });
+      return {
+        rank: null,
+        userId,
+        name: full?.name ?? null,
+        profileImagePath: full?.profile_image_path ?? null,
+        points: 0,
+        streak: 0,
+        accuracy: 0,
+      };
+    }
+
+    const higherQb = this.eventRepo
+      .createQueryBuilder('e')
+      .select('e."userId"', 'userId')
+      .addSelect('SUM(e.points)', 'points')
+      .groupBy('e."userId"')
+      .having('SUM(e.points) > :points', { points });
+    if (start) higherQb.andWhere('e."createdAt" >= :start', { start });
+    if (end) higherQb.andWhere('e."createdAt" < :end', { end });
+    const higherCount = (await higherQb.getRawMany()).length;
+
+    const full = await this.userRepo.findOne({
+      where: { id: userId },
+      select: ['id', 'name', 'profile_image_path'],
+    });
+    const up = await this.userPointsRepo.findOne({ where: { userId } });
+
+    return {
+      rank: higherCount + 1,
+      userId,
+      name: full?.name ?? null,
+      profileImagePath: full?.profile_image_path ?? null,
+      points,
+      streak: up?.currentStreak ?? 0,
+      accuracy: Number(up?.accuracyPercent ?? 0),
     };
   }
 
