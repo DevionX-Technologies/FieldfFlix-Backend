@@ -506,6 +506,8 @@ export class PointsService implements OnModuleInit {
       points: number;
       streak: number;
       accuracy: number;
+      matches: number;
+      highlightClips: number;
     }>;
     me: {
       rank: number | null;
@@ -530,6 +532,14 @@ export class PointsService implements OnModuleInit {
       .addSelect('SUM(e.points)', 'points')
       .addSelect('COALESCE(up.current_streak, 0)', 'streak')
       .addSelect('COALESCE(up.accuracy_percent, 0)', 'accuracy')
+      .addSelect(
+        `(SELECT COUNT(*)::int FROM recordings r WHERE r."userId" = e."userId" AND r.status IN ('ready','completed'))`,
+        'matches',
+      )
+      .addSelect(
+        `(SELECT COUNT(*)::int FROM recording_highlights rh INNER JOIN recordings r ON r.id = rh."recordingId" WHERE r."userId" = e."userId")`,
+        'highlightClips',
+      )
       .groupBy('e."userId"')
       .addGroupBy('u.name')
       .addGroupBy('u.profile_image_path')
@@ -549,6 +559,8 @@ export class PointsService implements OnModuleInit {
       points: string;
       streak: string;
       accuracy: string;
+      matches: string;
+      highlightClips: string;
     }>();
 
     // Competition ranking: same points → same rank; next distinct points
@@ -569,6 +581,8 @@ export class PointsService implements OnModuleInit {
         points: pts,
         streak: Number(r.streak ?? 0),
         accuracy: Number(r.accuracy ?? 0),
+        matches: Number(r.matches ?? 0),
+        highlightClips: Number(r.highlightClips ?? 0),
       };
     });
 

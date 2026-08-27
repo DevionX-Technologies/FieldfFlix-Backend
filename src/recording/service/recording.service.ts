@@ -652,12 +652,17 @@ export class RecordingService {
             (p: { policy?: string }) => p?.policy === 'public',
           )?.id || asset?.playback_ids?.[0]?.id;
         if (asset?.status === 'ready' && playbackId) {
+          const wasReady =
+            String(recording.status ?? '').toLowerCase() === 'ready';
           await this.recordingRepositoryForMedia.update(recordingId, {
             mux_playback_id: playbackId,
             mux_media_url: `https://stream.mux.com/${playbackId}.m3u8`,
             status: 'ready',
             isVideoCreated: true,
           });
+          if (!wasReady) {
+            this.awardRecordingCreateForSession(recording, 'mux_poll_ready');
+          }
           await this.attachSessionHighlightsIfPrimary(recording);
           await this.recordingHighlightsService
             .ensureHighlightClipsForRecording(recordingId)
@@ -1622,8 +1627,15 @@ export class RecordingService {
             recording.status !== 'ready' ||
             (livePlaybackId && recording.mux_playback_id !== livePlaybackId)
           ) {
+            const wasReady = recording.status === 'ready';
             await this.recordingRepository.update(recording.id, patch);
             Object.assign(recording, patch);
+            if (!wasReady && patch.status === 'ready') {
+              this.awardRecordingCreateForSession(
+                recording,
+                'get_recording_mux_heal',
+              );
+            }
           }
         } else {
           // Hide premature playback IDs until Mux finishes encoding.
@@ -2302,8 +2314,18 @@ export class RecordingService {
               patch.mux_playback_id = livePlaybackId;
               patch.mux_media_url = `https://stream.mux.com/${livePlaybackId}.m3u8`;
             }
+            const wasReady = recording.status === 'ready';
             this.recordingRepository
               .update(recording.id, patch)
+              .then(() => {
+                if (!wasReady) {
+                  Object.assign(recording, patch);
+                  this.awardRecordingCreateForSession(
+                    recording,
+                    'playback_mux_heal',
+                  );
+                }
+              })
               .catch((err) =>
                 this.logger.warn(
                   `Self-heal recording ${recording.id} failed: ${err?.message ?? err}`,
@@ -3902,6 +3924,35 @@ export class RecordingService {
           }) failed: ${(err as Error)?.message ?? String(err)}`,
         ),
       );
+  }
+
+  /** Idempotency ref aligned with backfill script — one award per court session window. */
+  private recordingSessionPointsRefId(recording: Recording): string {
+    if (recording.cameraId && recording.startTime && recording.endTime) {
+      return `${recording.cameraId}_${new Date(recording.startTime).toISOString()}_${new Date(recording.endTime).toISOString()}`;
+    }
+    return recording.id;
+  }
+
+  /** Credit XP when a recording becomes playable (NVR / Mux paths that skip live start). */
+  private awardRecordingCreateForSession(
+    recording: Recording,
+    source: string,
+  ): void {
+    if (!recording.userId) return;
+    const status = String(recording.status ?? '').toLowerCase();
+    if (status !== 'ready' && status !== 'completed') return;
+
+    this.awardPointsBestEffort({
+      userId: recording.userId,
+      eventType: PointEventType.RECORDING_CREATE,
+      refId: this.recordingSessionPointsRefId(recording),
+      metadata: {
+        recordingId: recording.id,
+        turfId: recording.turfId,
+        source,
+      },
+    });
   }
 
   /**
