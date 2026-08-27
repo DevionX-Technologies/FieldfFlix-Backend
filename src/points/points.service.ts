@@ -537,7 +537,7 @@ export class PointsService implements OnModuleInit {
         'matches',
       )
       .addSelect(
-        `(SELECT COUNT(*)::int FROM recording_highlights rh INNER JOIN recordings r ON r.id = rh."recordingId" WHERE r."userId" = e."userId")`,
+        `(SELECT COUNT(*)::int FROM recording_highlights rh INNER JOIN recordings r ON r.id = rh.recording_id WHERE r."userId" = e."userId")`,
         'highlightClips',
       )
       .groupBy('e."userId"')
