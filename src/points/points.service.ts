@@ -700,7 +700,7 @@ export class PointsService implements OnModuleInit {
       FROM recordings r
       WHERE r."userId" IS NOT NULL
         AND r.status IN ('ready', 'completed', 'in_progress', 'extracting')
-      ORDER BY r."userId", r."cameraId", r."startTime", r."endTime", r.created_at ASC
+      ORDER BY r."userId", r."cameraId", r."startTime", r."endTime", r.id ASC
     `);
 
     let awarded = 0;
