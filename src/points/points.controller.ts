@@ -153,6 +153,20 @@ export class PointsController {
     return { success: true };
   }
 
+  /** Admin: backfill RECORDING_CREATE XP for historical sessions. */
+  @Post('admin/backfill-recording-points')
+  @ApiOperation({
+    summary: 'Admin: backfill recording_create XP for historical sessions',
+  })
+  async backfillRecordingPoints(
+    @Req() req: Request & { user: ILocalLoginPayload },
+    @Query('dryRun') dryRunRaw?: string,
+  ) {
+    await this.assertAdmin(req.user.user_id);
+    const dryRun = dryRunRaw === 'true' || dryRunRaw === '1';
+    return this.points.backfillRecordingPoints(dryRun);
+  }
+
   private async assertAdmin(userId: string): Promise<void> {
     const u = await this.userService.findOne(userId);
     if (!(await this.adminRole.isAdminByPhone(u.phone_number))) {

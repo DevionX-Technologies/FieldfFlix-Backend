@@ -681,6 +681,94 @@ export class PointsService implements OnModuleInit {
     };
   }
 
+  /**
+   * Backfill RECORDING_CREATE events for court sessions that never received XP.
+   * Idempotent — safe to run multiple times.
+   */
+  async backfillRecordingPoints(dryRun = false): Promise<{
+    awarded: number;
+    skipped: number;
+    dryRun: boolean;
+  }> {
+    const sessions = await this.dataSource.query(`
+      SELECT DISTINCT ON (r."userId", r."cameraId", r."startTime", r."endTime")
+        r.id,
+        r."userId",
+        r."cameraId",
+        r."startTime",
+        r."endTime"
+      FROM recordings r
+      WHERE r."userId" IS NOT NULL
+        AND r.status IN ('ready', 'completed', 'in_progress', 'extracting')
+      ORDER BY r."userId", r."cameraId", r."startTime", r."endTime", r.created_at ASC
+    `);
+
+    let awarded = 0;
+    let skipped = 0;
+
+    for (const row of sessions) {
+      const userId = String(row.userId);
+      const refId = `${row.cameraId}_${new Date(row.startTime).toISOString()}_${new Date(row.endTime).toISOString()}`;
+      const key = this.buildIdempotencyKey(
+        PointEventType.RECORDING_CREATE,
+        userId,
+        refId,
+      );
+
+      const existing = await this.eventRepo.findOne({
+        where: { idempotencyKey: key },
+        select: ['id'],
+      });
+      if (existing) {
+        skipped += 1;
+        continue;
+      }
+
+      if (dryRun) {
+        awarded += 1;
+        continue;
+      }
+
+      const event = await this.awardPoints({
+        userId,
+        eventType: PointEventType.RECORDING_CREATE,
+        refId,
+        metadata: { recordingId: row.id, source: 'backfill' },
+      });
+      if (event) awarded += 1;
+      else skipped += 1;
+    }
+
+    if (!dryRun) {
+      await this.dataSource.query(`
+        UPDATE user_points up
+        SET "totalPoints" = sub.total
+        FROM (
+          SELECT "userId", COALESCE(SUM(points), 0)::int AS total
+          FROM point_events
+          GROUP BY "userId"
+        ) sub
+        WHERE up."userId" = sub."userId"
+          AND up."totalPoints" <> sub.total
+      `);
+      await this.dataSource.query(`
+        INSERT INTO user_points ("userId", "totalPoints")
+        SELECT pe."userId", COALESCE(SUM(pe.points), 0)::int
+        FROM point_events pe
+        WHERE NOT EXISTS (
+          SELECT 1 FROM user_points up WHERE up."userId" = pe."userId"
+        )
+        GROUP BY pe."userId"
+      `);
+    }
+
+    this.logger.log(
+      `Backfill recording points: awarded=${awarded}, skipped=${skipped}, dryRun=${dryRun}`,
+    );
+
+    return { awarded, skipped, dryRun };
+  }
+
   async updateConfig(
     eventType: PointEventType,
     patch: Partial<{ points: number; label: string; enabled: boolean }>,
