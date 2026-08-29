@@ -95,6 +95,7 @@ import {
   type LiveStreamSlot,
 } from 'src/utils/live-stream-slots.util';
 import { getBotanicalMuxKey } from 'src/utils/botanical-mux-keys.util';
+import { getPickleflowMuxKey } from 'src/utils/pickleflow-mux-keys.util';
 import {
   mergeUnlockItems,
   unlockItemsFromPaymentMetadata,
@@ -4460,6 +4461,14 @@ export class RecordingService {
       camera.raspberryPiBaseUrl.includes('court17-1') ||
       camera.raspberryPiBaseUrl.includes('cpu.taild82368.ts.net');
 
+    const isPickleflow =
+      camera.raspberryPiApiKey ===
+        'f74a64b009c2b7eb322e6a954e16d0446f49bca19bde563dd051b9c290d16129' ||
+      camera.raspberryPiApiKey ===
+        '20bb093ec778627c9f5108e126da8f2295d2ba867a30d7614132fbd3f3c97920' ||
+      (camera.raspberryPiBaseUrl &&
+        camera.raspberryPiBaseUrl.toLowerCase().includes('pickleflow'));
+
     let rtmpUrl = '';
     let liveStreamId = '';
     let playbackUrl = '';
@@ -4469,6 +4478,13 @@ export class RecordingService {
       if (keys) {
         rtmpUrl = `rtmps://global-live.mux.com:443/app/${keys.streamKey}`;
         liveStreamId = 'hardcoded-botanical-live-stream-id';
+        playbackUrl = `https://stream.mux.com/${keys.playbackId}.m3u8`;
+      }
+    } else if (isPickleflow) {
+      const keys = getPickleflowMuxKey(channelNumber);
+      if (keys) {
+        rtmpUrl = `rtmps://global-live.mux.com:443/app/${keys.streamKey}`;
+        liveStreamId = 'hardcoded-pickleflow-live-stream-id';
         playbackUrl = `https://stream.mux.com/${keys.playbackId}.m3u8`;
       }
     }
