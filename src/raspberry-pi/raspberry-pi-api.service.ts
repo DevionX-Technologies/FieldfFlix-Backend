@@ -82,6 +82,10 @@ export class RaspberryPiApiService {
     raspberryPiBaseUrl: string,
     customKey?: string,
   ): string {
+    if (raspberryPiBaseUrl?.toLowerCase().includes('pickleflow')) {
+      return '20bb093ec778627c9f5108e126da8f2295d2ba867a30d7614132fbd3f3c97920';
+    }
+
     if (customKey) return customKey;
 
     if (
@@ -97,6 +101,10 @@ export class RaspberryPiApiService {
     raspberryPiBaseUrl: string,
     customKey?: string,
   ): string {
+    if (raspberryPiBaseUrl?.toLowerCase().includes('pickleflow')) {
+      return 'f74a64b009c2b7eb322e6a954e16d0446f49bca19bde563dd051b9c290d16129';
+    }
+
     if (customKey) return customKey;
 
     if (
