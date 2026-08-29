@@ -38,9 +38,30 @@ export function botanicalNvrChannels(
   }
 }
 
+/** Pickleflow — NVR channel per court and logical camera slot. */
+export function pickleflowNvrChannels(
+  courtNumber: number,
+): { ch1: number; ch2: number } | null {
+  switch (courtNumber) {
+    case 1:
+      return { ch1: 5, ch2: 6 };
+    case 2:
+      return { ch1: 3, ch2: 4 };
+    case 3:
+      return { ch1: 1, ch2: 2 };
+    default:
+      return null;
+  }
+}
+
 export function isBotanicalPiBaseUrl(baseUrl?: string | null): boolean {
   const url = String(baseUrl ?? '').toLowerCase();
   return url.includes('court17-1') || url.includes('cpu.taild82368.ts.net');
+}
+
+export function isPickleflowPiBaseUrl(baseUrl?: string | null): boolean {
+  const url = String(baseUrl ?? '').toLowerCase();
+  return url.includes('pickleflow');
 }
 
 /**
@@ -58,15 +79,23 @@ export function resolveLiveStreamSlot(params: {
   }
 
   const courtNumber = params.courtNumber ?? null;
-  if (courtNumber != null && isBotanicalPiBaseUrl(params.raspberryPiBaseUrl)) {
-    const map = botanicalNvrChannels(courtNumber);
-    if (map) {
-      if (params.nvrChannel === map.ch2) return 2;
-      if (params.nvrChannel === map.ch1) return 1;
+  if (courtNumber != null) {
+    if (isBotanicalPiBaseUrl(params.raspberryPiBaseUrl)) {
+      const map = botanicalNvrChannels(courtNumber);
+      if (map) {
+        if (params.nvrChannel === map.ch2) return 2;
+        if (params.nvrChannel === map.ch1) return 1;
+      }
+    } else if (isPickleflowPiBaseUrl(params.raspberryPiBaseUrl)) {
+      const map = pickleflowNvrChannels(courtNumber);
+      if (map) {
+        if (params.nvrChannel === map.ch2) return 2;
+        if (params.nvrChannel === map.ch1) return 1;
+      }
     }
   }
 
-  // Non-Botanical venues: NVR channel 2 is the second angle.
+  // Non-Botanical/Pickleflow venues: NVR channel 2 is the second angle.
   return params.nvrChannel === 2 ? 2 : 1;
 }
 

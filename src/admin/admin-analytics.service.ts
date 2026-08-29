@@ -668,7 +668,7 @@ export class AdminAnalyticsService {
     const cleanUrl = url.trim().replace(/\/+$/, '');
     const startTime = Date.now();
     try {
-      const resp = await axios.get(`${cleanUrl}/health`, { timeout: 6000 });
+      const resp = await axios.get(`${cleanUrl}/health`, { timeout: 35000 });
       const latency = Date.now() - startTime;
       return {
         success: true,

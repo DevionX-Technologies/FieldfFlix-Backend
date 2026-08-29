@@ -19,6 +19,8 @@ const PI_HOST_IP_FALLBACK: Record<string, string> = {
     process.env.PI_COURT17_GATEWAY_IP || '103.84.155.153',
   'raspberrypi-court11.taild82368.ts.net':
     process.env.PI_COURT11_GATEWAY_IP || '103.84.155.217',
+  'pickleflow-social.taild82368.ts.net':
+    process.env.PI_PICKLEFLOW_GATEWAY_IP || '103.84.155.153',
 };
 
 export interface StartRecordingResponse {
@@ -332,7 +334,7 @@ export class RaspberryPiApiService {
           'X-API-KEY': this.getLiveApiKey(raspberryPiBaseUrl, customApiKey),
           'Content-Type': 'application/json',
         },
-        15000,
+        35000,
       );
     } catch (error: any) {
       if (error.response?.status === 409) {
