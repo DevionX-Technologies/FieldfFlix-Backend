@@ -404,6 +404,26 @@ export class AdminController {
     return this.recordingService.retryMuxIngestion(id);
   }
 
+  /** Re-dispatch Pi extract for a failed recording using stored DB time window. */
+  @Public()
+  @Post('recordings/:id/retry-extract')
+  async retryExtract(@Param('id') id: string) {
+    return this.recordingService.retryFailedExtraction(id);
+  }
+
+  /** Batch retry failed extractions for a turf from an IST date (inclusive). */
+  @Public()
+  @Post('recordings/retry-failed-extractions')
+  async retryFailedExtractions(
+    @Query('turfId') turfId?: string,
+    @Query('fromDate') fromDate?: string,
+  ) {
+    return this.recordingService.retryFailedExtractions({
+      turfId,
+      fromDate,
+    });
+  }
+
   /** Run parallel Mux ingest for S3-ready recordings on an IST date (backfill). */
   @Public()
   @Post('extraction-pipeline/mux-cycle')

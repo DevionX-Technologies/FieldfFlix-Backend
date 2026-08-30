@@ -748,6 +748,180 @@ export class RecordingService {
   }
 
   /**
+   * Re-dispatch Pi NVR extraction for a failed row using the stored time window.
+   * Idempotent on the same recording id — does not create duplicate rows.
+   */
+  async retryFailedExtraction(recordingId: string): Promise<{
+    ok: boolean;
+    recordingId: string;
+    status: string;
+    channel: number;
+    startTime: string;
+    endTime: string;
+  }> {
+    const recording = await this.recordingRepositoryForMedia.findOne({
+      where: { id: recordingId },
+    });
+    if (!recording) {
+      throw new NotFoundException(`Recording not found: ${recordingId}`);
+    }
+    if (recording.status !== 'failed') {
+      throw new BadRequestException(
+        `Recording ${recordingId} is ${recording.status}; only failed rows can be retried`,
+      );
+    }
+    if (!recording.startTime || !recording.endTime || !recording.cameraId) {
+      throw new BadRequestException(
+        'Recording is missing startTime, endTime, or cameraId',
+      );
+    }
+
+    const camera = await this.cameraRepository.findOne({
+      where: { id: recording.cameraId },
+      relations: ['turf'],
+    });
+    if (!camera?.raspberryPiBaseUrl) {
+      throw new BadRequestException(
+        `Camera ${recording.cameraId} has no Pi gateway URL`,
+      );
+    }
+
+    const meta = (recording.metadata ?? {}) as Record<string, unknown>;
+    const attempts = Number(meta.extract_attempts ?? 1) + 1;
+    const channelNumber = readRecordingNvrChannel(
+      meta,
+      camera.court_number ?? 1,
+    );
+    const startDate = new Date(recording.startTime);
+    const endDate = new Date(recording.endTime);
+
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/[-:T.]/g, '')
+      .slice(0, 14);
+    const s3Key = `recordings/${recording.id}_${timestamp}.mp4`;
+
+    const { uploadUrl, uploadId } = await this.muxService.createDirectUpload(
+      recording.id,
+    );
+
+    const nextMeta = {
+      ...meta,
+      extract_attempts: attempts,
+      extract_failed_reason: null,
+      expected_s3_key: s3Key,
+      mux_upload_id: uploadId,
+      retry_at: new Date().toISOString(),
+      source: 'admin_retry',
+    };
+
+    await this.recordingRepositoryForMedia.update(recording.id, {
+      status: 'extracting',
+      mux_asset_id: null,
+      mux_playback_id: null,
+      mux_media_url: null,
+      s3Path: null,
+      metadata: nextMeta as Recording['metadata'],
+    });
+
+    const callbackWebhookUrl = `${process.env.APP_BASE_URL || 'https://api.fieldflicks.com'}/recording/pi-callback`;
+
+    this.logger.log(
+      `Retrying failed extraction ${recording.id} on Pi ch ${channelNumber} (${startDate.toISOString()} → ${endDate.toISOString()})`,
+    );
+
+    this.raspberryPiApiService
+      .extractSession(
+        camera.raspberryPiBaseUrl,
+        {
+          recordingId: recording.id,
+          channel: channelNumber,
+          startTime: startDate.toISOString(),
+          endTime: endDate.toISOString(),
+          uploadUrl,
+          s3Key,
+          callbackWebhookUrl,
+        },
+        camera.raspberryPiApiKey,
+      )
+      .then((piResponse) => {
+        this.logger.log(
+          `Retry extract Pi response for ${recording.id}: ${piResponse.status}`,
+        );
+      })
+      .catch((error) => {
+        this.logger.warn(
+          `Retry extract Pi HTTP error for ${recording.id}: ${(error as Error).message}`,
+        );
+      });
+
+    return {
+      ok: true,
+      recordingId: recording.id,
+      status: 'extracting',
+      channel: channelNumber,
+      startTime: startDate.toISOString(),
+      endTime: endDate.toISOString(),
+    };
+  }
+
+  /** Batch retry failed extractions for a turf from an IST calendar date (inclusive). */
+  async retryFailedExtractions(params: {
+    turfId?: string;
+    fromDate?: string;
+  }): Promise<{
+    attempted: number;
+    results: Array<{
+      recordingId: string;
+      ok: boolean;
+      error?: string;
+      channel?: number;
+    }>;
+  }> {
+    const qb = this.recordingRepositoryForMedia
+      .createQueryBuilder('r')
+      .where('r.status = :status', { status: 'failed' })
+      .orderBy('r.startTime', 'ASC');
+
+    if (params.turfId) {
+      qb.andWhere('r.turfId = :turfId', { turfId: params.turfId });
+    }
+    if (params.fromDate) {
+      const from = new Date(`${params.fromDate}T00:00:00+05:30`);
+      qb.andWhere('r.startTime >= :from', { from });
+    }
+
+    const failed = await qb.getMany();
+    const results: Array<{
+      recordingId: string;
+      ok: boolean;
+      error?: string;
+      channel?: number;
+    }> = [];
+
+    for (const rec of failed) {
+      try {
+        const out = await this.retryFailedExtraction(rec.id);
+        results.push({
+          recordingId: rec.id,
+          ok: true,
+          channel: out.channel,
+        });
+        // Stagger Pi dispatch so Botanical NVR is not hammered.
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      } catch (err) {
+        results.push({
+          recordingId: rec.id,
+          ok: false,
+          error: (err as Error).message,
+        });
+      }
+    }
+
+    return { attempted: results.length, results };
+  }
+
+  /**
    * Admin: parallel Mux ingest for S3-ready recordings on an IST day
    * (backfill only — new Pi callbacks auto-trigger Mux on upload).
    */
