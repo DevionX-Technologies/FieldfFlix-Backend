@@ -379,6 +379,9 @@ export class PointsService implements OnModuleInit {
     userId: string,
     totalPoints?: number,
   ): Promise<void> {
+    if (!userId || typeof userId !== 'string' || !userId.trim()) {
+      return;
+    }
     const total =
       totalPoints ??
       Number(
@@ -652,14 +655,15 @@ export class PointsService implements OnModuleInit {
         where: { id: userId },
         select: ['id', 'name', 'profile_image_path'],
       });
+      const up = await this.userPointsRepo.findOne({ where: { userId } });
       return {
         rank: null,
         userId,
         name: full?.name ?? null,
         profileImagePath: full?.profile_image_path ?? null,
         points: 0,
-        streak: 0,
-        accuracy: 0,
+        streak: up?.currentStreak ?? 0,
+        accuracy: Number(up?.accuracyPercent ?? 0),
       };
     }
 

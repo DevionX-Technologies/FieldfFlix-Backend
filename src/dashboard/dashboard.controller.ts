@@ -14,14 +14,16 @@ export class DashboardController {
   @Get('home/dashboard')
   @ApiOperation({ summary: 'Get home dashboard aggregated data' })
   getHomeDashboard(@Req() req: Request) {
-    const userId = req.user['sub'];
+    const user = req.user as any;
+    const userId = user?.user_id || user?.id || user?.sub;
     return this.dashboardService.getHomeDashboard(userId);
   }
 
   @Get('analytics/me')
   @ApiOperation({ summary: 'Get user analytics data' })
   getAnalytics(@Req() req: Request) {
-    const userId = req.user['sub'];
+    const user = req.user as any;
+    const userId = user?.user_id || user?.id || user?.sub;
     return this.dashboardService.getAnalytics(userId);
   }
 }
