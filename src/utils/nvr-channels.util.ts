@@ -2,6 +2,8 @@ import { Camera } from 'src/camera/camera.entity';
 import {
   botanicalNvrChannels,
   isBotanicalPiBaseUrl,
+  isPickleflowPiBaseUrl,
+  pickleflowNvrChannels,
 } from 'src/utils/live-stream-slots.util';
 import {
   isBotanicalVenueLabel,
@@ -50,6 +52,21 @@ export function resolveNvrChannelsForCamera(
   if (isBotanical) {
     const courtNumber = resolveBotanicalLogicalCourtNumber(camera);
     const map = botanicalNvrChannels(courtNumber);
+    if (map) {
+      return [map.ch1, map.ch2];
+    }
+  }
+
+  const isPickleflow =
+    isPickleflowPiBaseUrl(camera.raspberryPiBaseUrl) ||
+    /pickleflow/i.test(camera.turf?.name ?? '');
+
+  if (isPickleflow) {
+    const courtNumber =
+      camera.court_number != null && camera.court_number > 0
+        ? camera.court_number
+        : 1;
+    const map = pickleflowNvrChannels(courtNumber);
     if (map) {
       return [map.ch1, map.ch2];
     }
