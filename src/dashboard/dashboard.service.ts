@@ -64,7 +64,7 @@ export class DashboardService {
         rating: 4.5,
         availableCourts: 1,
         imageUrl:
-          'https://images.unsplash.com/photo-1552667466-07770ae110d0?auto=format&fit=crop&w=800&q=80',
+          'https://images.unsplash.com/photo-1554068865-24cecd4e34b8?auto=format&fit=crop&w=800&q=80',
         pricePerHour: t.hourly_rate || 0,
       })),
     };
