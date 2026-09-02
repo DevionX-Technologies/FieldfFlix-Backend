@@ -65,7 +65,7 @@ export class PointsController {
    */
   @Get('leaderboard')
   @ApiOperation({
-    summary: 'Leaderboard for a period (weekly / monthly / all)',
+    summary: 'Leaderboard for a period (daily / today / weekly / monthly / all)',
   })
   async getLeaderboard(
     @Req() req: Request & { user: ILocalLoginPayload },
@@ -73,7 +73,11 @@ export class PointsController {
     @Query('limit') limitRaw?: string,
   ) {
     const period =
-      periodRaw === 'monthly' || periodRaw === 'all' ? periodRaw : 'weekly';
+      periodRaw === 'daily' || periodRaw === 'today'
+        ? 'daily'
+        : periodRaw === 'monthly' || periodRaw === 'all'
+          ? periodRaw
+          : 'weekly';
     const limit = limitRaw ? Number(limitRaw) : 50;
     return this.points.getLeaderboard(period, limit, req?.user?.user_id);
   }

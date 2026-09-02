@@ -379,6 +379,9 @@ export class PointsService implements OnModuleInit {
     userId: string,
     totalPoints?: number,
   ): Promise<void> {
+    if (!userId || typeof userId !== 'string' || !userId.trim()) {
+      return;
+    }
     const total =
       totalPoints ??
       Number(
@@ -453,7 +456,7 @@ export class PointsService implements OnModuleInit {
   private readonly IST_OFFSET_MS = (5 * 60 + 30) * 60 * 1000;
 
   private periodWindow(
-    period: 'weekly' | 'monthly' | 'all',
+    period: 'daily' | 'today' | 'weekly' | 'monthly' | 'all',
     nowMs = Date.now(),
   ): { start: Date | null; end: Date | null } {
     if (period === 'all') return { start: null, end: null };
@@ -462,6 +465,15 @@ export class PointsService implements OnModuleInit {
     const istY = istNow.getUTCFullYear();
     const istM = istNow.getUTCMonth();
     const istD = istNow.getUTCDate();
+
+    if (period === 'daily' || period === 'today') {
+      const startIstMs = Date.UTC(istY, istM, istD, 0, 0, 0);
+      const endIstMs = startIstMs + 24 * 60 * 60 * 1000;
+      return {
+        start: new Date(startIstMs - this.IST_OFFSET_MS),
+        end: new Date(endIstMs - this.IST_OFFSET_MS),
+      };
+    }
 
     if (period === 'monthly') {
       const startIstMs = Date.UTC(istY, istM, 1, 0, 0, 0);
@@ -491,11 +503,11 @@ export class PointsService implements OnModuleInit {
    * Returned ranks are 1-based; ties share a rank ("competition" ranking).
    */
   async getLeaderboard(
-    period: 'weekly' | 'monthly' | 'all',
+    period: 'daily' | 'today' | 'weekly' | 'monthly' | 'all',
     limit = 50,
     currentUserId?: string,
   ): Promise<{
-    period: 'weekly' | 'monthly' | 'all';
+    period: 'daily' | 'today' | 'weekly' | 'monthly' | 'all';
     periodStart: string | null;
     periodEnd: string | null;
     rows: Array<{
@@ -600,7 +612,7 @@ export class PointsService implements OnModuleInit {
   /** Rank + stats for one user in a leaderboard period (even if outside top N). */
   private async getUserPeriodRank(
     userId: string,
-    period: 'weekly' | 'monthly' | 'all',
+    period: 'daily' | 'today' | 'weekly' | 'monthly' | 'all',
     topRows: Array<{ userId: string; points: number; rank: number }>,
   ): Promise<{
     rank: number | null;
@@ -643,14 +655,15 @@ export class PointsService implements OnModuleInit {
         where: { id: userId },
         select: ['id', 'name', 'profile_image_path'],
       });
+      const up = await this.userPointsRepo.findOne({ where: { userId } });
       return {
         rank: null,
         userId,
         name: full?.name ?? null,
         profileImagePath: full?.profile_image_path ?? null,
         points: 0,
-        streak: 0,
-        accuracy: 0,
+        streak: up?.currentStreak ?? 0,
+        accuracy: Number(up?.accuracyPercent ?? 0),
       };
     }
 

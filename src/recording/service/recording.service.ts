@@ -2393,8 +2393,11 @@ export class RecordingService {
         // Create promises for parallel execution
         const promises: Promise<any>[] = [];
 
-        // Get game duration from Mux asset
-        if (recording.mux_asset_id) {
+        // Get game duration from Mux asset only if needed for self-heal or not ready yet
+        if (
+          recording.mux_asset_id &&
+          (recording.status !== 'ready' || !recording.mux_playback_id)
+        ) {
           promises.push(
             this.muxService
               .getAssetDetails(recording.mux_asset_id)
@@ -4313,34 +4316,84 @@ export class RecordingService {
           },
         });
 
-        const existingRecording =
+        const isChannelMatch = (row: Recording) => {
+          const rowChannel = readRecordingNvrChannel(
+            row.metadata as Record<string, unknown> | undefined,
+            defaultChannel,
+          );
+          return rowChannel === channelNumber;
+        };
+
+        // 1. Check for Completed/Ready Recording
+        const completedRecording =
           cacheRows.find((row) => {
-            if (!['completed', 'ready'].includes(String(row.status ?? ''))) {
-              return false;
-            }
-            if (!row.mux_playback_id && !row.mux_media_url) {
-              return false;
-            }
-            const rowChannel = readRecordingNvrChannel(
-              row.metadata as Record<string, unknown> | undefined,
-              defaultChannel,
+            const isReady = ['completed', 'ready'].includes(
+              String(row.status ?? ''),
             );
-            return rowChannel === channelNumber;
+            const hasPlayback = !!(row.mux_playback_id || row.mux_media_url);
+            return isReady && hasPlayback && isChannelMatch(row);
           }) ?? null;
+
+        // 2. Check for In-Flight Extraction (Active for another user)
+        const inFlightRecording =
+          cacheRows.find((row) => {
+            const inFlight = [
+              'extracting',
+              'processing',
+              'uploading',
+              'requested',
+              'pending',
+            ].includes(String(row.status ?? ''));
+            return inFlight && isChannelMatch(row);
+          }) ?? null;
+
+        const existingRecording = completedRecording || inFlightRecording;
 
         if (existingRecording) {
           this.logger.log(
-            `Cache HIT for match extraction: recording ${existingRecording.id} (camera ${camera.id}, NVR ch ${channelNumber})`,
+            `Match extraction found existing session (status=${existingRecording.status}): recording ${existingRecording.id} (camera ${camera.id}, NVR ch ${channelNumber})`,
           );
+
+          // Preserve original creator — share access with requesting user
           if (resolvedUserId && existingRecording.userId !== resolvedUserId) {
-            await this.recordingRepositoryForMedia.update(
-              existingRecording.id,
-              {
-                userId: resolvedUserId,
+            const existingShare = await this.sharedRecordingRepository.findOne({
+              where: {
+                recording_id: existingRecording.id,
+                shared_with_user_id: resolvedUserId,
               },
-            );
-            existingRecording.userId = resolvedUserId;
+            });
+
+            if (!existingShare) {
+              const share = this.sharedRecordingRepository.create({
+                recording_id: existingRecording.id,
+                shared_with_user_id: resolvedUserId,
+              });
+              await this.sharedRecordingRepository.save(share);
+
+              // Points: claimer gets RECORDING_RECEIVE, owner gets RECORDING_SHARE
+              this.awardPointsBestEffort({
+                userId: resolvedUserId,
+                eventType: PointEventType.RECORDING_RECEIVE,
+                refId: existingRecording.id,
+                metadata: {
+                  recordingId: existingRecording.id,
+                  ownerUserId: existingRecording.userId,
+                },
+              });
+              if (existingRecording.userId) {
+                this.awardPointsBestEffort({
+                  userId: existingRecording.userId,
+                  eventType: PointEventType.RECORDING_SHARE,
+                  refId: `${existingRecording.id}:${resolvedUserId}`,
+                  metadata: {
+                    recordingId: existingRecording.id,
+                    sharedWithUserId: resolvedUserId,
+                  },
+                });
+              }
+            }
           }
+
           if (channelNumber === nvrChannels[0]) {
             try {
               await this.recordingHighlightsService.attachHighlightsInTimeWindow(
