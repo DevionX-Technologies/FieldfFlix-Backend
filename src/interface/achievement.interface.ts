@@ -21,7 +21,7 @@ export enum AchievementTier {
   BASE = 'BASE',
   GREEN = 'GREEN',
   CYAN = 'CYAN',
-  AMETHYST = 'AMBER',
+  AMETHYST = 'AMETHYST',
   AMBER = 'AMBER',
   PRESTIGE = 'PRESTIGE',
 }

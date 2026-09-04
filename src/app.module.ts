@@ -33,6 +33,7 @@ import { PointsModule } from './points/points.module';
 import { CouponsModule } from './coupons/coupons.module';
 import { TournamentModule } from './tournament/tournament.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { AchievementsModule } from './achievements/achievements.module';
 
 @Module({
   imports: [
@@ -75,6 +76,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     CouponsModule,
     TournamentModule,
     DashboardModule,
+    AchievementsModule,
   ],
   controllers: [AppController, SharedMediaRootController],
   providers: [
