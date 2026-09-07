@@ -32,6 +32,10 @@ const DEFAULT_CONFIGS: Record<
     points: 2,
     label: 'Highlight approved for FlickShorts',
   },
+  [PointEventType.ACHIEVEMENT_CLAIM]: {
+    points: 100,
+    label: 'Claimed achievement reward',
+  },
 };
 
 const DEFAULT_LEVELS = [
@@ -144,14 +148,21 @@ export class PointsService implements OnModuleInit {
     eventType: PointEventType;
     refId?: string | null;
     metadata?: Record<string, unknown>;
+    points?: number;
   }): Promise<PointEvent | null> {
-    const { userId, eventType, refId = null, metadata = null } = args;
+    const {
+      userId,
+      eventType,
+      refId = null,
+      metadata = null,
+      points: overridePoints,
+    } = args;
     if (!userId) return null;
 
     const config = await this.configRepo.findOne({ where: { eventType } });
     const def = DEFAULT_CONFIGS[eventType];
     const enabled = config?.enabled ?? true;
-    const value = config?.points ?? def?.points ?? 0;
+    const value = overridePoints ?? config?.points ?? def?.points ?? 0;
 
     if (!enabled || value <= 0) {
       return null;

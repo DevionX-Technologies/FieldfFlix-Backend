@@ -20,6 +20,7 @@ export enum PointEventType {
   RECORDING_RECEIVE = 'recording_receive',
   PAYMENT_COMPLETE = 'payment_complete',
   FLICKSHORT_APPROVED = 'flickshort_approved',
+  ACHIEVEMENT_CLAIM = 'achievement_claim',
 }
 
 /**
