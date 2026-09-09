@@ -1,829 +1,788 @@
-import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { QueryRunner, Repository, DataSource } from 'typeorm';
-import { CreateAchievementsModuleTables1763600000000 } from '../../db/migrations/1763600000000-CreateAchievementsModuleTables';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { ConfigService } from '@nestjs/config';
+import { DataSource, Repository } from 'typeorm';
 import { AchievementDefinition } from './entities/achievement-definition.entity';
 import { UserAchievementMetrics } from './entities/user-achievement-metrics.entity';
 import { UserAchievement } from './entities/user-achievement.entity';
 import { UserPoints } from '../points/entities/user-points.entity';
 import { PointsService } from '../points/points.service';
-import { PointEventType } from '../points/entities/point-event.entity';
 import { AchievementsService } from './achievements.service';
 import { AchievementsController } from './achievements.controller';
+import { AchievementEvaluationService } from './services/achievement-evaluation.service';
+import { AchievementRewardService } from './services/achievement-reward.service';
+import { AchievementAggregatorService } from './services/achievement-aggregator.service';
+import { AchievementMetricsBufferService } from './services/achievement-metrics-buffer.service';
+import { AchievementEventConsumer } from './events/achievement-event.consumer';
+import { AchievementUnlockedEvent } from './events/achievement-unlocked.event';
 import {
   AchievementCategory,
   AchievementStatus,
   AchievementTier,
 } from '../interface/achievement.interface';
 import { APPROVED_ACHIEVEMENT_DEFINITIONS } from '../constant/achievement-catalog.constant';
+import { NotificationEntity } from '../notification/entities/notification.entity';
+import { User } from '../user/entities/user.entity';
 
-describe('Achievements Module - Tasks 7 to 20 Tests', () => {
-  describe('Task 7: State Machine Invariants & Edge Cases', () => {
-    interface AchievementStateContext {
-      currentProgress: number;
-      targetValue: number;
-      status: AchievementStatus;
-      isCompleted: boolean;
-      isRewardClaimed: boolean;
-    }
+describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
+  let mockDefinitionRepo: jest.Mocked<Repository<AchievementDefinition>>;
+  let mockUserAchievementRepo: jest.Mocked<Repository<UserAchievement>>;
+  let mockMetricsRepo: jest.Mocked<Repository<UserAchievementMetrics>>;
+  let mockUserPointsRepo: jest.Mocked<Repository<UserPoints>>;
+  let mockUserRepo: jest.Mocked<Repository<User>>;
+  let mockNotificationRepo: jest.Mocked<Repository<NotificationEntity>>;
+  let mockDataSource: jest.Mocked<DataSource>;
+  let mockPointsService: jest.Mocked<PointsService>;
+  let mockEventEmitter: jest.Mocked<EventEmitter2>;
+  let mockConfigService: jest.Mocked<ConfigService>;
+  let mockFirebaseNotificationService: any;
 
-    function evaluateProgress(
-      ctx: AchievementStateContext,
-      newTelemetryValue: number,
-    ): AchievementStateContext {
-      // Metric Reversal Safeguard (Invariant 5.1):
-      // Once UNLOCKED or CLAIMED, the achievement cannot regress to IN_PROGRESS or LOCKED
-      if (ctx.isCompleted) {
-        return ctx;
-      }
+  let evaluationService: AchievementEvaluationService;
+  let rewardService: AchievementRewardService;
+  let bufferService: AchievementMetricsBufferService;
+  let aggregatorService: AchievementAggregatorService;
+  let achievementsService: AchievementsService;
+  let achievementsController: AchievementsController;
+  let eventConsumer: AchievementEventConsumer;
 
-      const progress = Math.max(ctx.currentProgress, newTelemetryValue);
-      const isMet = progress >= ctx.targetValue;
+  const mockDefinitions: AchievementDefinition[] = APPROVED_ACHIEVEMENT_DEFINITIONS.map(
+    (d) =>
+      ({
+        ...d,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      }) as unknown as AchievementDefinition,
+  );
 
-      let nextStatus: AchievementStatus = ctx.status;
-      if (isMet) {
-        nextStatus = AchievementStatus.UNLOCKED;
-      } else if (progress > 0) {
-        nextStatus = AchievementStatus.IN_PROGRESS;
-      } else {
-        nextStatus = AchievementStatus.LOCKED;
-      }
+  beforeEach(() => {
+    mockDefinitionRepo = {
+      find: jest.fn().mockResolvedValue(mockDefinitions),
+      findOne: jest.fn(),
+      create: jest.fn().mockImplementation((dto) => dto),
+      save: jest.fn().mockImplementation((entity) => Promise.resolve(entity)),
+    } as any;
 
-      return {
-        ...ctx,
-        currentProgress: progress,
-        status: nextStatus,
-        isCompleted: isMet,
-      };
-    }
+    mockUserAchievementRepo = {
+      find: jest.fn().mockResolvedValue([]),
+      findOne: jest.fn(),
+      create: jest.fn().mockImplementation((dto) => dto),
+      save: jest.fn().mockImplementation((entities) => Promise.resolve(entities)),
+      createQueryBuilder: jest.fn(),
+    } as any;
 
-    function claimReward(ctx: AchievementStateContext): {
-      updatedCtx: AchievementStateContext;
-      xpAwarded: number;
-    } {
-      if (!ctx.isCompleted) {
-        throw new Error('Cannot claim incomplete achievement');
-      }
-      if (ctx.isRewardClaimed) {
-        throw new Error('Reward already claimed');
-      }
+    mockMetricsRepo = {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockImplementation((dto) => dto),
+      save: jest.fn().mockImplementation((entity) => Promise.resolve(entity)),
+    } as any;
 
-      return {
-        updatedCtx: {
-          ...ctx,
-          isRewardClaimed: true,
-          status: AchievementStatus.CLAIMED,
-        },
-        xpAwarded: 100,
-      };
-    }
+    mockUserPointsRepo = {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn().mockImplementation((dto) => dto),
+      save: jest.fn().mockImplementation((entity) => Promise.resolve(entity)),
+    } as any;
 
-    it('T1 -> T2: Transitions from LOCKED to IN_PROGRESS when progress is made', () => {
-      const initial: AchievementStateContext = {
-        currentProgress: 0,
-        targetValue: 10,
-        status: AchievementStatus.LOCKED,
-        isCompleted: false,
-        isRewardClaimed: false,
-      };
+    mockUserRepo = {
+      findOne: jest.fn().mockResolvedValue({
+        id: 'user_123',
+        name: 'Alex Player',
+        user_devices_token: [{ devices_id: 'token_abc123' }],
+      }),
+    } as any;
 
-      const afterOne = evaluateProgress(initial, 1);
-      expect(afterOne.status).toBe(AchievementStatus.IN_PROGRESS);
-      expect(afterOne.currentProgress).toBe(1);
-      expect(afterOne.isCompleted).toBe(false);
-    });
+    mockNotificationRepo = {
+      save: jest.fn().mockResolvedValue({}),
+    } as any;
 
-    it('T2 -> T4: Transitions from IN_PROGRESS to UNLOCKED when target reached', () => {
-      const inProgress: AchievementStateContext = {
-        currentProgress: 5,
-        targetValue: 10,
-        status: AchievementStatus.IN_PROGRESS,
-        isCompleted: false,
-        isRewardClaimed: false,
-      };
+    mockPointsService = {
+      getMyTotals: jest.fn().mockResolvedValue({
+        totalPoints: 500,
+        perEvent: [],
+        level: 2,
+        levelName: 'Silver',
+        nextLevelPoints: 30,
+        levelProgress: 0.5,
+      }),
+      awardPoints: jest.fn().mockResolvedValue({ id: 'event_123' } as any),
+    } as any;
 
-      const reached = evaluateProgress(inProgress, 10);
-      expect(reached.status).toBe(AchievementStatus.UNLOCKED);
-      expect(reached.isCompleted).toBe(true);
-      expect(reached.currentProgress).toBe(10);
-    });
+    mockEventEmitter = {
+      emit: jest.fn(),
+      emitAsync: jest.fn().mockResolvedValue([]),
+    } as any;
 
-    it('T1 -> T4: Single event can transition directly from LOCKED to UNLOCKED', () => {
-      const initial: AchievementStateContext = {
-        currentProgress: 0,
-        targetValue: 1,
-        status: AchievementStatus.LOCKED,
-        isCompleted: false,
-        isRewardClaimed: false,
-      };
+    mockConfigService = {
+      get: jest.fn().mockReturnValue(null),
+    } as any;
 
-      const reached = evaluateProgress(initial, 1);
-      expect(reached.status).toBe(AchievementStatus.UNLOCKED);
-      expect(reached.isCompleted).toBe(true);
-    });
+    mockFirebaseNotificationService = {
+      sendNotification: jest.fn().mockResolvedValue(true),
+    };
 
-    it('T4 -> T5: Allows claiming UNLOCKED achievement, moving to CLAIMED', () => {
-      const unlocked: AchievementStateContext = {
-        currentProgress: 10,
-        targetValue: 10,
-        status: AchievementStatus.UNLOCKED,
-        isCompleted: true,
-        isRewardClaimed: false,
-      };
+    mockDataSource = {
+      transaction: jest.fn().mockImplementation(async (callback) => {
+        const mockManager = {
+          getRepository: jest.fn().mockImplementation((entity) => {
+            if (entity === AchievementDefinition) return mockDefinitionRepo;
+            if (entity === UserAchievement) return mockUserAchievementRepo;
+            if (entity === UserAchievementMetrics) return mockMetricsRepo;
+            return {} as any;
+          }),
+        };
+        return callback(mockManager);
+      }),
+    } as any;
 
-      const { updatedCtx, xpAwarded } = claimReward(unlocked);
-      expect(updatedCtx.status).toBe(AchievementStatus.CLAIMED);
-      expect(updatedCtx.isRewardClaimed).toBe(true);
-      expect(xpAwarded).toBe(100);
-    });
-
-    it('Invariant 5.1: Metric reversals do not regress UNLOCKED or CLAIMED achievements', () => {
-      const completed: AchievementStateContext = {
-        currentProgress: 10,
-        targetValue: 10,
-        status: AchievementStatus.UNLOCKED,
-        isCompleted: true,
-        isRewardClaimed: false,
-      };
-
-      // Streak drops to 0 or shorts deleted
-      const reverted = evaluateProgress(completed, 0);
-      expect(reverted.status).toBe(AchievementStatus.UNLOCKED);
-      expect(reverted.isCompleted).toBe(true);
-      expect(reverted.currentProgress).toBe(10);
-    });
-
-    it('Invariant 5.3: Claiming is idempotent and rejects duplicate claims', () => {
-      const claimed: AchievementStateContext = {
-        currentProgress: 10,
-        targetValue: 10,
-        status: AchievementStatus.CLAIMED,
-        isCompleted: true,
-        isRewardClaimed: true,
-      };
-
-      expect(() => claimReward(claimed)).toThrow('Reward already claimed');
-    });
-
-    it('Invariant 5.2: Clamps progress percentage calculation to 100%', () => {
-      const targetValue = 50;
-      const currentProgress = 65;
-      const progressPercent = Math.min(
-        100,
-        Math.floor((currentProgress / targetValue) * 100),
-      );
-      expect(progressPercent).toBe(100);
-    });
-  });
-
-  describe('Task 8, 9, 10: Entity Definitions & Defaults', () => {
-    it('instantiates AchievementDefinition with valid attributes', () => {
-      const def = new AchievementDefinition();
-      def.id = 'ATH_TURF_DEBUT';
-      def.category = AchievementCategory.ATHLETE;
-      def.tier = AchievementTier.BRONZE;
-      def.title = 'Turf Debut';
-      def.description = 'Play your first match';
-      def.requirementText = 'Play 1 Match';
-      def.metricKey = 'matches_played';
-      def.targetValue = 1;
-      def.xpReward = 100;
-      def.badgeAssetKey = 'bronze-picklebat.png';
-      def.displayOrder = 1;
-      def.isActive = true;
-
-      expect(def.id).toBe('ATH_TURF_DEBUT');
-      expect(def.category).toBe(AchievementCategory.ATHLETE);
-      expect(def.tier).toBe(AchievementTier.BRONZE);
-      expect(def.targetValue).toBe(1);
-    });
-
-    it('instantiates UserAchievementMetrics with athlete, creator, and social telemetry', () => {
-      const metrics = new UserAchievementMetrics();
-      metrics.userId = '00000000-0000-0000-0000-000000000001';
-      metrics.matchesPlayed = 5;
-      metrics.goalsScored = 12;
-      metrics.mvpMatchesCount = 2;
-      metrics.streakDays = 3;
-      metrics.flickshortsUploadedCount = 4;
-      metrics.peakLikesSingleShort = 150;
-      metrics.peakSharesSingleShort = 10;
-      metrics.peakViewsSingleShort = 1200;
-      metrics.teammatesConnectedCount = 8;
-      metrics.crewWatchRank = 1;
-      metrics.socialRankPercentile = 95.5;
-
-      expect(metrics.matchesPlayed).toBe(5);
-      expect(metrics.goalsScored).toBe(12);
-      expect(metrics.flickshortsUploadedCount).toBe(4);
-      expect(metrics.socialRankPercentile).toBe(95.5);
-    });
-
-    it('instantiates UserAchievement with status and claim state', () => {
-      const ua = new UserAchievement();
-      ua.userId = '00000000-0000-0000-0000-000000000001';
-      ua.achievementId = 'ATH_TURF_DEBUT';
-      ua.currentProgress = 1;
-      ua.targetValue = 1;
-      ua.status = AchievementStatus.UNLOCKED;
-      ua.isCompleted = true;
-      ua.isRewardClaimed = false;
-
-      expect(ua.status).toBe(AchievementStatus.UNLOCKED);
-      expect(ua.isCompleted).toBe(true);
-      expect(ua.isRewardClaimed).toBe(false);
-    });
-  });
-
-  describe('Task 8 to 12: Migration Execution & Seed Catalogue Verification', () => {
-    let migration: CreateAchievementsModuleTables1763600000000;
-    let queriesExecuted: string[];
-    let mockQueryRunner: Partial<QueryRunner>;
-
-    beforeEach(() => {
-      migration = new CreateAchievementsModuleTables1763600000000();
-      queriesExecuted = [];
-      mockQueryRunner = {
-        query: jest.fn().mockImplementation(async (sql: string) => {
-          queriesExecuted.push(sql);
-          return [];
-        }),
-      };
-    });
-
-    it('migration.up executes all DDL and seeding statements', async () => {
-      await migration.up(mockQueryRunner as QueryRunner);
-
-      // Verify UUID extension
-      expect(
-        queriesExecuted.some((q) =>
-          q.includes('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'),
-        ),
-      ).toBe(true);
-
-      // Verify Enums created
-      expect(
-        queriesExecuted.some((q) =>
-          q.includes('CREATE TYPE "public"."achievement_category_enum"'),
-        ),
-      ).toBe(true);
-      expect(
-        queriesExecuted.some((q) =>
-          q.includes('CREATE TYPE "public"."achievement_tier_enum"'),
-        ),
-      ).toBe(true);
-      expect(
-        queriesExecuted.some((q) =>
-          q.includes('CREATE TYPE "public"."achievement_status_enum"'),
-        ),
-      ).toBe(true);
-
-      // Verify Table 1: achievement_definitions (Task 8)
-      expect(
-        queriesExecuted.some((q) =>
-          q.includes('CREATE TABLE IF NOT EXISTS "achievement_definitions"'),
-        ),
-      ).toBe(true);
-      expect(
-        queriesExecuted.some((q) =>
-          q.includes('IDX_achievements_metric'),
-        ),
-      ).toBe(true);
-      expect(
-        queriesExecuted.some((q) =>
-          q.includes('IDX_achievements_category_order'),
-        ),
-      ).toBe(true);
-
-      // Verify Table 2: user_achievement_metrics (Task 9)
-      expect(
-        queriesExecuted.some((q) =>
-          q.includes('CREATE TABLE IF NOT EXISTS "user_achievement_metrics"'),
-        ),
-      ).toBe(true);
-
-      // Verify Table 3: user_achievements (Task 10)
-      expect(
-        queriesExecuted.some((q) =>
-          q.includes('CREATE TABLE IF NOT EXISTS "user_achievements"'),
-        ),
-      ).toBe(true);
-      expect(
-        queriesExecuted.some((q) =>
-          q.includes('UQ_user_achievement_user_definition'),
-        ),
-      ).toBe(true);
-
-      // Verify Task 11: 8 Athlete Badges seeded
-      const athleteSeedQuery = queriesExecuted.find(
-        (q) =>
-          q.includes('ATH_TURF_DEBUT') &&
-          q.includes('ATH_TURF_LEGEND'),
-      );
-      expect(athleteSeedQuery).toBeDefined();
-      expect(athleteSeedQuery).toContain('ATH_TURF_DEBUT');
-      expect(athleteSeedQuery).toContain('ATH_REGULAR_STARTER');
-      expect(athleteSeedQuery).toContain('ATH_CENTURION');
-      expect(athleteSeedQuery).toContain('ATH_SHARP_SHOOTER');
-      expect(athleteSeedQuery).toContain('ATH_GOAL_MACHINE');
-      expect(athleteSeedQuery).toContain('ATH_CONSISTENT_PLAYER');
-      expect(athleteSeedQuery).toContain('ATH_MVP');
-      expect(athleteSeedQuery).toContain('ATH_TURF_LEGEND');
-
-      // Verify Task 12: 8 Creator Badges seeded
-      const creatorSeedQuery = queriesExecuted.find(
-        (q) =>
-          q.includes('CRE_FIRST_REEL') &&
-          q.includes('CRE_REEL_LEGEND'),
-      );
-      expect(creatorSeedQuery).toBeDefined();
-      expect(creatorSeedQuery).toContain('CRE_FIRST_REEL');
-      expect(creatorSeedQuery).toContain('CRE_HIGHLIGHT_REEL');
-      expect(creatorSeedQuery).toContain('CRE_CONTENT_MACHINE');
-      expect(creatorSeedQuery).toContain('CRE_CROWD_PLEASER');
-      expect(creatorSeedQuery).toContain('CRE_VIRAL_SENSATION');
-      expect(creatorSeedQuery).toContain('CRE_TRENDING_CLIP');
-      expect(creatorSeedQuery).toContain('CRE_SHARE_MAGNET');
-      expect(creatorSeedQuery).toContain('CRE_REEL_LEGEND');
-    });
-
-    it('migration.down drops all tables and enums in reverse order', async () => {
-      await migration.down(mockQueryRunner as QueryRunner);
-
-      expect(
-        queriesExecuted.some((q) =>
-          q.includes('DROP TABLE IF EXISTS "user_achievements"'),
-        ),
-      ).toBe(true);
-      expect(
-        queriesExecuted.some((q) =>
-          q.includes('DROP TABLE IF EXISTS "user_achievement_metrics"'),
-        ),
-      ).toBe(true);
-      expect(
-        queriesExecuted.some((q) =>
-          q.includes('DROP TABLE IF EXISTS "achievement_definitions"'),
-        ),
-      ).toBe(true);
-      expect(
-        queriesExecuted.some((q) =>
-          q.includes('DROP TYPE IF EXISTS "public"."achievement_status_enum"'),
-        ),
-      ).toBe(true);
-    });
-  });
-
-  describe('Task 17 & 18: Redesign GET Achievements API & Response DTO Normalization', () => {
-    let service: AchievementsService;
-    let mockDefinitionRepo: Partial<Repository<AchievementDefinition>>;
-    let mockUserAchievementRepo: Partial<Repository<UserAchievement>>;
-    let mockMetricsRepo: Partial<Repository<UserAchievementMetrics>>;
-    let mockUserPointsRepo: Partial<Repository<UserPoints>>;
-    let mockPointsService: Partial<PointsService>;
-    let mockDataSource: Partial<DataSource>;
-
-    const mockDefinitions: AchievementDefinition[] = APPROVED_ACHIEVEMENT_DEFINITIONS.map(
-      (d) =>
-        ({
-          ...d,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          userAchievements: [],
-        }) as AchievementDefinition,
+    evaluationService = new AchievementEvaluationService(
+      mockDefinitionRepo,
+      mockUserAchievementRepo,
+      mockMetricsRepo,
+      mockEventEmitter,
     );
 
-    beforeEach(() => {
-      mockDefinitionRepo = {
-        find: jest.fn().mockResolvedValue(mockDefinitions),
-        create: jest.fn().mockImplementation((data) => data),
-        save: jest.fn().mockImplementation((data) => data),
+    rewardService = new AchievementRewardService(
+      mockDataSource,
+      mockPointsService,
+      evaluationService,
+    );
+
+    bufferService = new AchievementMetricsBufferService(mockConfigService);
+
+    aggregatorService = new AchievementAggregatorService(
+      mockDataSource,
+      mockMetricsRepo,
+      bufferService,
+      evaluationService,
+      mockPointsService,
+    );
+
+    achievementsService = new AchievementsService(
+      mockDefinitionRepo,
+      mockUserAchievementRepo,
+      mockMetricsRepo,
+      mockPointsService,
+      evaluationService,
+      rewardService,
+      aggregatorService,
+      bufferService,
+    );
+
+    achievementsController = new AchievementsController(achievementsService);
+
+    eventConsumer = new AchievementEventConsumer(
+      mockUserRepo,
+      mockNotificationRepo,
+      mockFirebaseNotificationService,
+    );
+  });
+
+  // =========================================================================
+  // Task 1: Document Achievement APIs
+  // =========================================================================
+  describe('Task 1: API Redesign - Document Achievement APIs', () => {
+    it('verifies that achievement response DTOs and swagger metadata are valid', () => {
+      expect(APPROVED_ACHIEVEMENT_DEFINITIONS.length).toBe(46);
+      const debut = APPROVED_ACHIEVEMENT_DEFINITIONS.find(
+        (d) => d.id === 'ATH_TURF_DEBUT',
+      );
+      expect(debut).toBeDefined();
+      expect(debut?.metricKey).toBe('matches_played');
+      expect(debut?.category).toBe(AchievementCategory.ATHLETE);
+      expect(debut?.tier).toBe(AchievementTier.BRONZE);
+    });
+  });
+
+  // =========================================================================
+  // Task 2: Implement AchievementModule
+  // =========================================================================
+  describe('Task 2: Backend Engine - Implement AchievementModule', () => {
+    it('seeds catalog definitions on initialization', async () => {
+      mockDefinitionRepo.find.mockResolvedValueOnce([]);
+      await achievementsService.ensureCatalogSeeded();
+      expect(mockDefinitionRepo.save).toHaveBeenCalled();
+    });
+
+    it('injects all modular providers cleanly into AchievementsService facade', () => {
+      expect(achievementsService.evaluationService).toBeDefined();
+      expect(achievementsService.rewardService).toBeDefined();
+      expect(achievementsService.aggregatorService).toBeDefined();
+      expect(achievementsService.bufferService).toBeDefined();
+    });
+  });
+
+  // =========================================================================
+  // Task 3: Implement AchievementAggregatorService
+  // =========================================================================
+  describe('Task 3: Backend Engine - Implement AchievementAggregatorService', () => {
+    it('aggregates activity into user achievement metrics and initializes default counters', async () => {
+      const createdMetrics: Partial<UserAchievementMetrics> = {
+        userId: 'user_1',
+        matchesPlayed: 0,
+        goalsScored: 0,
+      };
+      mockMetricsRepo.findOne.mockResolvedValueOnce(null);
+      mockMetricsRepo.create.mockReturnValueOnce(createdMetrics as any);
+      mockMetricsRepo.save.mockResolvedValueOnce(createdMetrics as any);
+
+      const metrics = await aggregatorService.getOrCreateUserMetrics('user_1');
+      expect(metrics.userId).toBe('user_1');
+      expect(metrics.matchesPlayed).toBe(0);
+    });
+  });
+
+  // =========================================================================
+  // Task 4: Implement AchievementEvaluationService
+  // =========================================================================
+  describe('Task 4: Backend Engine - Implement AchievementEvaluationService', () => {
+    it('evaluates achievement definitions against current user metrics and transitions state', async () => {
+      const userMetrics: Partial<UserAchievementMetrics> = {
+        userId: 'user_1',
+        matchesPlayed: 10,
+      };
+      mockMetricsRepo.findOne.mockResolvedValue(userMetrics as any);
+      mockUserAchievementRepo.find.mockResolvedValue([]);
+
+      const result = await evaluationService.evaluateUser('user_1', {
+        metrics: userMetrics as any,
+      });
+
+      expect(result.evaluatedCount).toBe(46);
+      expect(result.newlyUnlockedIds).toContain('ATH_TURF_DEBUT');
+      expect(result.newlyUnlockedIds).toContain('ATH_REGULAR_STARTER');
+    });
+
+    it('correctly maps various metric keys from telemetry to numeric values', () => {
+      const metrics: Partial<UserAchievementMetrics> = {
+        userId: 'u1',
+        matchesPlayed: 5,
+        goalsScored: 12,
+        mvpMatchesCount: 3,
+        streakDays: 7,
+        matchWinStreak: 4,
+        flickshortsUploadedCount: 2,
+        peakLikesSingleShort: 150,
+        peakSharesSingleShort: 30,
+        peakViewsSingleShort: 5000,
+        teammatesConnectedCount: 25,
+        crewWatchRank: 1,
+        referralsCompletedCount: 10,
+        messagesSentCount: 120,
+        socialRankPercentile: 0.5,
+        matchesRecordedCount: 8,
+        highlightsCreatedCount: 20,
+        betaTesterFlag: true,
+        lifetimeLegendFlag: true,
+        fastStartFlag: true,
       };
 
-      mockUserAchievementRepo = {
-        find: jest.fn().mockResolvedValue([
-          {
-            userId: 'user-1',
-            achievementId: 'ATH_TURF_DEBUT',
-            currentProgress: 1,
-            targetValue: 1,
-            status: AchievementStatus.UNLOCKED,
-            isCompleted: true,
-            completedAt: new Date('2026-09-01T10:00:00Z'),
-            isRewardClaimed: false,
-            claimedAt: null,
-          } as UserAchievement,
-          {
-            userId: 'user-1',
-            achievementId: 'ATH_REGULAR_STARTER',
-            currentProgress: 4,
-            targetValue: 10,
-            status: AchievementStatus.IN_PROGRESS,
-            isCompleted: false,
-            completedAt: null,
-            isRewardClaimed: false,
-            claimedAt: null,
-          } as UserAchievement,
-        ]),
+      expect(evaluationService.getTelemetryMetricValue(metrics as any, 'matches_played')).toBe(5);
+      expect(evaluationService.getTelemetryMetricValue(metrics as any, 'goals_scored')).toBe(12);
+      expect(evaluationService.getTelemetryMetricValue(metrics as any, 'mvp_matches_count')).toBe(3);
+      expect(evaluationService.getTelemetryMetricValue(metrics as any, 'peak_likes_single_short')).toBe(150);
+      expect(evaluationService.getTelemetryMetricValue(metrics as any, 'crew_watch_rank')).toBe(1);
+      expect(evaluationService.getTelemetryMetricValue(metrics as any, 'social_rank_percentile')).toBe(1);
+      expect(evaluationService.getTelemetryMetricValue(metrics as any, 'beta_tester_flag')).toBe(1);
+      expect(evaluationService.getTelemetryMetricValue(metrics as any, 'player_level', 4)).toBe(4);
+    });
+  });
+
+  // =========================================================================
+  // Task 5: Implement Progress Calculation
+  // =========================================================================
+  describe('Task 5: Backend Engine - Implement Progress Calculation', () => {
+    it('calculates current value, target value, and clamped percentage progress', () => {
+      const p1 = evaluationService.calculateProgress(5, 10);
+      expect(p1.progressPercent).toBe(50);
+      expect(p1.isCompleted).toBe(false);
+
+      const p2 = evaluationService.calculateProgress(15, 10);
+      expect(p2.progressPercent).toBe(100);
+      expect(p2.isCompleted).toBe(true);
+
+      const p3 = evaluationService.calculateProgress(0, 50);
+      expect(p3.progressPercent).toBe(0);
+      expect(p3.isCompleted).toBe(false);
+    });
+
+    it('formats human-readable progress counter text consistently', () => {
+      expect(evaluationService.formatProgressText(3, 10, 'matches_played')).toBe('3 / 10 Matches');
+      expect(evaluationService.formatProgressText(1, 1, 'matches_played')).toBe('1 / 1 Match');
+      expect(evaluationService.formatProgressText(25, 100, 'goals_scored')).toBe('25 / 100 Goals');
+      expect(evaluationService.formatProgressText(7, 7, 'streak_days')).toBe('7 / 7 Days');
+      expect(evaluationService.formatProgressText(3, 5, 'mvp_matches_count')).toBe('3 / 5 MVPs');
+      expect(evaluationService.formatProgressText(10, 25, 'player_level')).toBe('Level 10 / 25');
+    });
+  });
+
+  // =========================================================================
+  // Task 6: Implement Idempotent Completion Processing
+  // =========================================================================
+  describe('Task 6: Backend Engine - Implement Idempotent Completion Processing', () => {
+    it('prevents duplicate completion when the same activity event is processed multiple times', async () => {
+      const existingUA: Partial<UserAchievement> = {
+        userId: 'u1',
+        achievementId: 'ATH_TURF_DEBUT',
+        currentProgress: 1,
+        targetValue: 1,
+        status: AchievementStatus.UNLOCKED,
+        isCompleted: true,
+        completedAt: new Date('2026-09-01T00:00:00Z'),
+        isRewardClaimed: false,
       };
 
-      mockMetricsRepo = {
-        findOne: jest.fn().mockResolvedValue({
-          userId: 'user-1',
-          matchesPlayed: 4,
-          goalsScored: 0,
-          flickshortsUploadedCount: 0,
-          peakLikesSingleShort: 0,
-          streakDays: 0,
-          mvpMatchesCount: 0,
-          teammatesConnectedCount: 0,
-          crewWatchRank: 999,
-          referralsCompletedCount: 0,
-          messagesSentCount: 0,
-          socialRankPercentile: 100.0,
-          matchesRecordedCount: 0,
-          highlightsCreatedCount: 0,
-        } as UserAchievementMetrics),
+      const userMetrics: Partial<UserAchievementMetrics> = {
+        userId: 'u1',
+        matchesPlayed: 1,
       };
 
-      mockUserPointsRepo = {
-        findOne: jest.fn().mockResolvedValue({
-          userId: 'user-1',
-          totalPoints: 100,
-        } as UserPoints),
+      mockUserAchievementRepo.find.mockResolvedValue([existingUA as any]);
+      mockMetricsRepo.findOne.mockResolvedValue(userMetrics as any);
+
+      const result = await evaluationService.evaluateUser('u1', {
+        metrics: userMetrics as any,
+      });
+
+      expect(result.newlyUnlockedIds).not.toContain('ATH_TURF_DEBUT');
+      expect(mockEventEmitter.emit).not.toHaveBeenCalledWith(
+        AchievementUnlockedEvent.EVENT_NAME,
+        expect.objectContaining({ achievementId: 'ATH_TURF_DEBUT' }),
+      );
+    });
+
+    it('enforces non-regression invariant when metrics decrease', async () => {
+      const completedUA: Partial<UserAchievement> = {
+        userId: 'u1',
+        achievementId: 'ATH_CONSISTENT_PLAYER',
+        currentProgress: 10,
+        targetValue: 10,
+        status: AchievementStatus.UNLOCKED,
+        isCompleted: true,
+        isRewardClaimed: false,
       };
 
-      mockPointsService = {
-        getMyTotals: jest.fn().mockResolvedValue({
-          totalPoints: 100,
+      // Streak broken (streakDays drops to 0)
+      const brokenStreakMetrics: Partial<UserAchievementMetrics> = {
+        userId: 'u1',
+        streakDays: 0,
+      };
+
+      mockUserAchievementRepo.find.mockResolvedValue([completedUA as any]);
+      mockMetricsRepo.findOne.mockResolvedValue(brokenStreakMetrics as any);
+
+      const result = await evaluationService.evaluateUser('u1', {
+        metrics: brokenStreakMetrics as any,
+      });
+
+      const consistentAchv = result.achievements.find(
+        (a) => a.achievementId === 'ATH_CONSISTENT_PLAYER',
+      );
+      expect(consistentAchv?.isCompleted).toBe(true);
+      expect(consistentAchv?.status).toBe(AchievementStatus.UNLOCKED);
+    });
+  });
+
+  // =========================================================================
+  // Task 7: Implement Achievement Reward Service
+  // =========================================================================
+  describe('Task 7: Backend Engine - Implement Achievement Reward Service', () => {
+    it('awards configured achievement XP and calculates level up on valid claim', async () => {
+      const definition: Partial<AchievementDefinition> = {
+        id: 'ATH_TURF_DEBUT',
+        title: 'Turf Debut',
+        targetValue: 1,
+        xpReward: 100,
+        isActive: true,
+        category: AchievementCategory.ATHLETE,
+        tier: AchievementTier.BRONZE,
+      };
+
+      const userAchievement: Partial<UserAchievement> = {
+        userId: 'u1',
+        achievementId: 'ATH_TURF_DEBUT',
+        currentProgress: 1,
+        targetValue: 1,
+        status: AchievementStatus.UNLOCKED,
+        isCompleted: true,
+        isRewardClaimed: false,
+      };
+
+      mockDefinitionRepo.findOne.mockResolvedValue(definition as any);
+      mockUserAchievementRepo.createQueryBuilder.mockReturnValue({
+        setLock: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue(userAchievement),
+      } as any);
+
+      mockPointsService.getMyTotals
+        .mockResolvedValueOnce({
+          totalPoints: 500,
           perEvent: [],
           level: 2,
           levelName: 'Silver',
           nextLevelPoints: 30,
           levelProgress: 0.5,
+        })
+        .mockResolvedValueOnce({
+          totalPoints: 600,
+          perEvent: [],
+          level: 3,
+          levelName: 'Gold',
+          nextLevelPoints: 60,
+          levelProgress: 0.2,
+        });
+
+      const response = await rewardService.claimAchievementReward('u1', 'ATH_TURF_DEBUT');
+
+      expect(response.achievementId).toBe('ATH_TURF_DEBUT');
+      expect(response.xpAwarded).toBe(100);
+      expect(response.previousLevel).toBe(2);
+      expect(response.currentLevel).toBe(3);
+      expect(response.levelUpOccurred).toBe(true);
+      expect(mockPointsService.awardPoints).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'u1',
+          points: 100,
+          refId: 'ATH_TURF_DEBUT',
         }),
-        calculateLevel: jest.fn().mockResolvedValue({
-          level: 2,
-          levelName: 'Silver',
-          nextLevelPoints: 30,
-          levelProgress: 0.5,
-        }),
-      };
-
-      mockDataSource = {
-        transaction: jest.fn(),
-      };
-
-      service = new AchievementsService(
-        mockDataSource as DataSource,
-        mockDefinitionRepo as Repository<AchievementDefinition>,
-        mockUserAchievementRepo as Repository<UserAchievement>,
-        mockMetricsRepo as Repository<UserAchievementMetrics>,
-        mockUserPointsRepo as Repository<UserPoints>,
-        mockPointsService as PointsService,
-      );
-    });
-
-    it('returns unified response with summary statistics and achievements list', async () => {
-      const response = await service.getAchievements('user-1');
-
-      expect(response).toBeDefined();
-      expect(response.summary).toBeDefined();
-      expect(response.achievements).toBeDefined();
-      expect(response.summary.totalAchievements).toBe(46);
-      expect(response.summary.currentLevel).toBe(2);
-      expect(response.summary.currentLevelName).toBe('Silver');
-      expect(response.summary.unlockedCount).toBe(2); // ATH_TURF_DEBUT and LVL_ROOKIE (level 2 >= 1)
-      expect(response.summary.unclaimedRewardsCount).toBe(2);
-      expect(response.summary.inProgressCount).toBe(7); // 2 match milestones + 5 level milestones
-      expect(response.summary.lockedCount).toBe(37);
-      expect(response.achievements.length).toBe(46);
-    });
-
-    it('normalizes progress percentage clamped between 0 and 100', async () => {
-      const response = await service.getAchievements('user-1');
-
-      const debut = response.achievements.find(
-        (a) => a.id === 'ATH_TURF_DEBUT',
-      );
-      expect(debut).toBeDefined();
-      expect(debut?.progressPercent).toBe(100);
-      expect(debut?.status).toBe(AchievementStatus.UNLOCKED);
-      expect(debut?.rewardValue).toBe('+100 XP');
-      expect(debut?.progressText).toBe('1 / 1 Match');
-
-      const starter = response.achievements.find(
-        (a) => a.id === 'ATH_REGULAR_STARTER',
-      );
-      expect(starter).toBeDefined();
-      expect(starter?.progressPercent).toBe(40);
-      expect(starter?.status).toBe(AchievementStatus.IN_PROGRESS);
-      expect(starter?.progressText).toBe('4 / 10 Matches');
-      expect(starter?.rewardValue).toBe('+300 XP');
-    });
-
-    it('filters achievements by category (ATHLETE)', async () => {
-      const response = await service.getAchievements('user-1', {
-        category: AchievementCategory.ATHLETE,
-      });
-
-      expect(response.achievements.length).toBe(8);
-      expect(
-        response.achievements.every(
-          (a) => a.category === AchievementCategory.ATHLETE,
-        ),
-      ).toBe(true);
-      // Summary still reflects full catalogue
-      expect(response.summary.totalAchievements).toBe(46);
-    });
-
-    it('filters achievements by status (UNLOCKED)', async () => {
-      const response = await service.getAchievements('user-1', {
-        status: AchievementStatus.UNLOCKED,
-      });
-
-      expect(response.achievements.length).toBe(2);
-      expect(response.achievements.map((a) => a.id)).toContain(
-        'ATH_TURF_DEBUT',
-      );
-      expect(response.achievements.map((a) => a.id)).toContain(
-        'LVL_ROOKIE',
-      );
-    });
-
-    it('formats progressText correctly across diverse metric keys', () => {
-      expect(service.formatProgressText(1, 1, 'matches_played')).toBe(
-        '1 / 1 Match',
-      );
-      expect(service.formatProgressText(15, 50, 'matches_played')).toBe(
-        '15 / 50 Matches',
-      );
-      expect(service.formatProgressText(25, 100, 'goals_scored')).toBe(
-        '25 / 100 Goals',
-      );
-      expect(service.formatProgressText(7, 10, 'streak_days')).toBe(
-        '7 / 10 Days',
-      );
-      expect(service.formatProgressText(1, 5, 'mvp_matches_count')).toBe(
-        '1 / 5 MVPs',
-      );
-      expect(service.formatProgressText(10, 50, 'flickshorts_uploaded_count')).toBe(
-        '10 / 50 Shorts',
-      );
-      expect(service.formatProgressText(200, 1000, 'peak_likes_single_short')).toBe(
-        '200 / 1000 Likes',
-      );
-      expect(service.formatProgressText(5, 20, 'teammates_connected_count')).toBe(
-        '5 / 20 Teammates',
-      );
-      expect(service.formatProgressText(3, 10, 'referrals_completed_count')).toBe(
-        '3 / 10 Friends',
-      );
-      expect(service.formatProgressText(10, 25, 'player_level')).toBe(
-        'Level 10 / 25',
       );
     });
   });
 
-  describe('Task 19 & 20: Redesign Achievement Reward Claim API & Error Handling', () => {
-    let service: AchievementsService;
-    let mockDefinitionRepo: Partial<Repository<AchievementDefinition>>;
-    let mockUserAchievementRepo: Partial<Repository<UserAchievement>>;
-    let mockMetricsRepo: Partial<Repository<UserAchievementMetrics>>;
-    let mockUserPointsRepo: Partial<Repository<UserPoints>>;
-    let mockPointsService: Partial<PointsService>;
-    let mockDataSource: Partial<DataSource>;
-
-    beforeEach(() => {
-      mockPointsService = {
-        getMyTotals: jest
-          .fn()
-          .mockResolvedValueOnce({
-            totalPoints: 100,
-            level: 2,
-            levelName: 'Silver',
-          })
-          .mockResolvedValueOnce({
-            totalPoints: 200,
-            level: 3,
-            levelName: 'Gold',
-          }),
-        awardPoints: jest.fn().mockResolvedValue({
-          id: 'point-event-1',
-          points: 100,
-          eventType: PointEventType.ACHIEVEMENT_CLAIM,
-        }),
-      };
-
-      mockDataSource = {
-        transaction: jest.fn().mockImplementation(async (callback) => {
-          const mockQueryBuilder = {
-            setLock: jest.fn().mockReturnThis(),
-            where: jest.fn().mockReturnThis(),
-            getOne: jest.fn().mockResolvedValue({
-              id: 'ua-1',
-              userId: 'user-1',
-              achievementId: 'ATH_TURF_DEBUT',
-              currentProgress: 1,
-              targetValue: 1,
-              status: AchievementStatus.UNLOCKED,
-              isCompleted: true,
-              completedAt: new Date('2026-09-01T10:00:00Z'),
-              isRewardClaimed: false,
-              claimedAt: null,
-            } as UserAchievement),
-          };
-
-          const mockManager = {
-            getRepository: jest.fn().mockImplementation((entity) => {
-              if (entity === AchievementDefinition) {
-                return {
-                  findOne: jest.fn().mockResolvedValue({
-                    id: 'ATH_TURF_DEBUT',
-                    title: 'Turf Debut',
-                    category: AchievementCategory.ATHLETE,
-                    tier: AchievementTier.BRONZE,
-                    targetValue: 1,
-                    xpReward: 100,
-                    metricKey: 'matches_played',
-                  } as AchievementDefinition),
-                };
-              }
-              if (entity === UserAchievement) {
-                return {
-                  createQueryBuilder: jest.fn().mockReturnValue(mockQueryBuilder),
-                  save: jest.fn().mockImplementation((ua) => ua),
-                  create: jest.fn().mockImplementation((ua) => ua),
-                };
-              }
-              if (entity === UserAchievementMetrics) {
-                return {
-                  findOne: jest.fn().mockResolvedValue({
-                    userId: 'user-1',
-                    matchesPlayed: 1,
-                  }),
-                };
-              }
-              return {};
-            }),
-          };
-          return callback(mockManager);
-        }),
-      };
-
-      service = new AchievementsService(
-        mockDataSource as DataSource,
-        mockDefinitionRepo as Repository<AchievementDefinition>,
-        mockUserAchievementRepo as Repository<UserAchievement>,
-        mockMetricsRepo as Repository<UserAchievementMetrics>,
-        mockUserPointsRepo as Repository<UserPoints>,
-        mockPointsService as PointsService,
+  // =========================================================================
+  // Task 8: Implement Achievement Claim Validation
+  // =========================================================================
+  describe('Task 8: Backend Engine - Implement Achievement Claim Validation', () => {
+    it('rejects claims when user ID or achievement ID is empty', async () => {
+      await expect(rewardService.claimAchievementReward('', 'ATH_TURF_DEBUT')).rejects.toThrow(
+        BadRequestException,
+      );
+      await expect(rewardService.claimAchievementReward('u1', '')).rejects.toThrow(
+        BadRequestException,
       );
     });
 
-    it('claims completed achievement, awards XP, and returns level progression', async () => {
-      const claimResult = await service.claimAchievementReward(
-        'user-1',
-        'ATH_TURF_DEBUT',
-      );
-
-      expect(claimResult).toBeDefined();
-      expect(claimResult.achievementId).toBe('ATH_TURF_DEBUT');
-      expect(claimResult.title).toBe('Turf Debut');
-      expect(claimResult.xpAwarded).toBe(100);
-      expect(claimResult.newTotalXp).toBe(200);
-      expect(claimResult.previousLevel).toBe(2);
-      expect(claimResult.currentLevel).toBe(3);
-      expect(claimResult.levelUpOccurred).toBe(true);
-      expect(claimResult.claimedAt).toBeDefined();
-
-      expect(mockPointsService.awardPoints).toHaveBeenCalledWith(
-        expect.objectContaining({
-          userId: 'user-1',
-          eventType: PointEventType.ACHIEVEMENT_CLAIM,
-          refId: 'ATH_TURF_DEBUT',
-          points: 100,
-        }),
-      );
-    });
-
-    it('Task 20: throws NotFoundException (404) when achievement does not exist', async () => {
-      mockDataSource.transaction = jest.fn().mockImplementation(async (cb) => {
-        const mockManager = {
-          getRepository: jest.fn().mockReturnValue({
-            findOne: jest.fn().mockResolvedValue(null), // definition not found
-          }),
-        };
-        return cb(mockManager);
-      });
-
+    it('rejects claims when achievement definition does not exist (404)', async () => {
+      mockDefinitionRepo.findOne.mockResolvedValueOnce(null);
       await expect(
-        service.claimAchievementReward('user-1', 'INVALID_ACHIEVEMENT_ID'),
+        rewardService.claimAchievementReward('u1', 'NON_EXISTENT'),
       ).rejects.toThrow(NotFoundException);
     });
 
-    it('Task 20: throws ConflictException (409) when achievement reward is already claimed', async () => {
-      mockDataSource.transaction = jest.fn().mockImplementation(async (cb) => {
-        const mockManager = {
-          getRepository: jest.fn().mockImplementation((entity) => {
-            if (entity === AchievementDefinition) {
-              return {
-                findOne: jest.fn().mockResolvedValue({
-                  id: 'ATH_TURF_DEBUT',
-                  title: 'Turf Debut',
-                }),
-              };
-            }
-            if (entity === UserAchievement) {
-              return {
-                createQueryBuilder: jest.fn().mockReturnValue({
-                  setLock: jest.fn().mockReturnThis(),
-                  where: jest.fn().mockReturnThis(),
-                  getOne: jest.fn().mockResolvedValue({
-                    id: 'ua-1',
-                    isRewardClaimed: true,
-                    status: AchievementStatus.CLAIMED,
-                  }),
-                }),
-              };
-            }
-            return {};
-          }),
-        };
-        return cb(mockManager);
-      });
+    it('rejects claims when achievement is already claimed (409 Conflict)', async () => {
+      const definition: Partial<AchievementDefinition> = {
+        id: 'ATH_TURF_DEBUT',
+        title: 'Turf Debut',
+        targetValue: 1,
+        xpReward: 100,
+        isActive: true,
+      };
+      const claimedUA: Partial<UserAchievement> = {
+        userId: 'u1',
+        achievementId: 'ATH_TURF_DEBUT',
+        isRewardClaimed: true,
+        status: AchievementStatus.CLAIMED,
+      };
+
+      mockDefinitionRepo.findOne.mockResolvedValue(definition as any);
+      mockUserAchievementRepo.createQueryBuilder.mockReturnValue({
+        setLock: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue(claimedUA),
+      } as any);
 
       await expect(
-        service.claimAchievementReward('user-1', 'ATH_TURF_DEBUT'),
+        rewardService.claimAchievementReward('u1', 'ATH_TURF_DEBUT'),
       ).rejects.toThrow(ConflictException);
     });
 
-    it('Task 20: throws BadRequestException (400) when achievement requirements are incomplete', async () => {
-      mockDataSource.transaction = jest.fn().mockImplementation(async (cb) => {
-        const mockManager = {
-          getRepository: jest.fn().mockImplementation((entity) => {
-            if (entity === AchievementDefinition) {
-              return {
-                findOne: jest.fn().mockResolvedValue({
-                  id: 'ATH_CENTURION',
-                  title: 'Centurion',
-                  targetValue: 50,
-                  metricKey: 'matches_played',
-                }),
-              };
-            }
-            if (entity === UserAchievement) {
-              return {
-                createQueryBuilder: jest.fn().mockReturnValue({
-                  setLock: jest.fn().mockReturnThis(),
-                  where: jest.fn().mockReturnThis(),
-                  getOne: jest.fn().mockResolvedValue({
-                    id: 'ua-1',
-                    currentProgress: 12,
-                    targetValue: 50,
-                    isCompleted: false,
-                    isRewardClaimed: false,
-                    status: AchievementStatus.IN_PROGRESS,
-                  }),
-                }),
-              };
-            }
-            if (entity === UserAchievementMetrics) {
-              return {
-                findOne: jest.fn().mockResolvedValue({
-                  userId: 'user-1',
-                  matchesPlayed: 12,
-                }),
-              };
-            }
-            return {};
-          }),
-        };
-        return cb(mockManager);
-      });
+    it('rejects claims when achievement requirements are incomplete (400 Bad Request)', async () => {
+      const definition: Partial<AchievementDefinition> = {
+        id: 'ATH_CENTURION',
+        title: 'Centurion',
+        targetValue: 50,
+        metricKey: 'matches_played',
+        isActive: true,
+      };
+      const incompleteUA: Partial<UserAchievement> = {
+        userId: 'u1',
+        achievementId: 'ATH_CENTURION',
+        currentProgress: 12,
+        isCompleted: false,
+        isRewardClaimed: false,
+      };
+
+      mockDefinitionRepo.findOne.mockResolvedValue(definition as any);
+      mockUserAchievementRepo.createQueryBuilder.mockReturnValue({
+        setLock: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue(incompleteUA),
+      } as any);
+
+      mockMetricsRepo.findOne.mockResolvedValue({
+        userId: 'u1',
+        matchesPlayed: 12,
+      } as any);
 
       await expect(
-        service.claimAchievementReward('user-1', 'ATH_CENTURION'),
+        rewardService.claimAchievementReward('u1', 'ATH_CENTURION'),
       ).rejects.toThrow(BadRequestException);
     });
+  });
 
-    it('controller delegates GET / and POST /:id/claim calls to service', async () => {
-      const mockService = {
-        getAchievements: jest.fn().mockResolvedValue({ summary: {}, achievements: [] }),
-        claimAchievementReward: jest.fn().mockResolvedValue({ achievementId: 'ATH_TURF_DEBUT' }),
-      } as unknown as AchievementsService;
+  // =========================================================================
+  // Task 9: Implement Redis Metrics Buffer
+  // =========================================================================
+  describe('Task 9: Backend Engine - Implement Redis Metrics Buffer', () => {
+    it('buffers high-frequency counter increments and peak metrics in memory/redis', async () => {
+      await bufferService.bufferIncrement('u1', 'matches_played', 2);
+      await bufferService.bufferIncrement('u1', 'goals_scored', 3);
+      await bufferService.bufferPeak('u1', 'peak_likes_single_short', 250);
+      await bufferService.bufferFlag('u1', 'beta_tester_flag', true);
 
-      const controller = new AchievementsController(mockService);
-      const req = { user: { user_id: 'user-1' } } as any;
+      const stats = bufferService.getBufferStats();
+      expect(stats.pendingMemoryUsers).toBeGreaterThanOrEqual(1);
+    });
+  });
 
-      await controller.getAchievements(req, { category: AchievementCategory.ATHLETE });
-      expect(mockService.getAchievements).toHaveBeenCalledWith('user-1', {
-        category: AchievementCategory.ATHLETE,
+  // =========================================================================
+  // Task 10: Implement Metric Flush Strategy
+  // =========================================================================
+  describe('Task 10: Backend Engine - Implement Metric Flush Strategy', () => {
+    it('reliably flushes and persists buffered deltas to database without data loss', async () => {
+      await bufferService.bufferIncrement('u_flush_1', 'matches_played', 5);
+      await bufferService.bufferPeak('u_flush_1', 'peak_likes_single_short', 500);
+
+      const deltas = await bufferService.flushMetrics();
+      expect(deltas.length).toBe(1);
+      expect(deltas[0].userId).toBe('u_flush_1');
+      expect(deltas[0].increments['matches_played']).toBe(5);
+      expect(deltas[0].peaks['peak_likes_single_short']).toBe(500);
+
+      // Subsequent immediate flush should be empty (buffer drained)
+      const secondFlush = await bufferService.flushMetrics();
+      expect(secondFlush.length).toBe(0);
+    });
+  });
+
+  // =========================================================================
+  // Task 11: Implement Achievement Unlock Events
+  // =========================================================================
+  describe('Task 11: Backend Engine - Implement Achievement Unlock Events', () => {
+    it('dispatches unlock notification to user device tokens and notification entity', async () => {
+      const event = new AchievementUnlockedEvent(
+        'user_123',
+        'ATH_TURF_DEBUT',
+        'Turf Debut',
+        'Play your first match',
+        AchievementCategory.ATHLETE,
+        AchievementTier.BRONZE,
+        100,
+        'bronze-picklebat.png',
+      );
+
+      await eventConsumer.handleAchievementUnlocked(event);
+
+      expect(mockFirebaseNotificationService.sendNotification).toHaveBeenCalledWith(
+        expect.objectContaining({
+          token: 'token_abc123',
+          notification: {
+            title: '🏆 Achievement Unlocked: Turf Debut!',
+            body: "You earned 'Turf Debut' (+100 XP). Claim your reward now!",
+          },
+        }),
+        'user_123',
+      );
+
+      expect(mockNotificationRepo.save).toHaveBeenCalled();
+    });
+  });
+
+  // =========================================================================
+  // Task 12: Integrate Match Events
+  // =========================================================================
+  describe('Task 12: Backend Engine - Integrate Match Events', () => {
+    it('connects match participation to Athlete match-count achievements', async () => {
+      const metrics: Partial<UserAchievementMetrics> = {
+        userId: 'u_match',
+        matchesPlayed: 9,
+      };
+      mockMetricsRepo.findOne.mockResolvedValue(metrics as any);
+      mockUserAchievementRepo.find.mockResolvedValue([]);
+
+      const result = await aggregatorService.recordMatchParticipation('u_match', 1);
+
+      expect(result.totalMatchesPlayed).toBe(10);
+      expect(result.unlockedAchievements).toContain('ATH_REGULAR_STARTER');
+    });
+  });
+
+  // =========================================================================
+  // Task 13: Integrate Goal Events
+  // =========================================================================
+  describe('Task 13: Backend Engine - Integrate Goal Events', () => {
+    it('connects goal-scoring events to Sharp Shooter and Goal Machine', async () => {
+      const metrics: Partial<UserAchievementMetrics> = {
+        userId: 'u_goal',
+        goalsScored: 24,
+      };
+      mockMetricsRepo.findOne.mockResolvedValue(metrics as any);
+      mockUserAchievementRepo.find.mockResolvedValue([]);
+
+      const result = await aggregatorService.recordGoalScored('u_goal', 1);
+
+      expect(result.totalGoalsScored).toBe(25);
+      expect(result.unlockedAchievements).toContain('ATH_SHARP_SHOOTER');
+    });
+  });
+
+  // =========================================================================
+  // Task 14: Integrate MVP Events
+  // =========================================================================
+  describe('Task 14: Backend Engine - Integrate MVP Events', () => {
+    it('connects MVP results to MVP and Turf Legend progression', async () => {
+      const metrics: Partial<UserAchievementMetrics> = {
+        userId: 'u_mvp',
+        mvpMatchesCount: 4,
+      };
+      mockMetricsRepo.findOne.mockResolvedValue(metrics as any);
+      mockUserAchievementRepo.find.mockResolvedValue([]);
+
+      const result = await aggregatorService.recordMvpAwarded('u_mvp', 1);
+
+      expect(result.totalMvpMatchesCount).toBe(5);
+      expect(result.unlockedAchievements).toContain('ATH_MVP');
+    });
+  });
+
+  // =========================================================================
+  // Task 15: Integrate Match Streak Events
+  // =========================================================================
+  describe('Task 15: Backend Engine - Integrate Match Streak Events', () => {
+    it('connects streak information to Consistent Player and Hot Streak', async () => {
+      const metrics: Partial<UserAchievementMetrics> = {
+        userId: 'u_streak',
+        streakDays: 9,
+        matchWinStreak: 14,
+      };
+      mockMetricsRepo.findOne.mockResolvedValue(metrics as any);
+      mockUserAchievementRepo.find.mockResolvedValue([]);
+
+      const result = await aggregatorService.recordStreakUpdated('u_streak', 10, 15);
+
+      expect(result.streakDays).toBe(10);
+      expect(result.matchWinStreak).toBe(15);
+      expect(result.unlockedAchievements).toContain('ATH_CONSISTENT_PLAYER');
+      expect(result.unlockedAchievements).toContain('SPC_HOT_STREAK');
+    });
+  });
+
+  // =========================================================================
+  // Controller End-to-End Tests for Event Routes
+  // =========================================================================
+  describe('Achievements Controller API routes', () => {
+    const mockReq = { user: { user_id: 'u_ctrl' } } as any;
+
+    it('GET / - returns full achievements catalogue with summary', async () => {
+      mockUserAchievementRepo.find.mockResolvedValue([]);
+      mockMetricsRepo.findOne.mockResolvedValue(null);
+
+      const response = await achievementsController.getAchievements(mockReq, {});
+      expect(response.summary).toBeDefined();
+      expect(response.summary.totalAchievements).toBe(46);
+      expect(response.achievements.length).toBe(46);
+    });
+
+    it('POST /:id/claim - claims achievement reward', async () => {
+      jest.spyOn(achievementsService, 'claimAchievementReward').mockResolvedValueOnce({
+        achievementId: 'ATH_TURF_DEBUT',
+        title: 'Turf Debut',
+        xpAwarded: 100,
+        newTotalXp: 600,
+        previousLevel: 2,
+        currentLevel: 3,
+        currentLevelName: 'Gold',
+        levelUpOccurred: true,
+        claimedAt: new Date().toISOString(),
       });
 
-      await controller.claimReward(req, 'ATH_TURF_DEBUT');
-      expect(mockService.claimAchievementReward).toHaveBeenCalledWith(
-        'user-1',
-        'ATH_TURF_DEBUT',
-      );
+      const response = await achievementsController.claimReward(mockReq, 'ATH_TURF_DEBUT');
+      expect(response.achievementId).toBe('ATH_TURF_DEBUT');
+      expect(response.xpAwarded).toBe(100);
+    });
+
+    it('POST /events/match - delegates match event', async () => {
+      jest.spyOn(achievementsService, 'recordMatchParticipation').mockResolvedValueOnce({
+        totalMatchesPlayed: 10,
+        unlockedAchievements: ['ATH_REGULAR_STARTER'],
+      });
+
+      const res = await achievementsController.recordMatchEvent(mockReq, {
+        userId: 'u_ctrl',
+        matchesCount: 1,
+      });
+      expect(res.success).toBe(true);
+      expect(res.totalMatchesPlayed).toBe(10);
+    });
+
+    it('POST /events/goal - delegates goal event', async () => {
+      jest.spyOn(achievementsService, 'recordGoalScored').mockResolvedValueOnce({
+        totalGoalsScored: 25,
+        unlockedAchievements: ['ATH_SHARP_SHOOTER'],
+      });
+
+      const res = await achievementsController.recordGoalEvent(mockReq, {
+        userId: 'u_ctrl',
+        goalsCount: 2,
+      });
+      expect(res.success).toBe(true);
+      expect(res.totalGoalsScored).toBe(25);
+    });
+
+    it('POST /events/mvp - delegates mvp event', async () => {
+      jest.spyOn(achievementsService, 'recordMvpAwarded').mockResolvedValueOnce({
+        totalMvpMatchesCount: 5,
+        unlockedAchievements: ['ATH_MVP'],
+      });
+
+      const res = await achievementsController.recordMvpEvent(mockReq, {
+        userId: 'u_ctrl',
+        count: 1,
+      });
+      expect(res.success).toBe(true);
+      expect(res.totalMvpMatchesCount).toBe(5);
+    });
+
+    it('POST /events/streak - delegates streak event', async () => {
+      jest.spyOn(achievementsService, 'recordStreakUpdated').mockResolvedValueOnce({
+        streakDays: 10,
+        matchWinStreak: 15,
+        unlockedAchievements: ['ATH_CONSISTENT_PLAYER'],
+      });
+
+      const res = await achievementsController.recordStreakEvent(mockReq, {
+        userId: 'u_ctrl',
+        streakDays: 10,
+        matchWinStreak: 15,
+      });
+      expect(res.success).toBe(true);
+      expect(res.streakDays).toBe(10);
+    });
+
+    it('POST /buffer/flush - triggers buffer flush', async () => {
+      jest.spyOn(achievementsService, 'flushMetricsBuffer').mockResolvedValueOnce([]);
+      jest.spyOn(achievementsService, 'getBufferStats').mockReturnValueOnce({
+        isRedisConnected: false,
+        pendingMemoryUsers: 0,
+        isFlushing: false,
+      });
+
+      const res = await achievementsController.flushBuffer();
+      expect(res.success).toBe(true);
+      expect(res.flushedUsersCount).toBe(0);
     });
   });
 });

@@ -19,4 +19,5 @@ export enum NotificationType {
    *  Profile points pill without a refetch. */
   POINTS_AWARDED = 'POINTS_AWARDED',
   ADMIN_BROADCAST = 'ADMIN_BROADCAST',
+  ACHIEVEMENT_UNLOCKED = 'ACHIEVEMENT_UNLOCKED',
 }
