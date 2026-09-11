@@ -314,6 +314,72 @@ export class AchievementsService implements OnModuleInit {
   }
 
   /**
+   * Task 36: FlickShort Upload Event Integration
+   */
+  async recordShortUploaded(
+    userId: string,
+    count = 1,
+    options?: { shortId?: string; recordingId?: string },
+  ) {
+    return this.aggregatorService.recordShortUploaded(userId, count, options);
+  }
+
+  /**
+   * Task 37: FlickShort Like Event Integration
+   */
+  async recordShortLiked(
+    userId: string,
+    likesCount: number,
+    options?: { shortId?: string },
+  ) {
+    return this.aggregatorService.recordShortLiked(userId, likesCount, options);
+  }
+
+  /**
+   * Task 38: FlickShort Share Event Integration
+   */
+  async recordShortShared(
+    userId: string,
+    sharesCount: number,
+    options?: { shortId?: string },
+  ) {
+    return this.aggregatorService.recordShortShared(userId, sharesCount, options);
+  }
+
+  /**
+   * Task 39: FlickShort View Event Integration
+   */
+  async recordShortViewed(
+    userId: string,
+    viewsCount: number,
+    options?: { shortId?: string },
+  ) {
+    return this.aggregatorService.recordShortViewed(userId, viewsCount, options);
+  }
+
+  /**
+   * Task 40: Teammates / Social Connection Event Integration
+   */
+  async recordTeammatesConnected(
+    userId: string,
+    count = 1,
+    options?: { teammateUserId?: string; totalCount?: number; circleId?: string },
+  ) {
+    return this.aggregatorService.recordTeammatesConnected(userId, count, options);
+  }
+
+  /**
+   * Social Metric Event Integration (teammates, messages, referrals)
+   */
+  async recordSocialMetric(
+    userId: string,
+    type: 'teammates' | 'messages' | 'referrals',
+    value: number,
+  ) {
+    return this.aggregatorService.recordSocialMetric(userId, type, value);
+  }
+
+  /**
    * Flush metrics buffer
    */
   async flushMetricsBuffer() {

@@ -47,6 +47,22 @@ import {
   IngestMetricEventDto,
   IngestMetricResponseDto,
 } from './dto/telemetry-event.dto';
+import {
+  RecordShortLikeDto,
+  RecordShortShareDto,
+  RecordShortUploadDto,
+  RecordShortViewDto,
+  ShortLikeResponseDto,
+  ShortShareResponseDto,
+  ShortUploadResponseDto,
+  ShortViewResponseDto,
+} from './dto/short-event.dto';
+import {
+  RecordSocialEventDto,
+  RecordTeammateConnectionDto,
+  SocialEventResponseDto,
+  TeammateConnectionResponseDto,
+} from './dto/social-event.dto';
 
 @ApiTags('achievements')
 @ApiBearerAuth('access-token')
@@ -279,6 +295,230 @@ export class AchievementsController {
       userId: targetUserId,
       streakDays: result.streakDays,
       matchWinStreak: result.matchWinStreak,
+      unlockedAchievements: result.unlockedAchievements,
+    };
+  }
+
+  /**
+   * Task 36: Integrate FlickShort Upload Events endpoint
+   */
+  @Post('events/short-upload')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Record FlickShort upload event for creator achievements',
+    description:
+      'Increments flickshorts uploaded count and evaluates First Reel, Highlight Reel, and Content Machine milestones.',
+  })
+  @ApiBody({ type: RecordShortUploadDto })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'FlickShort upload recorded and milestones evaluated',
+    type: ShortUploadResponseDto,
+  })
+  async recordShortUploadEvent(
+    @Req() req: Request & { user: ILocalLoginPayload },
+    @Body() dto: RecordShortUploadDto,
+  ): Promise<ShortUploadResponseDto> {
+    const targetUserId = dto.userId || req.user.user_id;
+    const result = await this.achievementsService.recordShortUploaded(
+      targetUserId,
+      dto.count || 1,
+      {
+        shortId: dto.shortId,
+        recordingId: dto.recordingId,
+      },
+    );
+
+    return {
+      success: true,
+      userId: targetUserId,
+      totalUploaded: result.totalUploaded,
+      unlockedAchievements: result.unlockedAchievements,
+    };
+  }
+
+  /**
+   * Task 37: Integrate FlickShort Like Events endpoint
+   */
+  @Post('events/short-like')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Record FlickShort like peak for Crowd Pleaser and Viral Sensation',
+    description:
+      'Records highest single-short likes and evaluates Crowd Pleaser (100) and Viral Sensation (1000) milestones.',
+  })
+  @ApiBody({ type: RecordShortLikeDto })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'FlickShort likes peak evaluated',
+    type: ShortLikeResponseDto,
+  })
+  async recordShortLikeEvent(
+    @Req() req: Request & { user: ILocalLoginPayload },
+    @Body() dto: RecordShortLikeDto,
+  ): Promise<ShortLikeResponseDto> {
+    const targetUserId = dto.userId || req.user.user_id;
+    const result = await this.achievementsService.recordShortLiked(
+      targetUserId,
+      dto.likesCount,
+      {
+        shortId: dto.shortId,
+      },
+    );
+
+    return {
+      success: true,
+      userId: targetUserId,
+      peakLikesSingleShort: result.peakLikesSingleShort,
+      unlockedAchievements: result.unlockedAchievements,
+    };
+  }
+
+  /**
+   * Task 38: Integrate FlickShort Share Events endpoint
+   */
+  @Post('events/short-share')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Record FlickShort share peak for Trending Clip and Share Magnet',
+    description:
+      'Records highest single-short shares and evaluates Trending Clip (25) and Share Magnet (250) milestones.',
+  })
+  @ApiBody({ type: RecordShortShareDto })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'FlickShort shares peak evaluated',
+    type: ShortShareResponseDto,
+  })
+  async recordShortShareEvent(
+    @Req() req: Request & { user: ILocalLoginPayload },
+    @Body() dto: RecordShortShareDto,
+  ): Promise<ShortShareResponseDto> {
+    const targetUserId = dto.userId || req.user.user_id;
+    const result = await this.achievementsService.recordShortShared(
+      targetUserId,
+      dto.sharesCount,
+      {
+        shortId: dto.shortId,
+      },
+    );
+
+    return {
+      success: true,
+      userId: targetUserId,
+      peakSharesSingleShort: result.peakSharesSingleShort,
+      unlockedAchievements: result.unlockedAchievements,
+    };
+  }
+
+  /**
+   * Task 39: Integrate FlickShort View Events endpoint
+   */
+  @Post('events/short-view')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Record FlickShort views for Reel Legend milestone',
+    description:
+      'Records peak views count and evaluates Reel Legend (10,000+ views) milestone.',
+  })
+  @ApiBody({ type: RecordShortViewDto })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'FlickShort views evaluated',
+    type: ShortViewResponseDto,
+  })
+  async recordShortViewEvent(
+    @Req() req: Request & { user: ILocalLoginPayload },
+    @Body() dto: RecordShortViewDto,
+  ): Promise<ShortViewResponseDto> {
+    const targetUserId = dto.userId || req.user.user_id;
+    const result = await this.achievementsService.recordShortViewed(
+      targetUserId,
+      dto.viewsCount,
+      {
+        shortId: dto.shortId,
+      },
+    );
+
+    return {
+      success: true,
+      userId: targetUserId,
+      peakViewsSingleShort: result.peakViewsSingleShort,
+      unlockedAchievements: result.unlockedAchievements,
+    };
+  }
+
+  /**
+   * Task 40: Integrate Teammate Connection Events endpoint
+   */
+  @Post('events/teammates')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Record teammate connection event for social network milestones',
+    description:
+      'Increments connected teammates and evaluates Squad Builder (5), Team Captain (20), Club Legend (50), Network King (200), and Matchmaker (25) milestones.',
+  })
+  @ApiBody({ type: RecordTeammateConnectionDto })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Teammates connection recorded and milestones evaluated',
+    type: TeammateConnectionResponseDto,
+  })
+  async recordTeammatesEvent(
+    @Req() req: Request & { user: ILocalLoginPayload },
+    @Body() dto: RecordTeammateConnectionDto,
+  ): Promise<TeammateConnectionResponseDto> {
+    const targetUserId = dto.userId || req.user.user_id;
+    const result = await this.achievementsService.recordTeammatesConnected(
+      targetUserId,
+      dto.count || 1,
+      {
+        totalCount: dto.totalCount,
+        teammateUserId: dto.teammateUserId,
+        circleId: dto.circleId,
+      },
+    );
+
+    return {
+      success: true,
+      userId: targetUserId,
+      totalTeammatesConnected: result.totalTeammatesConnected,
+      unlockedAchievements: result.unlockedAchievements,
+    };
+  }
+
+  /**
+   * Task 40: Generic Social Metric Event endpoint
+   */
+  @Post('events/social')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Record social metric event (teammates, messages, referrals)',
+    description:
+      'Records social interactions and evaluates corresponding social category milestones.',
+  })
+  @ApiBody({ type: RecordSocialEventDto })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Social metric recorded and milestones evaluated',
+    type: SocialEventResponseDto,
+  })
+  async recordSocialEvent(
+    @Req() req: Request & { user: ILocalLoginPayload },
+    @Body() dto: RecordSocialEventDto,
+  ): Promise<SocialEventResponseDto> {
+    const targetUserId = dto.userId || req.user.user_id;
+    const result = await this.achievementsService.recordSocialMetric(
+      targetUserId,
+      dto.type,
+      dto.value ?? (dto.count || 1),
+    );
+
+    return {
+      success: true,
+      userId: targetUserId,
+      type: dto.type,
+      currentValue: dto.value ?? (dto.count || 1),
       unlockedAchievements: result.unlockedAchievements,
     };
   }
