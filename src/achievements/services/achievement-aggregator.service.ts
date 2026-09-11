@@ -322,11 +322,14 @@ export class AchievementAggregatorService implements OnModuleInit {
   }
 
   /**
-   * Creator Telemetry Integration: FlickShorts uploads and viral metrics
+   * Task 36: Integrate FlickShort Upload Events
+   * Connect FlickShort upload events to Creator upload achievements
+   * (CRE_FIRST_REEL, CRE_HIGHLIGHT_REEL, CRE_CONTENT_MACHINE)
    */
   async recordShortUploaded(
     userId: string,
     count = 1,
+    options?: { shortId?: string; recordingId?: string },
   ): Promise<{ totalUploaded: number; unlockedAchievements: string[] }> {
     if (!userId || count <= 0) return { totalUploaded: 0, unlockedAchievements: [] };
 
@@ -340,6 +343,10 @@ export class AchievementAggregatorService implements OnModuleInit {
       metrics,
     });
 
+    this.logger.log(
+      `Recorded FlickShort upload for creator ${userId}: +${count} short(s). Total: ${metrics.flickshortsUploadedCount}`,
+    );
+
     return {
       totalUploaded: metrics.flickshortsUploadedCount,
       unlockedAchievements: evalResult.newlyUnlockedIds,
@@ -347,7 +354,162 @@ export class AchievementAggregatorService implements OnModuleInit {
   }
 
   /**
-   * Creator Peak Stats Integration: Likes, Shares, Views
+   * Task 37: Integrate FlickShort Like Events
+   * Connect like peaks on a short to Crowd Pleaser (CRE_CROWD_PLEASER) and Viral Sensation (CRE_VIRAL_SENSATION)
+   */
+  async recordShortLiked(
+    userId: string,
+    likesCount: number,
+    options?: { shortId?: string },
+  ): Promise<{ peakLikesSingleShort: number; unlockedAchievements: string[] }> {
+    if (!userId || likesCount < 0) return { peakLikesSingleShort: 0, unlockedAchievements: [] };
+
+    const metrics = await this.getOrCreateUserMetrics(userId);
+    if (likesCount > Number(metrics.peakLikesSingleShort || 0)) {
+      metrics.peakLikesSingleShort = likesCount;
+      await this.metricsRepo.save(metrics);
+
+      const totals = await this.pointsService.getMyTotals(userId);
+      const evalResult = await this.evaluationService.evaluateUser(userId, {
+        userLevel: totals.level,
+        metrics,
+      });
+
+      this.logger.log(
+        `Recorded FlickShort likes peak for creator ${userId}: peakLikesSingleShort=${metrics.peakLikesSingleShort}`,
+      );
+
+      return {
+        peakLikesSingleShort: metrics.peakLikesSingleShort,
+        unlockedAchievements: evalResult.newlyUnlockedIds,
+      };
+    }
+
+    return {
+      peakLikesSingleShort: Number(metrics.peakLikesSingleShort || 0),
+      unlockedAchievements: [],
+    };
+  }
+
+  /**
+   * Task 38: Integrate FlickShort Share Events
+   * Connect share peaks on a short to Trending Clip (CRE_TRENDING_CLIP) and Share Magnet (CRE_SHARE_MAGNET)
+   */
+  async recordShortShared(
+    userId: string,
+    sharesCount: number,
+    options?: { shortId?: string },
+  ): Promise<{ peakSharesSingleShort: number; unlockedAchievements: string[] }> {
+    if (!userId || sharesCount < 0) return { peakSharesSingleShort: 0, unlockedAchievements: [] };
+
+    const metrics = await this.getOrCreateUserMetrics(userId);
+    if (sharesCount > Number(metrics.peakSharesSingleShort || 0)) {
+      metrics.peakSharesSingleShort = sharesCount;
+      await this.metricsRepo.save(metrics);
+
+      const totals = await this.pointsService.getMyTotals(userId);
+      const evalResult = await this.evaluationService.evaluateUser(userId, {
+        userLevel: totals.level,
+        metrics,
+      });
+
+      this.logger.log(
+        `Recorded FlickShort shares peak for creator ${userId}: peakSharesSingleShort=${metrics.peakSharesSingleShort}`,
+      );
+
+      return {
+        peakSharesSingleShort: metrics.peakSharesSingleShort,
+        unlockedAchievements: evalResult.newlyUnlockedIds,
+      };
+    }
+
+    return {
+      peakSharesSingleShort: Number(metrics.peakSharesSingleShort || 0),
+      unlockedAchievements: [],
+    };
+  }
+
+  /**
+   * Task 39: Integrate FlickShort View Events
+   * Connect cumulative or peak views on shorts to Reel Legend (CRE_REEL_LEGEND)
+   */
+  async recordShortViewed(
+    userId: string,
+    viewsCount: number,
+    options?: { shortId?: string },
+  ): Promise<{ peakViewsSingleShort: number; unlockedAchievements: string[] }> {
+    if (!userId || viewsCount < 0) return { peakViewsSingleShort: 0, unlockedAchievements: [] };
+
+    const metrics = await this.getOrCreateUserMetrics(userId);
+    if (viewsCount > Number(metrics.peakViewsSingleShort || 0)) {
+      metrics.peakViewsSingleShort = viewsCount;
+      await this.metricsRepo.save(metrics);
+
+      const totals = await this.pointsService.getMyTotals(userId);
+      const evalResult = await this.evaluationService.evaluateUser(userId, {
+        userLevel: totals.level,
+        metrics,
+      });
+
+      this.logger.log(
+        `Recorded FlickShort views peak for creator ${userId}: peakViewsSingleShort=${metrics.peakViewsSingleShort}`,
+      );
+
+      return {
+        peakViewsSingleShort: Number(metrics.peakViewsSingleShort || 0),
+        unlockedAchievements: evalResult.newlyUnlockedIds,
+      };
+    }
+
+    return {
+      peakViewsSingleShort: Number(metrics.peakViewsSingleShort || 0),
+      unlockedAchievements: [],
+    };
+  }
+
+  /**
+   * Task 40: Integrate Teammate / Social Connection Events
+   * Connect teammate connections to Squad Builder (SOC_SQUAD_BUILDER), Team Captain (SOC_TEAM_CAPTAIN),
+   * Club Legend (SOC_CLUB_LEGEND), Network King (SOC_NETWORK_KING), Matchmaker (SPC_MATCHMAKER)
+   */
+  async recordTeammatesConnected(
+    userId: string,
+    count = 1,
+    options?: { teammateUserId?: string; totalCount?: number; circleId?: string },
+  ): Promise<{ totalTeammatesConnected: number; unlockedAchievements: string[] }> {
+    if (!userId) return { totalTeammatesConnected: 0, unlockedAchievements: [] };
+
+    const metrics = await this.getOrCreateUserMetrics(userId);
+    if (options?.totalCount !== undefined && options.totalCount >= 0) {
+      metrics.teammatesConnectedCount = Math.max(
+        Number(metrics.teammatesConnectedCount || 0),
+        options.totalCount,
+      );
+    } else if (count > 0) {
+      metrics.teammatesConnectedCount =
+        Number(metrics.teammatesConnectedCount || 0) + count;
+    }
+
+    await this.metricsRepo.save(metrics);
+
+    const totals = await this.pointsService.getMyTotals(userId);
+    const evalResult = await this.evaluationService.evaluateUser(userId, {
+      userLevel: totals.level,
+      metrics,
+    });
+
+    this.logger.log(
+      `Recorded teammate connection for user ${userId}: count=${count}, total=${metrics.teammatesConnectedCount}`,
+    );
+
+    return {
+      totalTeammatesConnected: metrics.teammatesConnectedCount,
+      unlockedAchievements: evalResult.newlyUnlockedIds,
+    };
+  }
+
+  /**
+   * Creator Peak Stats Integration: Likes, Shares, Views (unified helper)
    */
   async recordShortStats(
     userId: string,
