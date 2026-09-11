@@ -78,7 +78,10 @@ export class UserService {
 
     // Check if the user has an existing profile pic and delete it
 
-    const bucketName = AWS_BUCKET_NAME;
+    const bucketName =
+      process.env.AWS_PROFILE_BUCKET_NAME ||
+      process.env.AWS_S3_BUCKET_NAME ||
+      AWS_BUCKET_NAME;
 
     if (userProfile.bucket_name && userProfile.profile_image_path) {
       try {

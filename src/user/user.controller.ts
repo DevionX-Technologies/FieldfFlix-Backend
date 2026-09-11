@@ -78,10 +78,13 @@ export class UserController {
       fileFilter: (_req, file, callback) => {
         if (!file) {
           callback(new NotFoundException('File Not Found'), false);
-        }
-        if (
-          file.mimetype.includes('image/jpeg') ||
-          file.mimetype.includes('png')
+        } else if (
+          file.mimetype.startsWith('image/') ||
+          file.mimetype.includes('jpeg') ||
+          file.mimetype.includes('jpg') ||
+          file.mimetype.includes('png') ||
+          file.mimetype.includes('webp') ||
+          file.mimetype.includes('heic')
         ) {
           callback(null, true);
         } else {

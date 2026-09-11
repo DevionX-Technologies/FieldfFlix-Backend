@@ -3,7 +3,7 @@ export const PROFILE_PIC_PATH = 'user/:userID/profilePic/:date';
 export const AWS_BUCKET_NAME =
   process.env.AWS_PROFILE_BUCKET_NAME ||
   process.env.AWS_S3_BUCKET_NAME ||
-  'fieldflicks-production-media';
+  'fieldflicks-media-assets';
 export const DURATION_TO_BACKTRACK_SECONDS = 30;
 export const MUX_API_BASE_URL = 'https://api.mux.com';
 export const HOURLY_RATE = 240;
