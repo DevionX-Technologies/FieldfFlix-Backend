@@ -27,6 +27,7 @@ import {
 import { APPROVED_ACHIEVEMENT_DEFINITIONS } from '../constant/achievement-catalog.constant';
 import { NotificationEntity } from '../notification/entities/notification.entity';
 import { User } from '../user/entities/user.entity';
+import { SocialMetricType } from './dto/social-event.dto';
 
 describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
   let mockDefinitionRepo: jest.Mocked<Repository<AchievementDefinition>>;
@@ -681,6 +682,241 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
   });
 
   // =========================================================================
+  // Task 36: Integrate FlickShort Upload Events
+  // =========================================================================
+  describe('Task 36: Backend Engine - Integrate FlickShort Upload Events', () => {
+    it('connects FlickShort upload events to First Reel (1), Highlight Reel (10), Content Machine (50)', async () => {
+      // 1 upload -> CRE_FIRST_REEL
+      const metrics1: Partial<UserAchievementMetrics> = {
+        userId: 'u_short_creator',
+        flickshortsUploadedCount: 0,
+      };
+      mockMetricsRepo.findOne.mockResolvedValue(metrics1 as any);
+      mockUserAchievementRepo.find.mockResolvedValue([]);
+
+      const res1 = await aggregatorService.recordShortUploaded('u_short_creator', 1, {
+        shortId: 'short-1',
+        recordingId: 'rec-1',
+      });
+      expect(res1.totalUploaded).toBe(1);
+      expect(res1.unlockedAchievements).toContain('CRE_FIRST_REEL');
+
+      // 10 uploads -> CRE_HIGHLIGHT_REEL
+      const metrics10: Partial<UserAchievementMetrics> = {
+        userId: 'u_short_creator',
+        flickshortsUploadedCount: 9,
+      };
+      mockMetricsRepo.findOne.mockResolvedValue(metrics10 as any);
+      const res10 = await aggregatorService.recordShortUploaded('u_short_creator', 1);
+      expect(res10.totalUploaded).toBe(10);
+      expect(res10.unlockedAchievements).toContain('CRE_HIGHLIGHT_REEL');
+
+      // 50 uploads -> CRE_CONTENT_MACHINE
+      const metrics50: Partial<UserAchievementMetrics> = {
+        userId: 'u_short_creator',
+        flickshortsUploadedCount: 49,
+      };
+      mockMetricsRepo.findOne.mockResolvedValue(metrics50 as any);
+      const res50 = await aggregatorService.recordShortUploaded('u_short_creator', 1);
+      expect(res50.totalUploaded).toBe(50);
+      expect(res50.unlockedAchievements).toContain('CRE_CONTENT_MACHINE');
+    });
+  });
+
+  // =========================================================================
+  // Task 37: Integrate FlickShort Like Events
+  // =========================================================================
+  describe('Task 37: Backend Engine - Integrate FlickShort Like Events', () => {
+    it('connects single-short likes peak to Crowd Pleaser (100) and Viral Sensation (1000)', async () => {
+      // Peak 100 likes -> CRE_CROWD_PLEASER
+      const metrics100: Partial<UserAchievementMetrics> = {
+        userId: 'u_like_creator',
+        peakLikesSingleShort: 50,
+      };
+      mockMetricsRepo.findOne.mockResolvedValue(metrics100 as any);
+      mockUserAchievementRepo.find.mockResolvedValue([]);
+
+      const res100 = await aggregatorService.recordShortLiked('u_like_creator', 100, {
+        shortId: 'short-popular',
+      });
+      expect(res100.peakLikesSingleShort).toBe(100);
+      expect(res100.unlockedAchievements).toContain('CRE_CROWD_PLEASER');
+
+      // Peak 1000 likes -> CRE_VIRAL_SENSATION
+      const metrics1000: Partial<UserAchievementMetrics> = {
+        userId: 'u_like_creator',
+        peakLikesSingleShort: 999,
+      };
+      mockMetricsRepo.findOne.mockResolvedValue(metrics1000 as any);
+      const res1000 = await aggregatorService.recordShortLiked('u_like_creator', 1000);
+      expect(res1000.peakLikesSingleShort).toBe(1000);
+      expect(res1000.unlockedAchievements).toContain('CRE_VIRAL_SENSATION');
+
+      // Lower like count on another short does not regress peak
+      mockMetricsRepo.findOne.mockResolvedValue({
+        userId: 'u_like_creator',
+        peakLikesSingleShort: 1000,
+      } as any);
+      const resLower = await aggregatorService.recordShortLiked('u_like_creator', 25);
+      expect(resLower.peakLikesSingleShort).toBe(1000);
+      expect(resLower.unlockedAchievements).toEqual([]);
+    });
+  });
+
+  // =========================================================================
+  // Task 38: Integrate FlickShort Share Events
+  // =========================================================================
+  describe('Task 38: Backend Engine - Integrate FlickShort Share Events', () => {
+    it('connects single-short shares peak to Trending Clip (25) and Share Magnet (250)', async () => {
+      // Peak 25 shares -> CRE_TRENDING_CLIP
+      const metrics25: Partial<UserAchievementMetrics> = {
+        userId: 'u_share_creator',
+        peakSharesSingleShort: 10,
+      };
+      mockMetricsRepo.findOne.mockResolvedValue(metrics25 as any);
+      mockUserAchievementRepo.find.mockResolvedValue([]);
+
+      const res25 = await aggregatorService.recordShortShared('u_share_creator', 25, {
+        shortId: 'short-viral-share',
+      });
+      expect(res25.peakSharesSingleShort).toBe(25);
+      expect(res25.unlockedAchievements).toContain('CRE_TRENDING_CLIP');
+
+      // Peak 250 shares -> CRE_SHARE_MAGNET
+      const metrics250: Partial<UserAchievementMetrics> = {
+        userId: 'u_share_creator',
+        peakSharesSingleShort: 240,
+      };
+      mockMetricsRepo.findOne.mockResolvedValue(metrics250 as any);
+      const res250 = await aggregatorService.recordShortShared('u_share_creator', 250);
+      expect(res250.peakSharesSingleShort).toBe(250);
+      expect(res250.unlockedAchievements).toContain('CRE_SHARE_MAGNET');
+
+      // Non-regression check on lower shares count
+      mockMetricsRepo.findOne.mockResolvedValue({
+        userId: 'u_share_creator',
+        peakSharesSingleShort: 250,
+      } as any);
+      const resLower = await aggregatorService.recordShortShared('u_share_creator', 5);
+      expect(resLower.peakSharesSingleShort).toBe(250);
+      expect(resLower.unlockedAchievements).toEqual([]);
+    });
+  });
+
+  // =========================================================================
+  // Task 39: Integrate FlickShort View Events
+  // =========================================================================
+  describe('Task 39: Backend Engine - Integrate FlickShort View Events', () => {
+    it('connects single-short views peak to Reel Legend (10,000)', async () => {
+      const metrics10k: Partial<UserAchievementMetrics> = {
+        userId: 'u_view_creator',
+        peakViewsSingleShort: 5000,
+      };
+      mockMetricsRepo.findOne.mockResolvedValue(metrics10k as any);
+      mockUserAchievementRepo.find.mockResolvedValue([]);
+
+      const res10k = await aggregatorService.recordShortViewed('u_view_creator', 10000, {
+        shortId: 'short-legend',
+      });
+      expect(res10k.peakViewsSingleShort).toBe(10000);
+      expect(res10k.unlockedAchievements).toContain('CRE_REEL_LEGEND');
+
+      // Lower view count on another short does not regress peak
+      mockMetricsRepo.findOne.mockResolvedValue({
+        userId: 'u_view_creator',
+        peakViewsSingleShort: 10000,
+      } as any);
+      const resLower = await aggregatorService.recordShortViewed('u_view_creator', 500);
+      expect(resLower.peakViewsSingleShort).toBe(10000);
+      expect(resLower.unlockedAchievements).toEqual([]);
+    });
+  });
+
+  // =========================================================================
+  // Task 40: Integrate Teammate Connection Events
+  // =========================================================================
+  describe('Task 40: Backend Engine - Integrate Teammate Connection Events', () => {
+    it('connects teammate connections to Squad Builder (5), Team Captain (20), Matchmaker (25), Club Legend (50), Network King (200)', async () => {
+      // 5 teammates -> SOC_SQUAD_BUILDER
+      mockMetricsRepo.findOne.mockResolvedValue({
+        userId: 'u_social_player',
+        teammatesConnectedCount: 4,
+      } as any);
+      mockUserAchievementRepo.find.mockResolvedValue([]);
+      const res5 = await aggregatorService.recordTeammatesConnected('u_social_player', 1);
+      expect(res5.totalTeammatesConnected).toBe(5);
+      expect(res5.unlockedAchievements).toContain('SOC_SQUAD_BUILDER');
+
+      // 20 teammates -> SOC_TEAM_CAPTAIN
+      mockMetricsRepo.findOne.mockResolvedValue({
+        userId: 'u_social_player',
+        teammatesConnectedCount: 19,
+      } as any);
+      const res20 = await aggregatorService.recordTeammatesConnected('u_social_player', 1);
+      expect(res20.totalTeammatesConnected).toBe(20);
+      expect(res20.unlockedAchievements).toContain('SOC_TEAM_CAPTAIN');
+
+      // 25 teammates -> SPC_MATCHMAKER
+      mockMetricsRepo.findOne.mockResolvedValue({
+        userId: 'u_social_player',
+        teammatesConnectedCount: 24,
+      } as any);
+      const res25 = await aggregatorService.recordTeammatesConnected('u_social_player', 1);
+      expect(res25.totalTeammatesConnected).toBe(25);
+      expect(res25.unlockedAchievements).toContain('SPC_MATCHMAKER');
+
+      // 50 teammates -> SOC_CLUB_LEGEND (using totalCount override)
+      mockMetricsRepo.findOne.mockResolvedValue({
+        userId: 'u_social_player',
+        teammatesConnectedCount: 30,
+      } as any);
+      const res50 = await aggregatorService.recordTeammatesConnected('u_social_player', 0, {
+        totalCount: 50,
+      });
+      expect(res50.totalTeammatesConnected).toBe(50);
+      expect(res50.unlockedAchievements).toContain('SOC_CLUB_LEGEND');
+
+      // 200 teammates -> SOC_NETWORK_KING (using totalCount override)
+      mockMetricsRepo.findOne.mockResolvedValue({
+        userId: 'u_social_player',
+        teammatesConnectedCount: 50,
+      } as any);
+      const res200 = await aggregatorService.recordTeammatesConnected('u_social_player', 0, {
+        totalCount: 200,
+      });
+      expect(res200.totalTeammatesConnected).toBe(200);
+      expect(res200.unlockedAchievements).toContain('SOC_NETWORK_KING');
+    });
+
+    it('supports generic recordSocialMetric for teammates, messages, and referrals', async () => {
+      // Teammates via generic metric
+      mockMetricsRepo.findOne.mockResolvedValue({
+        userId: 'u_social_player',
+        teammatesConnectedCount: 4,
+      } as any);
+      mockUserAchievementRepo.find.mockResolvedValue([]);
+      const resTeammates = await aggregatorService.recordSocialMetric('u_social_player', 'teammates', 5);
+      expect(resTeammates.unlockedAchievements).toContain('SOC_SQUAD_BUILDER');
+
+      // Messages via generic metric -> SOC_SOCIAL_BUTTERFLY (100)
+      mockMetricsRepo.findOne.mockResolvedValue({
+        userId: 'u_social_player',
+        messagesSentCount: 99,
+      } as any);
+      const resMessages = await aggregatorService.recordSocialMetric('u_social_player', 'messages', 100);
+      expect(resMessages.unlockedAchievements).toContain('SOC_SOCIAL_BUTTERFLY');
+
+      // Referrals via generic metric -> SOC_COMMUNITY_HERO (10)
+      mockMetricsRepo.findOne.mockResolvedValue({
+        userId: 'u_social_player',
+        referralsCompletedCount: 9,
+      } as any);
+      const resReferrals = await aggregatorService.recordSocialMetric('u_social_player', 'referrals', 10);
+      expect(resReferrals.unlockedAchievements).toContain('SOC_COMMUNITY_HERO');
+    });
+  });
+
+  // =========================================================================
   // Controller End-to-End Tests for Event Routes
   // =========================================================================
   describe('Achievements Controller API routes', () => {
@@ -770,6 +1006,101 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
       });
       expect(res.success).toBe(true);
       expect(res.streakDays).toBe(10);
+    });
+
+    it('POST /events/short-upload - delegates short upload event', async () => {
+      jest.spyOn(achievementsService, 'recordShortUploaded').mockResolvedValueOnce({
+        totalUploaded: 1,
+        unlockedAchievements: ['CRE_FIRST_REEL'],
+      });
+
+      const res = await achievementsController.recordShortUploadEvent(mockReq, {
+        userId: 'u_ctrl',
+        count: 1,
+        shortId: 'short-123',
+      });
+      expect(res.success).toBe(true);
+      expect(res.totalUploaded).toBe(1);
+      expect(res.unlockedAchievements).toContain('CRE_FIRST_REEL');
+    });
+
+    it('POST /events/short-like - delegates short like event', async () => {
+      jest.spyOn(achievementsService, 'recordShortLiked').mockResolvedValueOnce({
+        peakLikesSingleShort: 100,
+        unlockedAchievements: ['CRE_CROWD_PLEASER'],
+      });
+
+      const res = await achievementsController.recordShortLikeEvent(mockReq, {
+        userId: 'u_ctrl',
+        likesCount: 100,
+        shortId: 'short-123',
+      });
+      expect(res.success).toBe(true);
+      expect(res.peakLikesSingleShort).toBe(100);
+      expect(res.unlockedAchievements).toContain('CRE_CROWD_PLEASER');
+    });
+
+    it('POST /events/short-share - delegates short share event', async () => {
+      jest.spyOn(achievementsService, 'recordShortShared').mockResolvedValueOnce({
+        peakSharesSingleShort: 25,
+        unlockedAchievements: ['CRE_TRENDING_CLIP'],
+      });
+
+      const res = await achievementsController.recordShortShareEvent(mockReq, {
+        userId: 'u_ctrl',
+        sharesCount: 25,
+        shortId: 'short-123',
+      });
+      expect(res.success).toBe(true);
+      expect(res.peakSharesSingleShort).toBe(25);
+      expect(res.unlockedAchievements).toContain('CRE_TRENDING_CLIP');
+    });
+
+    it('POST /events/short-view - delegates short view event', async () => {
+      jest.spyOn(achievementsService, 'recordShortViewed').mockResolvedValueOnce({
+        peakViewsSingleShort: 10000,
+        unlockedAchievements: ['CRE_REEL_LEGEND'],
+      });
+
+      const res = await achievementsController.recordShortViewEvent(mockReq, {
+        userId: 'u_ctrl',
+        viewsCount: 10000,
+        shortId: 'short-123',
+      });
+      expect(res.success).toBe(true);
+      expect(res.peakViewsSingleShort).toBe(10000);
+      expect(res.unlockedAchievements).toContain('CRE_REEL_LEGEND');
+    });
+
+    it('POST /events/teammates - delegates teammates connection event', async () => {
+      jest.spyOn(achievementsService, 'recordTeammatesConnected').mockResolvedValueOnce({
+        totalTeammatesConnected: 5,
+        unlockedAchievements: ['SOC_SQUAD_BUILDER'],
+      });
+
+      const res = await achievementsController.recordTeammatesEvent(mockReq, {
+        userId: 'u_ctrl',
+        count: 1,
+      });
+      expect(res.success).toBe(true);
+      expect(res.totalTeammatesConnected).toBe(5);
+      expect(res.unlockedAchievements).toContain('SOC_SQUAD_BUILDER');
+    });
+
+    it('POST /events/social - delegates generic social event', async () => {
+      jest.spyOn(achievementsService, 'recordSocialMetric').mockResolvedValueOnce({
+        unlockedAchievements: ['SOC_COMMUNITY_HERO'],
+      });
+
+      const res = await achievementsController.recordSocialEvent(mockReq, {
+        userId: 'u_ctrl',
+        type: SocialMetricType.REFERRALS,
+        value: 10,
+      });
+      expect(res.success).toBe(true);
+      expect(res.type).toBe(SocialMetricType.REFERRALS);
+      expect(res.currentValue).toBe(10);
+      expect(res.unlockedAchievements).toContain('SOC_COMMUNITY_HERO');
     });
 
     it('POST /buffer/flush - triggers buffer flush', async () => {
