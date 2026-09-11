@@ -26,8 +26,18 @@ describe('FlickShortsService Achievement Telemetry Integration', () => {
     flickRepo = {
       findOne: jest.fn(),
       find: jest.fn(),
-      create: jest.fn().mockImplementation((dto) => ({ ...dto, id: 'short-123', createdAt: new Date() })),
-      save: jest.fn().mockImplementation((entity) => Promise.resolve({ ...entity, id: entity.id || 'short-123', createdAt: new Date() })),
+      create: jest.fn().mockImplementation((dto) => ({
+        ...dto,
+        id: 'short-123',
+        createdAt: new Date(),
+      })),
+      save: jest.fn().mockImplementation((entity) =>
+        Promise.resolve({
+          ...entity,
+          id: entity.id || 'short-123',
+          createdAt: new Date(),
+        }),
+      ),
       remove: jest.fn(),
     } as any;
 
@@ -44,7 +54,11 @@ describe('FlickShortsService Achievement Telemetry Integration', () => {
     } as any;
 
     userService = {
-      findOne: jest.fn().mockResolvedValue({ id: 'admin-1', phone_number: '+1234567890', name: 'Admin' }),
+      findOne: jest.fn().mockResolvedValue({
+        id: 'admin-1',
+        phone_number: '+1234567890',
+        name: 'Admin',
+      }),
     } as any;
 
     adminRole = {
@@ -67,8 +81,14 @@ describe('FlickShortsService Achievement Telemetry Integration', () => {
         FlickShortsService,
         { provide: getRepositoryToken(FlickShort), useValue: flickRepo },
         { provide: getRepositoryToken(Recording), useValue: recordingRepo },
-        { provide: getRepositoryToken(RecordingHighlights), useValue: highlightsRepo },
-        { provide: getRepositoryToken(SharedRecording), useValue: sharedRecordingRepo },
+        {
+          provide: getRepositoryToken(RecordingHighlights),
+          useValue: highlightsRepo,
+        },
+        {
+          provide: getRepositoryToken(SharedRecording),
+          useValue: sharedRecordingRepo,
+        },
         { provide: UserService, useValue: userService },
         { provide: AdminRoleService, useValue: adminRole },
         { provide: PointsService, useValue: pointsService },
@@ -98,10 +118,14 @@ describe('FlickShortsService Achievement Telemetry Integration', () => {
     });
 
     expect(result.id).toBe('short-123');
-    expect(achievementsService.recordShortUploaded).toHaveBeenCalledWith('admin-1', 1, {
-      shortId: 'short-123',
-      recordingId: 'rec-1',
-    });
+    expect(achievementsService.recordShortUploaded).toHaveBeenCalledWith(
+      'admin-1',
+      1,
+      {
+        shortId: 'short-123',
+        recordingId: 'rec-1',
+      },
+    );
   });
 
   it('createFromHighlight() dispatches recordShortUploaded to achievements service', async () => {
@@ -129,10 +153,14 @@ describe('FlickShortsService Achievement Telemetry Integration', () => {
     });
 
     expect(result.id).toBe('short-123');
-    expect(achievementsService.recordShortUploaded).toHaveBeenCalledWith('user-1', 1, {
-      shortId: 'short-123',
-      recordingId: 'rec-1',
-    });
+    expect(achievementsService.recordShortUploaded).toHaveBeenCalledWith(
+      'user-1',
+      1,
+      {
+        shortId: 'short-123',
+        recordingId: 'rec-1',
+      },
+    );
   });
 
   it('addLike() dispatches recordShortLiked to achievements service with current total likes', async () => {
@@ -151,9 +179,13 @@ describe('FlickShortsService Achievement Telemetry Integration', () => {
     const result = await service.addLike('viewer-1', 'short-1');
 
     expect(result.likesCount).toBe(1);
-    expect(achievementsService.recordShortLiked).toHaveBeenCalledWith('creator-1', 1, {
-      shortId: 'short-1',
-    });
+    expect(achievementsService.recordShortLiked).toHaveBeenCalledWith(
+      'creator-1',
+      1,
+      {
+        shortId: 'short-1',
+      },
+    );
   });
 
   it('addShare() increments sharesCount and dispatches recordShortShared', async () => {
@@ -172,9 +204,13 @@ describe('FlickShortsService Achievement Telemetry Integration', () => {
     const result = await service.addShare('short-1', 'sharer-1');
 
     expect(result.sharesCount).toBe(25);
-    expect(achievementsService.recordShortShared).toHaveBeenCalledWith('creator-1', 25, {
-      shortId: 'short-1',
-    });
+    expect(achievementsService.recordShortShared).toHaveBeenCalledWith(
+      'creator-1',
+      25,
+      {
+        shortId: 'short-1',
+      },
+    );
   });
 
   it('addView() increments viewsCount and dispatches recordShortViewed', async () => {
@@ -193,8 +229,12 @@ describe('FlickShortsService Achievement Telemetry Integration', () => {
     const result = await service.addView('short-1', 'viewer-1');
 
     expect(result.viewsCount).toBe(10000);
-    expect(achievementsService.recordShortViewed).toHaveBeenCalledWith('creator-1', 10000, {
-      shortId: 'short-1',
-    });
+    expect(achievementsService.recordShortViewed).toHaveBeenCalledWith(
+      'creator-1',
+      10000,
+      {
+        shortId: 'short-1',
+      },
+    );
   });
 });

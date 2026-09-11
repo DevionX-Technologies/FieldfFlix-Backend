@@ -31,14 +31,8 @@ import {
   MatchEventResponseDto,
   RecordMatchEventDto,
 } from './dto/match-event.dto';
-import {
-  GoalEventResponseDto,
-  RecordGoalEventDto,
-} from './dto/goal-event.dto';
-import {
-  MvpEventResponseDto,
-  RecordMvpEventDto,
-} from './dto/mvp-event.dto';
+import { GoalEventResponseDto, RecordGoalEventDto } from './dto/goal-event.dto';
+import { MvpEventResponseDto, RecordMvpEventDto } from './dto/mvp-event.dto';
 import {
   RecordStreakEventDto,
   StreakEventResponseDto,
@@ -84,7 +78,8 @@ export class AchievementsController {
   })
   @ApiResponse({
     status: HttpStatus.OK,
-    description: 'Achievement catalogue and summary statistics retrieved successfully',
+    description:
+      'Achievement catalogue and summary statistics retrieved successfully',
     type: GetAchievementsResponseDto,
   })
   @ApiResponse({
@@ -123,7 +118,8 @@ export class AchievementsController {
   })
   @ApiResponse({
     status: HttpStatus.BAD_REQUEST,
-    description: 'Achievement milestone requirements have not been met yet or achievement inactive',
+    description:
+      'Achievement milestone requirements have not been met yet or achievement inactive',
   })
   @ApiResponse({
     status: HttpStatus.UNAUTHORIZED,
@@ -135,7 +131,8 @@ export class AchievementsController {
   })
   @ApiResponse({
     status: HttpStatus.CONFLICT,
-    description: 'Achievement reward has already been claimed (idempotency guard)',
+    description:
+      'Achievement reward has already been claimed (idempotency guard)',
   })
   async claimReward(
     @Req() req: Request & { user: ILocalLoginPayload },
@@ -343,7 +340,8 @@ export class AchievementsController {
   @Post('events/short-like')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Record FlickShort like peak for Crowd Pleaser and Viral Sensation',
+    summary:
+      'Record FlickShort like peak for Crowd Pleaser and Viral Sensation',
     description:
       'Records highest single-short likes and evaluates Crowd Pleaser (100) and Viral Sensation (1000) milestones.',
   })
@@ -544,13 +542,14 @@ export class AchievementsController {
     @Body() dto: IngestMetricEventDto,
   ): Promise<IngestMetricResponseDto> {
     const targetUserId = dto.userId || req.user.user_id;
-    const result = await this.achievementsService.aggregatorService.ingestMetric({
-      userId: targetUserId,
-      metricKey: dto.metricKey,
-      incrementBy: dto.incrementBy,
-      value: dto.value,
-      flagValue: dto.flagValue,
-    });
+    const result =
+      await this.achievementsService.aggregatorService.ingestMetric({
+        userId: targetUserId,
+        metricKey: dto.metricKey,
+        incrementBy: dto.incrementBy,
+        value: dto.value,
+        flagValue: dto.flagValue,
+      });
 
     return {
       success: true,

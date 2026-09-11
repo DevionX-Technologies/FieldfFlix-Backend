@@ -9,7 +9,6 @@ import { DataSource, Repository } from 'typeorm';
 import { AchievementDefinition } from './entities/achievement-definition.entity';
 import { UserAchievementMetrics } from './entities/user-achievement-metrics.entity';
 import { UserAchievement } from './entities/user-achievement.entity';
-import { UserPoints } from '../points/entities/user-points.entity';
 import { PointsService } from '../points/points.service';
 import { AchievementsService } from './achievements.service';
 import { AchievementsController } from './achievements.controller';
@@ -33,7 +32,6 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
   let mockDefinitionRepo: jest.Mocked<Repository<AchievementDefinition>>;
   let mockUserAchievementRepo: jest.Mocked<Repository<UserAchievement>>;
   let mockMetricsRepo: jest.Mocked<Repository<UserAchievementMetrics>>;
-  let mockUserPointsRepo: jest.Mocked<Repository<UserPoints>>;
   let mockUserRepo: jest.Mocked<Repository<User>>;
   let mockNotificationRepo: jest.Mocked<Repository<NotificationEntity>>;
   let mockDataSource: jest.Mocked<DataSource>;
@@ -50,14 +48,15 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
   let achievementsController: AchievementsController;
   let eventConsumer: AchievementEventConsumer;
 
-  const mockDefinitions: AchievementDefinition[] = APPROVED_ACHIEVEMENT_DEFINITIONS.map(
-    (d) =>
-      ({
-        ...d,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }) as unknown as AchievementDefinition,
-  );
+  const mockDefinitions: AchievementDefinition[] =
+    APPROVED_ACHIEVEMENT_DEFINITIONS.map(
+      (d) =>
+        ({
+          ...d,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        }) as unknown as AchievementDefinition,
+    );
 
   beforeEach(() => {
     mockDefinitionRepo = {
@@ -71,17 +70,13 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
       find: jest.fn().mockResolvedValue([]),
       findOne: jest.fn(),
       create: jest.fn().mockImplementation((dto) => dto),
-      save: jest.fn().mockImplementation((entities) => Promise.resolve(entities)),
+      save: jest
+        .fn()
+        .mockImplementation((entities) => Promise.resolve(entities)),
       createQueryBuilder: jest.fn(),
     } as any;
 
     mockMetricsRepo = {
-      findOne: jest.fn().mockResolvedValue(null),
-      create: jest.fn().mockImplementation((dto) => dto),
-      save: jest.fn().mockImplementation((entity) => Promise.resolve(entity)),
-    } as any;
-
-    mockUserPointsRepo = {
       findOne: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockImplementation((dto) => dto),
       save: jest.fn().mockImplementation((entity) => Promise.resolve(entity)),
@@ -280,14 +275,55 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
         fastStartFlag: true,
       };
 
-      expect(evaluationService.getTelemetryMetricValue(metrics as any, 'matches_played')).toBe(5);
-      expect(evaluationService.getTelemetryMetricValue(metrics as any, 'goals_scored')).toBe(12);
-      expect(evaluationService.getTelemetryMetricValue(metrics as any, 'mvp_matches_count')).toBe(3);
-      expect(evaluationService.getTelemetryMetricValue(metrics as any, 'peak_likes_single_short')).toBe(150);
-      expect(evaluationService.getTelemetryMetricValue(metrics as any, 'crew_watch_rank')).toBe(1);
-      expect(evaluationService.getTelemetryMetricValue(metrics as any, 'social_rank_percentile')).toBe(1);
-      expect(evaluationService.getTelemetryMetricValue(metrics as any, 'beta_tester_flag')).toBe(1);
-      expect(evaluationService.getTelemetryMetricValue(metrics as any, 'player_level', 4)).toBe(4);
+      expect(
+        evaluationService.getTelemetryMetricValue(
+          metrics as any,
+          'matches_played',
+        ),
+      ).toBe(5);
+      expect(
+        evaluationService.getTelemetryMetricValue(
+          metrics as any,
+          'goals_scored',
+        ),
+      ).toBe(12);
+      expect(
+        evaluationService.getTelemetryMetricValue(
+          metrics as any,
+          'mvp_matches_count',
+        ),
+      ).toBe(3);
+      expect(
+        evaluationService.getTelemetryMetricValue(
+          metrics as any,
+          'peak_likes_single_short',
+        ),
+      ).toBe(150);
+      expect(
+        evaluationService.getTelemetryMetricValue(
+          metrics as any,
+          'crew_watch_rank',
+        ),
+      ).toBe(1);
+      expect(
+        evaluationService.getTelemetryMetricValue(
+          metrics as any,
+          'social_rank_percentile',
+        ),
+      ).toBe(1);
+      expect(
+        evaluationService.getTelemetryMetricValue(
+          metrics as any,
+          'beta_tester_flag',
+        ),
+      ).toBe(1);
+      expect(
+        evaluationService.getTelemetryMetricValue(
+          metrics as any,
+          'player_level',
+          4,
+        ),
+      ).toBe(4);
     });
   });
 
@@ -310,12 +346,24 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
     });
 
     it('formats human-readable progress counter text consistently', () => {
-      expect(evaluationService.formatProgressText(3, 10, 'matches_played')).toBe('3 / 10 Matches');
-      expect(evaluationService.formatProgressText(1, 1, 'matches_played')).toBe('1 / 1 Match');
-      expect(evaluationService.formatProgressText(25, 100, 'goals_scored')).toBe('25 / 100 Goals');
-      expect(evaluationService.formatProgressText(7, 7, 'streak_days')).toBe('7 / 7 Days');
-      expect(evaluationService.formatProgressText(3, 5, 'mvp_matches_count')).toBe('3 / 5 MVPs');
-      expect(evaluationService.formatProgressText(10, 25, 'player_level')).toBe('Level 10 / 25');
+      expect(
+        evaluationService.formatProgressText(3, 10, 'matches_played'),
+      ).toBe('3 / 10 Matches');
+      expect(evaluationService.formatProgressText(1, 1, 'matches_played')).toBe(
+        '1 / 1 Match',
+      );
+      expect(
+        evaluationService.formatProgressText(25, 100, 'goals_scored'),
+      ).toBe('25 / 100 Goals');
+      expect(evaluationService.formatProgressText(7, 7, 'streak_days')).toBe(
+        '7 / 7 Days',
+      );
+      expect(
+        evaluationService.formatProgressText(3, 5, 'mvp_matches_count'),
+      ).toBe('3 / 5 MVPs');
+      expect(evaluationService.formatProgressText(10, 25, 'player_level')).toBe(
+        'Level 10 / 25',
+      );
     });
   });
 
@@ -436,7 +484,10 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
           levelProgress: 0.2,
         });
 
-      const response = await rewardService.claimAchievementReward('u1', 'ATH_TURF_DEBUT');
+      const response = await rewardService.claimAchievementReward(
+        'u1',
+        'ATH_TURF_DEBUT',
+      );
 
       expect(response.achievementId).toBe('ATH_TURF_DEBUT');
       expect(response.xpAwarded).toBe(100);
@@ -458,12 +509,12 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
   // =========================================================================
   describe('Task 8: Backend Engine - Implement Achievement Claim Validation', () => {
     it('rejects claims when user ID or achievement ID is empty', async () => {
-      await expect(rewardService.claimAchievementReward('', 'ATH_TURF_DEBUT')).rejects.toThrow(
-        BadRequestException,
-      );
-      await expect(rewardService.claimAchievementReward('u1', '')).rejects.toThrow(
-        BadRequestException,
-      );
+      await expect(
+        rewardService.claimAchievementReward('', 'ATH_TURF_DEBUT'),
+      ).rejects.toThrow(BadRequestException);
+      await expect(
+        rewardService.claimAchievementReward('u1', ''),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('rejects claims when achievement definition does not exist (404)', async () => {
@@ -555,7 +606,11 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
   describe('Task 10: Backend Engine - Implement Metric Flush Strategy', () => {
     it('reliably flushes and persists buffered deltas to database without data loss', async () => {
       await bufferService.bufferIncrement('u_flush_1', 'matches_played', 5);
-      await bufferService.bufferPeak('u_flush_1', 'peak_likes_single_short', 500);
+      await bufferService.bufferPeak(
+        'u_flush_1',
+        'peak_likes_single_short',
+        500,
+      );
 
       const deltas = await bufferService.flushMetrics();
       expect(deltas.length).toBe(1);
@@ -587,7 +642,9 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
 
       await eventConsumer.handleAchievementUnlocked(event);
 
-      expect(mockFirebaseNotificationService.sendNotification).toHaveBeenCalledWith(
+      expect(
+        mockFirebaseNotificationService.sendNotification,
+      ).toHaveBeenCalledWith(
         expect.objectContaining({
           token: 'token_abc123',
           notification: {
@@ -614,7 +671,10 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
       mockMetricsRepo.findOne.mockResolvedValue(metrics as any);
       mockUserAchievementRepo.find.mockResolvedValue([]);
 
-      const result = await aggregatorService.recordMatchParticipation('u_match', 1);
+      const result = await aggregatorService.recordMatchParticipation(
+        'u_match',
+        1,
+      );
 
       expect(result.totalMatchesPlayed).toBe(10);
       expect(result.unlockedAchievements).toContain('ATH_REGULAR_STARTER');
@@ -672,7 +732,11 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
       mockMetricsRepo.findOne.mockResolvedValue(metrics as any);
       mockUserAchievementRepo.find.mockResolvedValue([]);
 
-      const result = await aggregatorService.recordStreakUpdated('u_streak', 10, 15);
+      const result = await aggregatorService.recordStreakUpdated(
+        'u_streak',
+        10,
+        15,
+      );
 
       expect(result.streakDays).toBe(10);
       expect(result.matchWinStreak).toBe(15);
@@ -694,10 +758,14 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
       mockMetricsRepo.findOne.mockResolvedValue(metrics1 as any);
       mockUserAchievementRepo.find.mockResolvedValue([]);
 
-      const res1 = await aggregatorService.recordShortUploaded('u_short_creator', 1, {
-        shortId: 'short-1',
-        recordingId: 'rec-1',
-      });
+      const res1 = await aggregatorService.recordShortUploaded(
+        'u_short_creator',
+        1,
+        {
+          shortId: 'short-1',
+          recordingId: 'rec-1',
+        },
+      );
       expect(res1.totalUploaded).toBe(1);
       expect(res1.unlockedAchievements).toContain('CRE_FIRST_REEL');
 
@@ -707,7 +775,10 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
         flickshortsUploadedCount: 9,
       };
       mockMetricsRepo.findOne.mockResolvedValue(metrics10 as any);
-      const res10 = await aggregatorService.recordShortUploaded('u_short_creator', 1);
+      const res10 = await aggregatorService.recordShortUploaded(
+        'u_short_creator',
+        1,
+      );
       expect(res10.totalUploaded).toBe(10);
       expect(res10.unlockedAchievements).toContain('CRE_HIGHLIGHT_REEL');
 
@@ -717,7 +788,10 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
         flickshortsUploadedCount: 49,
       };
       mockMetricsRepo.findOne.mockResolvedValue(metrics50 as any);
-      const res50 = await aggregatorService.recordShortUploaded('u_short_creator', 1);
+      const res50 = await aggregatorService.recordShortUploaded(
+        'u_short_creator',
+        1,
+      );
       expect(res50.totalUploaded).toBe(50);
       expect(res50.unlockedAchievements).toContain('CRE_CONTENT_MACHINE');
     });
@@ -736,9 +810,13 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
       mockMetricsRepo.findOne.mockResolvedValue(metrics100 as any);
       mockUserAchievementRepo.find.mockResolvedValue([]);
 
-      const res100 = await aggregatorService.recordShortLiked('u_like_creator', 100, {
-        shortId: 'short-popular',
-      });
+      const res100 = await aggregatorService.recordShortLiked(
+        'u_like_creator',
+        100,
+        {
+          shortId: 'short-popular',
+        },
+      );
       expect(res100.peakLikesSingleShort).toBe(100);
       expect(res100.unlockedAchievements).toContain('CRE_CROWD_PLEASER');
 
@@ -748,7 +826,10 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
         peakLikesSingleShort: 999,
       };
       mockMetricsRepo.findOne.mockResolvedValue(metrics1000 as any);
-      const res1000 = await aggregatorService.recordShortLiked('u_like_creator', 1000);
+      const res1000 = await aggregatorService.recordShortLiked(
+        'u_like_creator',
+        1000,
+      );
       expect(res1000.peakLikesSingleShort).toBe(1000);
       expect(res1000.unlockedAchievements).toContain('CRE_VIRAL_SENSATION');
 
@@ -757,7 +838,10 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
         userId: 'u_like_creator',
         peakLikesSingleShort: 1000,
       } as any);
-      const resLower = await aggregatorService.recordShortLiked('u_like_creator', 25);
+      const resLower = await aggregatorService.recordShortLiked(
+        'u_like_creator',
+        25,
+      );
       expect(resLower.peakLikesSingleShort).toBe(1000);
       expect(resLower.unlockedAchievements).toEqual([]);
     });
@@ -776,9 +860,13 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
       mockMetricsRepo.findOne.mockResolvedValue(metrics25 as any);
       mockUserAchievementRepo.find.mockResolvedValue([]);
 
-      const res25 = await aggregatorService.recordShortShared('u_share_creator', 25, {
-        shortId: 'short-viral-share',
-      });
+      const res25 = await aggregatorService.recordShortShared(
+        'u_share_creator',
+        25,
+        {
+          shortId: 'short-viral-share',
+        },
+      );
       expect(res25.peakSharesSingleShort).toBe(25);
       expect(res25.unlockedAchievements).toContain('CRE_TRENDING_CLIP');
 
@@ -788,7 +876,10 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
         peakSharesSingleShort: 240,
       };
       mockMetricsRepo.findOne.mockResolvedValue(metrics250 as any);
-      const res250 = await aggregatorService.recordShortShared('u_share_creator', 250);
+      const res250 = await aggregatorService.recordShortShared(
+        'u_share_creator',
+        250,
+      );
       expect(res250.peakSharesSingleShort).toBe(250);
       expect(res250.unlockedAchievements).toContain('CRE_SHARE_MAGNET');
 
@@ -797,7 +888,10 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
         userId: 'u_share_creator',
         peakSharesSingleShort: 250,
       } as any);
-      const resLower = await aggregatorService.recordShortShared('u_share_creator', 5);
+      const resLower = await aggregatorService.recordShortShared(
+        'u_share_creator',
+        5,
+      );
       expect(resLower.peakSharesSingleShort).toBe(250);
       expect(resLower.unlockedAchievements).toEqual([]);
     });
@@ -815,9 +909,13 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
       mockMetricsRepo.findOne.mockResolvedValue(metrics10k as any);
       mockUserAchievementRepo.find.mockResolvedValue([]);
 
-      const res10k = await aggregatorService.recordShortViewed('u_view_creator', 10000, {
-        shortId: 'short-legend',
-      });
+      const res10k = await aggregatorService.recordShortViewed(
+        'u_view_creator',
+        10000,
+        {
+          shortId: 'short-legend',
+        },
+      );
       expect(res10k.peakViewsSingleShort).toBe(10000);
       expect(res10k.unlockedAchievements).toContain('CRE_REEL_LEGEND');
 
@@ -826,7 +924,10 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
         userId: 'u_view_creator',
         peakViewsSingleShort: 10000,
       } as any);
-      const resLower = await aggregatorService.recordShortViewed('u_view_creator', 500);
+      const resLower = await aggregatorService.recordShortViewed(
+        'u_view_creator',
+        500,
+      );
       expect(resLower.peakViewsSingleShort).toBe(10000);
       expect(resLower.unlockedAchievements).toEqual([]);
     });
@@ -843,7 +944,10 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
         teammatesConnectedCount: 4,
       } as any);
       mockUserAchievementRepo.find.mockResolvedValue([]);
-      const res5 = await aggregatorService.recordTeammatesConnected('u_social_player', 1);
+      const res5 = await aggregatorService.recordTeammatesConnected(
+        'u_social_player',
+        1,
+      );
       expect(res5.totalTeammatesConnected).toBe(5);
       expect(res5.unlockedAchievements).toContain('SOC_SQUAD_BUILDER');
 
@@ -852,7 +956,10 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
         userId: 'u_social_player',
         teammatesConnectedCount: 19,
       } as any);
-      const res20 = await aggregatorService.recordTeammatesConnected('u_social_player', 1);
+      const res20 = await aggregatorService.recordTeammatesConnected(
+        'u_social_player',
+        1,
+      );
       expect(res20.totalTeammatesConnected).toBe(20);
       expect(res20.unlockedAchievements).toContain('SOC_TEAM_CAPTAIN');
 
@@ -861,7 +968,10 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
         userId: 'u_social_player',
         teammatesConnectedCount: 24,
       } as any);
-      const res25 = await aggregatorService.recordTeammatesConnected('u_social_player', 1);
+      const res25 = await aggregatorService.recordTeammatesConnected(
+        'u_social_player',
+        1,
+      );
       expect(res25.totalTeammatesConnected).toBe(25);
       expect(res25.unlockedAchievements).toContain('SPC_MATCHMAKER');
 
@@ -870,9 +980,13 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
         userId: 'u_social_player',
         teammatesConnectedCount: 30,
       } as any);
-      const res50 = await aggregatorService.recordTeammatesConnected('u_social_player', 0, {
-        totalCount: 50,
-      });
+      const res50 = await aggregatorService.recordTeammatesConnected(
+        'u_social_player',
+        0,
+        {
+          totalCount: 50,
+        },
+      );
       expect(res50.totalTeammatesConnected).toBe(50);
       expect(res50.unlockedAchievements).toContain('SOC_CLUB_LEGEND');
 
@@ -881,9 +995,13 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
         userId: 'u_social_player',
         teammatesConnectedCount: 50,
       } as any);
-      const res200 = await aggregatorService.recordTeammatesConnected('u_social_player', 0, {
-        totalCount: 200,
-      });
+      const res200 = await aggregatorService.recordTeammatesConnected(
+        'u_social_player',
+        0,
+        {
+          totalCount: 200,
+        },
+      );
       expect(res200.totalTeammatesConnected).toBe(200);
       expect(res200.unlockedAchievements).toContain('SOC_NETWORK_KING');
     });
@@ -895,7 +1013,11 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
         teammatesConnectedCount: 4,
       } as any);
       mockUserAchievementRepo.find.mockResolvedValue([]);
-      const resTeammates = await aggregatorService.recordSocialMetric('u_social_player', 'teammates', 5);
+      const resTeammates = await aggregatorService.recordSocialMetric(
+        'u_social_player',
+        'teammates',
+        5,
+      );
       expect(resTeammates.unlockedAchievements).toContain('SOC_SQUAD_BUILDER');
 
       // Messages via generic metric -> SOC_SOCIAL_BUTTERFLY (100)
@@ -903,15 +1025,25 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
         userId: 'u_social_player',
         messagesSentCount: 99,
       } as any);
-      const resMessages = await aggregatorService.recordSocialMetric('u_social_player', 'messages', 100);
-      expect(resMessages.unlockedAchievements).toContain('SOC_SOCIAL_BUTTERFLY');
+      const resMessages = await aggregatorService.recordSocialMetric(
+        'u_social_player',
+        'messages',
+        100,
+      );
+      expect(resMessages.unlockedAchievements).toContain(
+        'SOC_SOCIAL_BUTTERFLY',
+      );
 
       // Referrals via generic metric -> SOC_COMMUNITY_HERO (10)
       mockMetricsRepo.findOne.mockResolvedValue({
         userId: 'u_social_player',
         referralsCompletedCount: 9,
       } as any);
-      const resReferrals = await aggregatorService.recordSocialMetric('u_social_player', 'referrals', 10);
+      const resReferrals = await aggregatorService.recordSocialMetric(
+        'u_social_player',
+        'referrals',
+        10,
+      );
       expect(resReferrals.unlockedAchievements).toContain('SOC_COMMUNITY_HERO');
     });
   });
@@ -926,35 +1058,45 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
       mockUserAchievementRepo.find.mockResolvedValue([]);
       mockMetricsRepo.findOne.mockResolvedValue(null);
 
-      const response = await achievementsController.getAchievements(mockReq, {});
+      const response = await achievementsController.getAchievements(
+        mockReq,
+        {},
+      );
       expect(response.summary).toBeDefined();
       expect(response.summary.totalAchievements).toBe(46);
       expect(response.achievements.length).toBe(46);
     });
 
     it('POST /:id/claim - claims achievement reward', async () => {
-      jest.spyOn(achievementsService, 'claimAchievementReward').mockResolvedValueOnce({
-        achievementId: 'ATH_TURF_DEBUT',
-        title: 'Turf Debut',
-        xpAwarded: 100,
-        newTotalXp: 600,
-        previousLevel: 2,
-        currentLevel: 3,
-        currentLevelName: 'Gold',
-        levelUpOccurred: true,
-        claimedAt: new Date().toISOString(),
-      });
+      jest
+        .spyOn(achievementsService, 'claimAchievementReward')
+        .mockResolvedValueOnce({
+          achievementId: 'ATH_TURF_DEBUT',
+          title: 'Turf Debut',
+          xpAwarded: 100,
+          newTotalXp: 600,
+          previousLevel: 2,
+          currentLevel: 3,
+          currentLevelName: 'Gold',
+          levelUpOccurred: true,
+          claimedAt: new Date().toISOString(),
+        });
 
-      const response = await achievementsController.claimReward(mockReq, 'ATH_TURF_DEBUT');
+      const response = await achievementsController.claimReward(
+        mockReq,
+        'ATH_TURF_DEBUT',
+      );
       expect(response.achievementId).toBe('ATH_TURF_DEBUT');
       expect(response.xpAwarded).toBe(100);
     });
 
     it('POST /events/match - delegates match event', async () => {
-      jest.spyOn(achievementsService, 'recordMatchParticipation').mockResolvedValueOnce({
-        totalMatchesPlayed: 10,
-        unlockedAchievements: ['ATH_REGULAR_STARTER'],
-      });
+      jest
+        .spyOn(achievementsService, 'recordMatchParticipation')
+        .mockResolvedValueOnce({
+          totalMatchesPlayed: 10,
+          unlockedAchievements: ['ATH_REGULAR_STARTER'],
+        });
 
       const res = await achievementsController.recordMatchEvent(mockReq, {
         userId: 'u_ctrl',
@@ -965,10 +1107,12 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
     });
 
     it('POST /events/goal - delegates goal event', async () => {
-      jest.spyOn(achievementsService, 'recordGoalScored').mockResolvedValueOnce({
-        totalGoalsScored: 25,
-        unlockedAchievements: ['ATH_SHARP_SHOOTER'],
-      });
+      jest
+        .spyOn(achievementsService, 'recordGoalScored')
+        .mockResolvedValueOnce({
+          totalGoalsScored: 25,
+          unlockedAchievements: ['ATH_SHARP_SHOOTER'],
+        });
 
       const res = await achievementsController.recordGoalEvent(mockReq, {
         userId: 'u_ctrl',
@@ -979,10 +1123,12 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
     });
 
     it('POST /events/mvp - delegates mvp event', async () => {
-      jest.spyOn(achievementsService, 'recordMvpAwarded').mockResolvedValueOnce({
-        totalMvpMatchesCount: 5,
-        unlockedAchievements: ['ATH_MVP'],
-      });
+      jest
+        .spyOn(achievementsService, 'recordMvpAwarded')
+        .mockResolvedValueOnce({
+          totalMvpMatchesCount: 5,
+          unlockedAchievements: ['ATH_MVP'],
+        });
 
       const res = await achievementsController.recordMvpEvent(mockReq, {
         userId: 'u_ctrl',
@@ -993,11 +1139,13 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
     });
 
     it('POST /events/streak - delegates streak event', async () => {
-      jest.spyOn(achievementsService, 'recordStreakUpdated').mockResolvedValueOnce({
-        streakDays: 10,
-        matchWinStreak: 15,
-        unlockedAchievements: ['ATH_CONSISTENT_PLAYER'],
-      });
+      jest
+        .spyOn(achievementsService, 'recordStreakUpdated')
+        .mockResolvedValueOnce({
+          streakDays: 10,
+          matchWinStreak: 15,
+          unlockedAchievements: ['ATH_CONSISTENT_PLAYER'],
+        });
 
       const res = await achievementsController.recordStreakEvent(mockReq, {
         userId: 'u_ctrl',
@@ -1009,10 +1157,12 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
     });
 
     it('POST /events/short-upload - delegates short upload event', async () => {
-      jest.spyOn(achievementsService, 'recordShortUploaded').mockResolvedValueOnce({
-        totalUploaded: 1,
-        unlockedAchievements: ['CRE_FIRST_REEL'],
-      });
+      jest
+        .spyOn(achievementsService, 'recordShortUploaded')
+        .mockResolvedValueOnce({
+          totalUploaded: 1,
+          unlockedAchievements: ['CRE_FIRST_REEL'],
+        });
 
       const res = await achievementsController.recordShortUploadEvent(mockReq, {
         userId: 'u_ctrl',
@@ -1025,10 +1175,12 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
     });
 
     it('POST /events/short-like - delegates short like event', async () => {
-      jest.spyOn(achievementsService, 'recordShortLiked').mockResolvedValueOnce({
-        peakLikesSingleShort: 100,
-        unlockedAchievements: ['CRE_CROWD_PLEASER'],
-      });
+      jest
+        .spyOn(achievementsService, 'recordShortLiked')
+        .mockResolvedValueOnce({
+          peakLikesSingleShort: 100,
+          unlockedAchievements: ['CRE_CROWD_PLEASER'],
+        });
 
       const res = await achievementsController.recordShortLikeEvent(mockReq, {
         userId: 'u_ctrl',
@@ -1041,10 +1193,12 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
     });
 
     it('POST /events/short-share - delegates short share event', async () => {
-      jest.spyOn(achievementsService, 'recordShortShared').mockResolvedValueOnce({
-        peakSharesSingleShort: 25,
-        unlockedAchievements: ['CRE_TRENDING_CLIP'],
-      });
+      jest
+        .spyOn(achievementsService, 'recordShortShared')
+        .mockResolvedValueOnce({
+          peakSharesSingleShort: 25,
+          unlockedAchievements: ['CRE_TRENDING_CLIP'],
+        });
 
       const res = await achievementsController.recordShortShareEvent(mockReq, {
         userId: 'u_ctrl',
@@ -1057,10 +1211,12 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
     });
 
     it('POST /events/short-view - delegates short view event', async () => {
-      jest.spyOn(achievementsService, 'recordShortViewed').mockResolvedValueOnce({
-        peakViewsSingleShort: 10000,
-        unlockedAchievements: ['CRE_REEL_LEGEND'],
-      });
+      jest
+        .spyOn(achievementsService, 'recordShortViewed')
+        .mockResolvedValueOnce({
+          peakViewsSingleShort: 10000,
+          unlockedAchievements: ['CRE_REEL_LEGEND'],
+        });
 
       const res = await achievementsController.recordShortViewEvent(mockReq, {
         userId: 'u_ctrl',
@@ -1073,10 +1229,12 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
     });
 
     it('POST /events/teammates - delegates teammates connection event', async () => {
-      jest.spyOn(achievementsService, 'recordTeammatesConnected').mockResolvedValueOnce({
-        totalTeammatesConnected: 5,
-        unlockedAchievements: ['SOC_SQUAD_BUILDER'],
-      });
+      jest
+        .spyOn(achievementsService, 'recordTeammatesConnected')
+        .mockResolvedValueOnce({
+          totalTeammatesConnected: 5,
+          unlockedAchievements: ['SOC_SQUAD_BUILDER'],
+        });
 
       const res = await achievementsController.recordTeammatesEvent(mockReq, {
         userId: 'u_ctrl',
@@ -1088,9 +1246,11 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
     });
 
     it('POST /events/social - delegates generic social event', async () => {
-      jest.spyOn(achievementsService, 'recordSocialMetric').mockResolvedValueOnce({
-        unlockedAchievements: ['SOC_COMMUNITY_HERO'],
-      });
+      jest
+        .spyOn(achievementsService, 'recordSocialMetric')
+        .mockResolvedValueOnce({
+          unlockedAchievements: ['SOC_COMMUNITY_HERO'],
+        });
 
       const res = await achievementsController.recordSocialEvent(mockReq, {
         userId: 'u_ctrl',
@@ -1104,7 +1264,9 @@ describe('Achievements Module - Complete 15 Tasks Test Suite', () => {
     });
 
     it('POST /buffer/flush - triggers buffer flush', async () => {
-      jest.spyOn(achievementsService, 'flushMetricsBuffer').mockResolvedValueOnce([]);
+      jest
+        .spyOn(achievementsService, 'flushMetricsBuffer')
+        .mockResolvedValueOnce([]);
       jest.spyOn(achievementsService, 'getBufferStats').mockReturnValueOnce({
         isRedisConnected: false,
         pendingMemoryUsers: 0,

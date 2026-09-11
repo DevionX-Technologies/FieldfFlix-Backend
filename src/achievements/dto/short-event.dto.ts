@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+} from 'class-validator';
 
 // =========================================================================
 // Task 36: FlickShort Upload Event DTOs
@@ -174,7 +181,8 @@ export class RecordShortViewDto {
   userId: string;
 
   @ApiProperty({
-    description: 'Total views on the target FlickShort (or cumulative view count)',
+    description:
+      'Total views on the target FlickShort (or cumulative view count)',
     example: 10000,
   })
   @IsNumber()

@@ -91,7 +91,11 @@ export class AchievementsService implements OnModuleInit {
     metricKey: string,
     userLevel = 1,
   ): number {
-    return this.evaluationService.getTelemetryMetricValue(metrics, metricKey, userLevel);
+    return this.evaluationService.getTelemetryMetricValue(
+      metrics,
+      metricKey,
+      userLevel,
+    );
   }
 
   /**
@@ -102,7 +106,11 @@ export class AchievementsService implements OnModuleInit {
     target: number,
     metricKey: string,
   ): string {
-    return this.evaluationService.formatProgressText(current, target, metricKey);
+    return this.evaluationService.formatProgressText(
+      current,
+      target,
+      metricKey,
+    );
   }
 
   /**
@@ -134,7 +142,6 @@ export class AchievementsService implements OnModuleInit {
     let inProgressCount = 0;
     let lockedCount = 0;
     let unclaimedRewardsCount = 0;
-    let totalClaimedXp = 0;
 
     const items: UserAchievementItemDto[] = [];
 
@@ -151,10 +158,10 @@ export class AchievementsService implements OnModuleInit {
 
       let currentProgress = ua ? Number(ua.currentProgress) : 0;
       let isCompleted = ua ? Boolean(ua.isCompleted) : false;
-      let isRewardClaimed = ua ? Boolean(ua.isRewardClaimed) : false;
+      const isRewardClaimed = ua ? Boolean(ua.isRewardClaimed) : false;
       let status = ua ? ua.status : AchievementStatus.LOCKED;
       let completedAt = ua?.completedAt ? ua.completedAt.toISOString() : null;
-      let claimedAt = ua?.claimedAt ? ua.claimedAt.toISOString() : null;
+      const claimedAt = ua?.claimedAt ? ua.claimedAt.toISOString() : null;
 
       // Monotonic progression safeguard
       if (!isCompleted) {
@@ -179,14 +186,12 @@ export class AchievementsService implements OnModuleInit {
       }
 
       // Aggregate counters for summary statistics
-      if (status === AchievementStatus.CLAIMED) {
-        totalClaimedXp += def.xpReward;
-      } else if (status === AchievementStatus.UNLOCKED) {
+      if (status === AchievementStatus.UNLOCKED) {
         unlockedCount++;
         unclaimedRewardsCount++;
       } else if (status === AchievementStatus.IN_PROGRESS) {
         inProgressCount++;
-      } else {
+      } else if (status === AchievementStatus.LOCKED) {
         lockedCount++;
       }
 
@@ -275,9 +280,18 @@ export class AchievementsService implements OnModuleInit {
   async recordMatchParticipation(
     userId: string,
     matchesCount = 1,
-    options?: { matchId?: string; isRecorded?: boolean; sport?: string; turfId?: string },
+    options?: {
+      matchId?: string;
+      isRecorded?: boolean;
+      sport?: string;
+      turfId?: string;
+    },
   ) {
-    return this.aggregatorService.recordMatchParticipation(userId, matchesCount, options);
+    return this.aggregatorService.recordMatchParticipation(
+      userId,
+      matchesCount,
+      options,
+    );
   }
 
   /**
@@ -310,7 +324,11 @@ export class AchievementsService implements OnModuleInit {
     streakDays?: number,
     matchWinStreak?: number,
   ) {
-    return this.aggregatorService.recordStreakUpdated(userId, streakDays, matchWinStreak);
+    return this.aggregatorService.recordStreakUpdated(
+      userId,
+      streakDays,
+      matchWinStreak,
+    );
   }
 
   /**
@@ -343,7 +361,11 @@ export class AchievementsService implements OnModuleInit {
     sharesCount: number,
     options?: { shortId?: string },
   ) {
-    return this.aggregatorService.recordShortShared(userId, sharesCount, options);
+    return this.aggregatorService.recordShortShared(
+      userId,
+      sharesCount,
+      options,
+    );
   }
 
   /**
@@ -354,7 +376,11 @@ export class AchievementsService implements OnModuleInit {
     viewsCount: number,
     options?: { shortId?: string },
   ) {
-    return this.aggregatorService.recordShortViewed(userId, viewsCount, options);
+    return this.aggregatorService.recordShortViewed(
+      userId,
+      viewsCount,
+      options,
+    );
   }
 
   /**
@@ -363,9 +389,17 @@ export class AchievementsService implements OnModuleInit {
   async recordTeammatesConnected(
     userId: string,
     count = 1,
-    options?: { teammateUserId?: string; totalCount?: number; circleId?: string },
+    options?: {
+      teammateUserId?: string;
+      totalCount?: number;
+      circleId?: string;
+    },
   ) {
-    return this.aggregatorService.recordTeammatesConnected(userId, count, options);
+    return this.aggregatorService.recordTeammatesConnected(
+      userId,
+      count,
+      options,
+    );
   }
 
   /**

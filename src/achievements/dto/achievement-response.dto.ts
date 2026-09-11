@@ -10,7 +10,10 @@ import {
 } from '../../interface/achievement.interface';
 
 export class UserAchievementItemDto implements IUserAchievementItem {
-  @ApiProperty({ example: 'ATH_TURF_DEBUT', description: 'Unique achievement identifier' })
+  @ApiProperty({
+    example: 'ATH_TURF_DEBUT',
+    description: 'Unique achievement identifier',
+  })
   id: string;
 
   @ApiProperty({
@@ -31,21 +34,31 @@ export class UserAchievementItemDto implements IUserAchievementItem {
   title: string;
 
   @ApiProperty({
-    example: 'Play and complete your first match on a FieldFlicks enabled turf.',
+    example:
+      'Play and complete your first match on a FieldFlicks enabled turf.',
     description: 'Detailed description of milestone',
   })
   description: string;
 
-  @ApiProperty({ example: 'Play 1 Match', description: 'Action requirement label' })
+  @ApiProperty({
+    example: 'Play 1 Match',
+    description: 'Action requirement label',
+  })
   requirementText: string;
 
-  @ApiProperty({ example: 'matches_played', description: 'Telemetry metric tracking key' })
+  @ApiProperty({
+    example: 'matches_played',
+    description: 'Telemetry metric tracking key',
+  })
   metricKey: string;
 
   @ApiProperty({ example: 1, description: 'Current user progress value' })
   currentProgress: number;
 
-  @ApiProperty({ example: 1, description: 'Target threshold to complete milestone' })
+  @ApiProperty({
+    example: 1,
+    description: 'Target threshold to complete milestone',
+  })
   targetValue: number;
 
   @ApiProperty({
@@ -73,7 +86,10 @@ export class UserAchievementItemDto implements IUserAchievementItem {
   @ApiProperty({ example: '+100 XP', description: 'Formatted reward label' })
   rewardValue: string;
 
-  @ApiProperty({ example: true, description: 'Whether milestone requirement has been met' })
+  @ApiProperty({
+    example: true,
+    description: 'Whether milestone requirement has been met',
+  })
   isCompleted: boolean;
 
   @ApiProperty({
@@ -113,31 +129,50 @@ export class UserAchievementItemDto implements IUserAchievementItem {
 }
 
 export class AchievementSummaryDto implements IAchievementSummary {
-  @ApiProperty({ example: 46, description: 'Total active achievement definitions in catalog' })
+  @ApiProperty({
+    example: 46,
+    description: 'Total active achievement definitions in catalog',
+  })
   totalAchievements: number;
 
-  @ApiProperty({ example: 4, description: 'Count of completed achievements waiting to be claimed' })
+  @ApiProperty({
+    example: 4,
+    description: 'Count of completed achievements waiting to be claimed',
+  })
   unlockedCount: number;
 
-  @ApiProperty({ example: 8, description: 'Count of achievements currently in progress' })
+  @ApiProperty({
+    example: 8,
+    description: 'Count of achievements currently in progress',
+  })
   inProgressCount: number;
 
-  @ApiProperty({ example: 34, description: 'Count of locked achievements with 0 progress' })
+  @ApiProperty({
+    example: 34,
+    description: 'Count of locked achievements with 0 progress',
+  })
   lockedCount: number;
 
-  @ApiProperty({ example: 1250, description: 'Total lifetime XP earned by user from gamification' })
+  @ApiProperty({
+    example: 1250,
+    description: 'Total lifetime XP earned by user from gamification',
+  })
   totalXpEarned: number;
 
   @ApiProperty({
     example: 4,
-    description: 'Count of unclaimed achievement rewards requiring user claim CTA',
+    description:
+      'Count of unclaimed achievement rewards requiring user claim CTA',
   })
   unclaimedRewardsCount: number;
 
   @ApiProperty({ example: 5, description: 'Current player progression level' })
   currentLevel: number;
 
-  @ApiProperty({ example: 'Contender', description: 'Current player level tier title' })
+  @ApiProperty({
+    example: 'Contender',
+    description: 'Current player level tier title',
+  })
   currentLevelName: string;
 
   @ApiProperty({
@@ -155,7 +190,10 @@ export class AchievementSummaryDto implements IAchievementSummary {
 }
 
 export class GetAchievementsResponseDto implements IGetAchievementsResponse {
-  @ApiProperty({ type: AchievementSummaryDto, description: 'Summary gamification metrics' })
+  @ApiProperty({
+    type: AchievementSummaryDto,
+    description: 'Summary gamification metrics',
+  })
   summary: AchievementSummaryDto;
 
   @ApiProperty({
@@ -166,7 +204,10 @@ export class GetAchievementsResponseDto implements IGetAchievementsResponse {
 }
 
 export class ClaimAchievementResponseDto implements IClaimAchievementResponse {
-  @ApiProperty({ example: 'ATH_TURF_DEBUT', description: 'Claimed achievement ID' })
+  @ApiProperty({
+    example: 'ATH_TURF_DEBUT',
+    description: 'Claimed achievement ID',
+  })
   achievementId: string;
 
   @ApiProperty({ example: 'Turf Debut', description: 'Achievement title' })
@@ -175,21 +216,31 @@ export class ClaimAchievementResponseDto implements IClaimAchievementResponse {
   @ApiProperty({ example: 100, description: 'Amount of XP awarded' })
   xpAwarded: number;
 
-  @ApiProperty({ example: 1350, description: 'Updated total XP balance for user' })
+  @ApiProperty({
+    example: 1350,
+    description: 'Updated total XP balance for user',
+  })
   newTotalXp: number;
 
   @ApiProperty({ example: 4, description: 'Player level prior to claim' })
   previousLevel: number;
 
-  @ApiProperty({ example: 5, description: 'Player level after claim reward processing' })
+  @ApiProperty({
+    example: 5,
+    description: 'Player level after claim reward processing',
+  })
   currentLevel: number;
 
-  @ApiProperty({ example: 'Contender', description: 'Current level tier title' })
+  @ApiProperty({
+    example: 'Contender',
+    description: 'Current level tier title',
+  })
   currentLevelName: string;
 
   @ApiProperty({
     example: true,
-    description: 'Flag indicating whether claiming this reward triggered a level up',
+    description:
+      'Flag indicating whether claiming this reward triggered a level up',
   })
   levelUpOccurred: boolean;
 

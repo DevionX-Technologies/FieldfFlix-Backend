@@ -11,7 +11,8 @@ export const APPROVED_ACHIEVEMENT_DEFINITIONS: IAchievementDefinition[] = [
     category: AchievementCategory.ATHLETE,
     tier: AchievementTier.BRONZE,
     title: 'Turf Debut',
-    description: 'Play and complete your first match on a FieldFlicks enabled turf.',
+    description:
+      'Play and complete your first match on a FieldFlicks enabled turf.',
     requirementText: 'Play 1 Match',
     metricKey: 'matches_played',
     targetValue: 1,
@@ -81,7 +82,8 @@ export const APPROVED_ACHIEVEMENT_DEFINITIONS: IAchievementDefinition[] = [
     category: AchievementCategory.ATHLETE,
     tier: AchievementTier.SILVER,
     title: 'Consistent Player',
-    description: 'Maintain an active daily gameplay or winning streak of 10 days.',
+    description:
+      'Maintain an active daily gameplay or winning streak of 10 days.',
     requirementText: '10 Day Streak',
     metricKey: 'streak_days',
     targetValue: 10,
@@ -309,7 +311,8 @@ export const APPROVED_ACHIEVEMENT_DEFINITIONS: IAchievementDefinition[] = [
     category: AchievementCategory.SOCIAL,
     tier: AchievementTier.SILVER,
     title: 'Social Butterfly',
-    description: 'Send 100 messages within team chats and circle communications.',
+    description:
+      'Send 100 messages within team chats and circle communications.',
     requirementText: 'Send 100 Messages',
     metricKey: 'messages_sent_count',
     targetValue: 100,
@@ -337,7 +340,8 @@ export const APPROVED_ACHIEVEMENT_DEFINITIONS: IAchievementDefinition[] = [
     category: AchievementCategory.SOCIAL,
     tier: AchievementTier.PLATINUM,
     title: 'Community Legend',
-    description: 'Rank in the top 1% across social influence and activity metrics.',
+    description:
+      'Rank in the top 1% across social influence and activity metrics.',
     requirementText: 'Top 1% in Social Rank',
     metricKey: 'social_rank_percentile',
     targetValue: 1,
@@ -437,7 +441,8 @@ export const APPROVED_ACHIEVEMENT_DEFINITIONS: IAchievementDefinition[] = [
     category: AchievementCategory.SPECIAL,
     tier: AchievementTier.SPECIAL,
     title: 'Founding Member',
-    description: 'Participated as an official Beta Tester during platform launch.',
+    description:
+      'Participated as an official Beta Tester during platform launch.',
     requirementText: 'Beta Tester',
     metricKey: 'beta_tester_flag',
     targetValue: 1,
@@ -451,7 +456,8 @@ export const APPROVED_ACHIEVEMENT_DEFINITIONS: IAchievementDefinition[] = [
     category: AchievementCategory.SPECIAL,
     tier: AchievementTier.SPECIAL,
     title: 'Forever Legend',
-    description: 'Ultimate milestone honoring exceptional lifetime achievement.',
+    description:
+      'Ultimate milestone honoring exceptional lifetime achievement.',
     requirementText: 'Lifetime Achievement',
     metricKey: 'lifetime_legend_flag',
     targetValue: 1,
@@ -465,7 +471,8 @@ export const APPROVED_ACHIEVEMENT_DEFINITIONS: IAchievementDefinition[] = [
     category: AchievementCategory.SPECIAL,
     tier: AchievementTier.SPECIAL,
     title: 'Lightning Start',
-    description: 'Complete 3 matches and upload 1 highlight within your first 48 hours.',
+    description:
+      'Complete 3 matches and upload 1 highlight within your first 48 hours.',
     requirementText: 'Fast Start Milestone',
     metricKey: 'fast_start_flag',
     targetValue: 1,
@@ -521,7 +528,8 @@ export const APPROVED_ACHIEVEMENT_DEFINITIONS: IAchievementDefinition[] = [
     category: AchievementCategory.SPECIAL,
     tier: AchievementTier.SPECIAL,
     title: 'Rising Star',
-    description: 'Earn community upvotes and recognition in the regional leaderboards.',
+    description:
+      'Earn community upvotes and recognition in the regional leaderboards.',
     requirementText: 'Notable Community Milestone',
     metricKey: 'community_notable_flag',
     targetValue: 1,
@@ -549,7 +557,8 @@ export const APPROVED_ACHIEVEMENT_DEFINITIONS: IAchievementDefinition[] = [
     category: AchievementCategory.SPECIAL,
     tier: AchievementTier.SPECIAL,
     title: 'Flicks Icon',
-    description: 'Recognized as an iconic contributor across turf and community.',
+    description:
+      'Recognized as an iconic contributor across turf and community.',
     requirementText: 'Recognized Across the Community',
     metricKey: 'community_icon_flag',
     targetValue: 1,
@@ -621,7 +630,8 @@ export const APPROVED_ACHIEVEMENT_DEFINITIONS: IAchievementDefinition[] = [
     category: AchievementCategory.LEVEL_TIER,
     tier: AchievementTier.AMETHYST,
     title: 'Elite',
-    description: 'Top-tier athlete demonstrating consistent excellence (Levels 50–74).',
+    description:
+      'Top-tier athlete demonstrating consistent excellence (Levels 50–74).',
     requirementText: 'Levels 50–74',
     metricKey: 'player_level',
     targetValue: 50,
@@ -649,7 +659,8 @@ export const APPROVED_ACHIEVEMENT_DEFINITIONS: IAchievementDefinition[] = [
     category: AchievementCategory.LEVEL_TIER,
     tier: AchievementTier.PRESTIGE,
     title: 'Legend',
-    description: 'Highest achievable prestige level in FieldFlicks (Level 100+).',
+    description:
+      'Highest achievable prestige level in FieldFlicks (Level 100+).',
     requirementText: 'Level 100+',
     metricKey: 'player_level',
     targetValue: 100,

@@ -21,7 +21,9 @@ export class AchievementEventConsumer {
   ) {}
 
   @OnEvent(AchievementUnlockedEvent.EVENT_NAME, { async: true })
-  async handleAchievementUnlocked(event: AchievementUnlockedEvent): Promise<void> {
+  async handleAchievementUnlocked(
+    event: AchievementUnlockedEvent,
+  ): Promise<void> {
     const {
       userId,
       achievementId,
@@ -45,7 +47,9 @@ export class AchievementEventConsumer {
       });
 
       if (!user) {
-        this.logger.warn(`User ${userId} not found when dispatching achievement notification`);
+        this.logger.warn(
+          `User ${userId} not found when dispatching achievement notification`,
+        );
         return;
       }
 
@@ -109,7 +113,9 @@ export class AchievementEventConsumer {
         is_soft_delete: false,
       } as unknown as Partial<NotificationEntity>);
 
-      this.logger.log(`Dispatched unlock notifications for user ${userId} and achievement ${achievementId}`);
+      this.logger.log(
+        `Dispatched unlock notifications for user ${userId} and achievement ${achievementId}`,
+      );
     } catch (err) {
       this.logger.error(
         `Failed to process AchievementUnlockedEvent for user ${userId}: ${(err as Error)?.message ?? err}`,

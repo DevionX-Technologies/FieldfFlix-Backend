@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+} from 'class-validator';
 
 // =========================================================================
 // Task 40: Teammate / Social Connection Event DTOs
@@ -14,7 +22,8 @@ export class RecordTeammateConnectionDto {
   userId: string;
 
   @ApiPropertyOptional({
-    description: 'Number of newly connected teammates in this event (defaults to 1)',
+    description:
+      'Number of newly connected teammates in this event (defaults to 1)',
     example: 1,
     default: 1,
   })
@@ -24,7 +33,8 @@ export class RecordTeammateConnectionDto {
   count?: number;
 
   @ApiPropertyOptional({
-    description: 'Absolute total teammates connected count (if syncing full network size)',
+    description:
+      'Absolute total teammates connected count (if syncing full network size)',
     example: 20,
   })
   @IsNumber()
@@ -88,7 +98,8 @@ export class RecordSocialEventDto {
   @ApiProperty({
     enum: SocialMetricType,
     example: SocialMetricType.TEAMMATES,
-    description: 'Type of social metric being reported (teammates, messages, referrals)',
+    description:
+      'Type of social metric being reported (teammates, messages, referrals)',
   })
   @IsEnum(SocialMetricType)
   type: SocialMetricType;

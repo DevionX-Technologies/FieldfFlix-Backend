@@ -38,7 +38,11 @@ export class AchievementRewardService {
       throw new BadRequestException('User ID is required');
     }
 
-    if (!achievementId || typeof achievementId !== 'string' || !achievementId.trim()) {
+    if (
+      !achievementId ||
+      typeof achievementId !== 'string' ||
+      !achievementId.trim()
+    ) {
       throw new BadRequestException('Achievement ID is required');
     }
 
@@ -72,7 +76,10 @@ export class AchievementRewardService {
         .getOne();
 
       // Invariant 5.3: Idempotent claim check (reject double-claims with 409 Conflict)
-      if (ua && (ua.isRewardClaimed || ua.status === AchievementStatus.CLAIMED)) {
+      if (
+        ua &&
+        (ua.isRewardClaimed || ua.status === AchievementStatus.CLAIMED)
+      ) {
         throw new ConflictException(
           `Achievement reward for '${definition.title}' has already been claimed`,
         );
@@ -96,7 +103,8 @@ export class AchievementRewardService {
         telemetryValue,
       );
 
-      const isEligible = (ua && ua.isCompleted) || effectiveProgress >= targetVal;
+      const isEligible =
+        (ua && ua.isCompleted) || effectiveProgress >= targetVal;
 
       if (!isEligible) {
         throw new BadRequestException(

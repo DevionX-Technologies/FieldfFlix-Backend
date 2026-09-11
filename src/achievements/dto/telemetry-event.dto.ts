@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID } from 'class-validator';
+import {
+  IsBoolean,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+} from 'class-validator';
 
 export class IngestMetricEventDto {
   @ApiProperty({
@@ -19,7 +26,8 @@ export class IngestMetricEventDto {
   metricKey: string;
 
   @ApiPropertyOptional({
-    description: 'Delta amount to increment the metric by (for counter metrics)',
+    description:
+      'Delta amount to increment the metric by (for counter metrics)',
     example: 1,
     default: 1,
   })
@@ -44,7 +52,8 @@ export class IngestMetricEventDto {
   flagValue?: boolean;
 
   @ApiPropertyOptional({
-    description: 'Optional idempotency key or reference identifier to prevent duplicate processing',
+    description:
+      'Optional idempotency key or reference identifier to prevent duplicate processing',
     example: 'match_12345_usr_789',
   })
   @IsString()

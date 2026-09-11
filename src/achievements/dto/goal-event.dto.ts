@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsNumber, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+} from 'class-validator';
 
 export class RecordGoalEventDto {
   @ApiProperty({
@@ -43,7 +50,10 @@ export class GoalEventResponseDto {
   @ApiProperty({ example: 'd3b07384-d113-4a44-8d9e-0123456789ab' })
   userId: string;
 
-  @ApiProperty({ example: 26, description: 'Updated lifetime goals scored count' })
+  @ApiProperty({
+    example: 26,
+    description: 'Updated lifetime goals scored count',
+  })
   totalGoalsScored: number;
 
   @ApiProperty({

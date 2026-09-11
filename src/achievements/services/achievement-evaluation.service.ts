@@ -202,7 +202,12 @@ export class AchievementEvaluationService {
     },
   ): Promise<EvaluationResult> {
     if (!userId) {
-      return { userId, evaluatedCount: 0, newlyUnlockedIds: [], achievements: [] };
+      return {
+        userId,
+        evaluatedCount: 0,
+        newlyUnlockedIds: [],
+        achievements: [],
+      };
     }
 
     const whereDef: any = { isActive: true };
@@ -214,7 +219,10 @@ export class AchievementEvaluationService {
     }
 
     const [definitions, existingUAs, metrics] = await Promise.all([
-      this.definitionRepo.find({ where: whereDef, order: { displayOrder: 'ASC' } }),
+      this.definitionRepo.find({
+        where: whereDef,
+        order: { displayOrder: 'ASC' },
+      }),
       this.userAchievementRepo.find({ where: { userId } }),
       options?.metrics !== undefined
         ? Promise.resolve(options.metrics)
@@ -234,13 +242,17 @@ export class AchievementEvaluationService {
 
     for (const def of definitions) {
       const targetVal = Number(def.targetValue);
-      const telemetryVal = this.getTelemetryMetricValue(metrics, def.metricKey, userLevel);
+      const telemetryVal = this.getTelemetryMetricValue(
+        metrics,
+        def.metricKey,
+        userLevel,
+      );
       let ua = userAchievementMap.get(def.id);
 
       // Invariant 5.1: Non-regression monotonic progression
       let currentProgress = ua ? Number(ua.currentProgress) : 0;
       let isCompleted = ua ? Boolean(ua.isCompleted) : false;
-      let isRewardClaimed = ua ? Boolean(ua.isRewardClaimed) : false;
+      const isRewardClaimed = ua ? Boolean(ua.isRewardClaimed) : false;
 
       // If already claimed, status remains CLAIMED and completed remains true
       if (isRewardClaimed) {
@@ -284,7 +296,11 @@ export class AchievementEvaluationService {
       } else if (currentProgress > 0) {
         // T2 / T3: Transition to / remain IN_PROGRESS
         nextStatus = AchievementStatus.IN_PROGRESS;
-        if (!ua || ua.currentProgress !== currentProgress || ua.status !== nextStatus) {
+        if (
+          !ua ||
+          ua.currentProgress !== currentProgress ||
+          ua.status !== nextStatus
+        ) {
           shouldSave = true;
         }
       } else {

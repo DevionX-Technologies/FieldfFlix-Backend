@@ -11,6 +11,7 @@
 The FieldFlicks Achievement Engine powers gamification, player progression, and milestone rewards across athletic, creator, social, special, and tier categories.
 
 ### Key Architectural Pillars
+
 1. **Deterministic State Machine:** Every user-achievement pair follows a 4-state Finite State Machine:
    $$\text{LOCKED} \xrightarrow{\text{telemetry}} \text{IN\_PROGRESS} \xrightarrow{\text{threshold}} \text{UNLOCKED} \xrightarrow{\text{claim}} \text{CLAIMED}$$
 2. **Monotonic Forward Progression (Non-Regression):** Completed (`UNLOCKED` / `CLAIMED`) milestones cannot regress even if underlying telemetry metrics decrease (e.g. broken daily streaks or deleted content).
@@ -31,12 +32,14 @@ Retrieves the complete achievement catalog for the authenticated user, complete 
 - **Auth Required:** Yes (`Bearer <token>`)
 
 #### Query Parameters
-| Parameter | Type | Required | Description | Example |
-| :--- | :--- | :--- | :--- | :--- |
-| `category` | `string` | No | Filter by category (`athlete`, `creator`, `social`, `special`, `level_tier`) | `athlete` |
-| `status` | `string` | No | Filter by FSM status (`LOCKED`, `IN_PROGRESS`, `UNLOCKED`, `CLAIMED`) | `UNLOCKED` |
+
+| Parameter  | Type     | Required | Description                                                                  | Example    |
+| :--------- | :------- | :------- | :--------------------------------------------------------------------------- | :--------- |
+| `category` | `string` | No       | Filter by category (`athlete`, `creator`, `social`, `special`, `level_tier`) | `athlete`  |
+| `status`   | `string` | No       | Filter by FSM status (`LOCKED`, `IN_PROGRESS`, `UNLOCKED`, `CLAIMED`)        | `UNLOCKED` |
 
 #### Request Example
+
 ```http
 GET /api/v1/achievements?category=athlete HTTP/1.1
 Host: api.fieldflicks.com
@@ -44,6 +47,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
 #### Response Example (`200 OK`)
+
 ```json
 {
   "summary": {
@@ -140,11 +144,13 @@ Validates server-side that the achievement requirements have been satisfied, ato
 - **Auth Required:** Yes (`Bearer <token>`)
 
 #### URL Parameters
-| Parameter | Type | Required | Description | Example |
-| :--- | :--- | :--- | :--- | :--- |
-| `id` | `string` | Yes | Unique Achievement identifier | `ATH_REGULAR_STARTER` |
+
+| Parameter | Type     | Required | Description                   | Example               |
+| :-------- | :------- | :------- | :---------------------------- | :-------------------- |
+| `id`      | `string` | Yes      | Unique Achievement identifier | `ATH_REGULAR_STARTER` |
 
 #### Request Example
+
 ```http
 POST /api/v1/achievements/ATH_REGULAR_STARTER/claim HTTP/1.1
 Host: api.fieldflicks.com
@@ -152,6 +158,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
 #### Response Example (`200 OK`)
+
 ```json
 {
   "achievementId": "ATH_REGULAR_STARTER",
@@ -167,6 +174,7 @@ Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
 #### Error Responses
+
 - **`400 Bad Request`**: Milestone requirements not completed yet.
   ```json
   {
@@ -203,6 +211,7 @@ Connects match participation events to Athlete match-count achievements (`ATH_TU
 - **Auth Required:** Yes (`Bearer <token>`)
 
 #### Request Body
+
 ```json
 {
   "userId": "d3b07384-d113-4a44-8d9e-0123456789ab",
@@ -214,6 +223,7 @@ Connects match participation events to Athlete match-count achievements (`ATH_TU
 ```
 
 #### Response Example (`200 OK`)
+
 ```json
 {
   "success": true,
@@ -234,6 +244,7 @@ Connects goal-scoring telemetry to offensive achievements (`ATH_SHARP_SHOOTER`, 
 - **Auth Required:** Yes (`Bearer <token>`)
 
 #### Request Body
+
 ```json
 {
   "userId": "d3b07384-d113-4a44-8d9e-0123456789ab",
@@ -244,6 +255,7 @@ Connects goal-scoring telemetry to offensive achievements (`ATH_SHARP_SHOOTER`, 
 ```
 
 #### Response Example (`200 OK`)
+
 ```json
 {
   "success": true,
@@ -264,6 +276,7 @@ Connects MVP results to `ATH_MVP` (5 MVPs) and `ATH_TURF_LEGEND` (25 MVPs) miles
 - **Auth Required:** Yes (`Bearer <token>`)
 
 #### Request Body
+
 ```json
 {
   "userId": "d3b07384-d113-4a44-8d9e-0123456789ab",
@@ -274,6 +287,7 @@ Connects MVP results to `ATH_MVP` (5 MVPs) and `ATH_TURF_LEGEND` (25 MVPs) miles
 ```
 
 #### Response Example (`200 OK`)
+
 ```json
 {
   "success": true,
@@ -294,6 +308,7 @@ Connects win streak and daily activity streak information to `ATH_CONSISTENT_PLA
 - **Auth Required:** Yes (`Bearer <token>`)
 
 #### Request Body
+
 ```json
 {
   "userId": "d3b07384-d113-4a44-8d9e-0123456789ab",
@@ -303,6 +318,7 @@ Connects win streak and daily activity streak information to `ATH_CONSISTENT_PLA
 ```
 
 #### Response Example (`200 OK`)
+
 ```json
 {
   "success": true,
@@ -324,6 +340,7 @@ Supports direct or Redis-buffered metric increments and peak updates across crea
 - **Auth Required:** Yes (`Bearer <token>`)
 
 #### Request Body
+
 ```json
 {
   "userId": "d3b07384-d113-4a44-8d9e-0123456789ab",
@@ -333,6 +350,7 @@ Supports direct or Redis-buffered metric increments and peak updates across crea
 ```
 
 #### Response Example (`200 OK`)
+
 ```json
 {
   "success": true,
@@ -354,6 +372,7 @@ Immediately drains the Redis/in-memory metrics buffer and persists all pending i
 - **Auth Required:** Yes (`Bearer <token>`)
 
 #### Response Example (`200 OK`)
+
 ```json
 {
   "success": true,

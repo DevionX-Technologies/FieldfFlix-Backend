@@ -32,7 +32,9 @@ export class AchievementAggregatorService implements OnModuleInit {
   /**
    * Helper: Get or initialize metrics row for user
    */
-  async getOrCreateUserMetrics(userId: string): Promise<UserAchievementMetrics> {
+  async getOrCreateUserMetrics(
+    userId: string,
+  ): Promise<UserAchievementMetrics> {
     let metrics = await this.metricsRepo.findOne({ where: { userId } });
     if (!metrics) {
       metrics = this.metricsRepo.create({
@@ -105,21 +107,28 @@ export class AchievementAggregatorService implements OnModuleInit {
           }
 
           // Apply increments
-          if (increments.matches_played) metrics.matchesPlayed += increments.matches_played;
-          if (increments.goals_scored) metrics.goalsScored += increments.goals_scored;
-          if (increments.mvp_matches_count) metrics.mvpMatchesCount += increments.mvp_matches_count;
+          if (increments.matches_played)
+            metrics.matchesPlayed += increments.matches_played;
+          if (increments.goals_scored)
+            metrics.goalsScored += increments.goals_scored;
+          if (increments.mvp_matches_count)
+            metrics.mvpMatchesCount += increments.mvp_matches_count;
           if (increments.flickshorts_uploaded_count)
-            metrics.flickshortsUploadedCount += increments.flickshorts_uploaded_count;
+            metrics.flickshortsUploadedCount +=
+              increments.flickshorts_uploaded_count;
           if (increments.teammates_connected_count)
-            metrics.teammatesConnectedCount += increments.teammates_connected_count;
+            metrics.teammatesConnectedCount +=
+              increments.teammates_connected_count;
           if (increments.referrals_completed_count)
-            metrics.referralsCompletedCount += increments.referrals_completed_count;
+            metrics.referralsCompletedCount +=
+              increments.referrals_completed_count;
           if (increments.messages_sent_count)
             metrics.messagesSentCount += increments.messages_sent_count;
           if (increments.matches_recorded_count)
             metrics.matchesRecordedCount += increments.matches_recorded_count;
           if (increments.highlights_created_count)
-            metrics.highlightsCreatedCount += increments.highlights_created_count;
+            metrics.highlightsCreatedCount +=
+              increments.highlights_created_count;
 
           // Apply peaks (GREATEST)
           if (peaks.peak_likes_single_short !== undefined) {
@@ -141,7 +150,10 @@ export class AchievementAggregatorService implements OnModuleInit {
             );
           }
           if (peaks.streak_days !== undefined) {
-            metrics.streakDays = Math.max(Number(metrics.streakDays || 0), peaks.streak_days);
+            metrics.streakDays = Math.max(
+              Number(metrics.streakDays || 0),
+              peaks.streak_days,
+            );
           }
           if (peaks.match_win_streak !== undefined) {
             metrics.matchWinStreak = Math.max(
@@ -151,12 +163,15 @@ export class AchievementAggregatorService implements OnModuleInit {
           }
 
           // Apply flags
-          if (flags.beta_tester_flag !== undefined) metrics.betaTesterFlag = flags.beta_tester_flag;
+          if (flags.beta_tester_flag !== undefined)
+            metrics.betaTesterFlag = flags.beta_tester_flag;
           if (flags.lifetime_legend_flag !== undefined)
             metrics.lifetimeLegendFlag = flags.lifetime_legend_flag;
-          if (flags.fast_start_flag !== undefined) metrics.fastStartFlag = flags.fast_start_flag;
+          if (flags.fast_start_flag !== undefined)
+            metrics.fastStartFlag = flags.fast_start_flag;
           if (flags.exceptional_competitive_flag !== undefined)
-            metrics.exceptionalCompetitiveFlag = flags.exceptional_competitive_flag;
+            metrics.exceptionalCompetitiveFlag =
+              flags.exceptional_competitive_flag;
           if (flags.standout_content_flag !== undefined)
             metrics.standoutContentFlag = flags.standout_content_flag;
           if (flags.community_notable_flag !== undefined)
@@ -173,7 +188,9 @@ export class AchievementAggregatorService implements OnModuleInit {
 
         // Trigger evaluation for the user after flushing
         const totals = await this.pointsService.getMyTotals(userId);
-        await this.evaluationService.evaluateUser(userId, { userLevel: totals.level });
+        await this.evaluationService.evaluateUser(userId, {
+          userLevel: totals.level,
+        });
       } catch (err) {
         this.logger.error(
           `Failed to persist buffered delta for user ${userId}: ${(err as Error)?.message ?? err}`,
@@ -190,7 +207,12 @@ export class AchievementAggregatorService implements OnModuleInit {
   async recordMatchParticipation(
     userId: string,
     matchesCount = 1,
-    options?: { matchId?: string; isRecorded?: boolean; sport?: string; turfId?: string },
+    options?: {
+      matchId?: string;
+      isRecorded?: boolean;
+      sport?: string;
+      turfId?: string;
+    },
   ): Promise<{ totalMatchesPlayed: number; unlockedAchievements: string[] }> {
     if (!userId) return { totalMatchesPlayed: 0, unlockedAchievements: [] };
 
@@ -198,7 +220,8 @@ export class AchievementAggregatorService implements OnModuleInit {
     metrics.matchesPlayed = Number(metrics.matchesPlayed || 0) + matchesCount;
 
     if (options?.isRecorded) {
-      metrics.matchesRecordedCount = Number(metrics.matchesRecordedCount || 0) + matchesCount;
+      metrics.matchesRecordedCount =
+        Number(metrics.matchesRecordedCount || 0) + matchesCount;
     }
 
     await this.metricsRepo.save(metrics);
@@ -228,7 +251,8 @@ export class AchievementAggregatorService implements OnModuleInit {
     goalsCount = 1,
     options?: { matchId?: string; highlightId?: string },
   ): Promise<{ totalGoalsScored: number; unlockedAchievements: string[] }> {
-    if (!userId || goalsCount <= 0) return { totalGoalsScored: 0, unlockedAchievements: [] };
+    if (!userId || goalsCount <= 0)
+      return { totalGoalsScored: 0, unlockedAchievements: [] };
 
     const metrics = await this.getOrCreateUserMetrics(userId);
     metrics.goalsScored = Number(metrics.goalsScored || 0) + goalsCount;
@@ -241,7 +265,9 @@ export class AchievementAggregatorService implements OnModuleInit {
     });
 
     this.logger.log(
-      `Recorded goal scored for user ${userId}: +${goalsCount} goal(s). Total: ${metrics.goalsScored}`,
+      `Recorded goal scored for user ${userId}: +${goalsCount} goal(s). Total: ${metrics.goalsScored}${
+        options?.matchId ? ` (match: ${options.matchId})` : ''
+      }`,
     );
 
     return {
@@ -259,7 +285,8 @@ export class AchievementAggregatorService implements OnModuleInit {
     count = 1,
     options?: { matchId?: string; tournamentId?: string },
   ): Promise<{ totalMvpMatchesCount: number; unlockedAchievements: string[] }> {
-    if (!userId || count <= 0) return { totalMvpMatchesCount: 0, unlockedAchievements: [] };
+    if (!userId || count <= 0)
+      return { totalMvpMatchesCount: 0, unlockedAchievements: [] };
 
     const metrics = await this.getOrCreateUserMetrics(userId);
     metrics.mvpMatchesCount = Number(metrics.mvpMatchesCount || 0) + count;
@@ -272,7 +299,9 @@ export class AchievementAggregatorService implements OnModuleInit {
     });
 
     this.logger.log(
-      `Recorded MVP award for user ${userId}: +${count} MVP(s). Total: ${metrics.mvpMatchesCount}`,
+      `Recorded MVP award for user ${userId}: +${count} MVP(s). Total: ${metrics.mvpMatchesCount}${
+        options?.matchId ? ` (match: ${options.matchId})` : ''
+      }`,
     );
 
     return {
@@ -290,8 +319,13 @@ export class AchievementAggregatorService implements OnModuleInit {
     userId: string,
     streakDays?: number,
     matchWinStreak?: number,
-  ): Promise<{ streakDays: number; matchWinStreak: number; unlockedAchievements: string[] }> {
-    if (!userId) return { streakDays: 0, matchWinStreak: 0, unlockedAchievements: [] };
+  ): Promise<{
+    streakDays: number;
+    matchWinStreak: number;
+    unlockedAchievements: string[];
+  }> {
+    if (!userId)
+      return { streakDays: 0, matchWinStreak: 0, unlockedAchievements: [] };
 
     const metrics = await this.getOrCreateUserMetrics(userId);
 
@@ -331,10 +365,12 @@ export class AchievementAggregatorService implements OnModuleInit {
     count = 1,
     options?: { shortId?: string; recordingId?: string },
   ): Promise<{ totalUploaded: number; unlockedAchievements: string[] }> {
-    if (!userId || count <= 0) return { totalUploaded: 0, unlockedAchievements: [] };
+    if (!userId || count <= 0)
+      return { totalUploaded: 0, unlockedAchievements: [] };
 
     const metrics = await this.getOrCreateUserMetrics(userId);
-    metrics.flickshortsUploadedCount = Number(metrics.flickshortsUploadedCount || 0) + count;
+    metrics.flickshortsUploadedCount =
+      Number(metrics.flickshortsUploadedCount || 0) + count;
     await this.metricsRepo.save(metrics);
 
     const totals = await this.pointsService.getMyTotals(userId);
@@ -344,7 +380,9 @@ export class AchievementAggregatorService implements OnModuleInit {
     });
 
     this.logger.log(
-      `Recorded FlickShort upload for creator ${userId}: +${count} short(s). Total: ${metrics.flickshortsUploadedCount}`,
+      `Recorded FlickShort upload for creator ${userId}: +${count} short(s). Total: ${metrics.flickshortsUploadedCount}${
+        options?.shortId ? ` (short: ${options.shortId})` : ''
+      }`,
     );
 
     return {
@@ -362,7 +400,8 @@ export class AchievementAggregatorService implements OnModuleInit {
     likesCount: number,
     options?: { shortId?: string },
   ): Promise<{ peakLikesSingleShort: number; unlockedAchievements: string[] }> {
-    if (!userId || likesCount < 0) return { peakLikesSingleShort: 0, unlockedAchievements: [] };
+    if (!userId || likesCount < 0)
+      return { peakLikesSingleShort: 0, unlockedAchievements: [] };
 
     const metrics = await this.getOrCreateUserMetrics(userId);
     if (likesCount > Number(metrics.peakLikesSingleShort || 0)) {
@@ -376,13 +415,19 @@ export class AchievementAggregatorService implements OnModuleInit {
       });
 
       this.logger.log(
-        `Recorded FlickShort likes peak for creator ${userId}: peakLikesSingleShort=${metrics.peakLikesSingleShort}`,
+        `Recorded FlickShort likes peak for creator ${userId}: peakLikesSingleShort=${metrics.peakLikesSingleShort}${
+          options?.shortId ? ` (short: ${options.shortId})` : ''
+        }`,
       );
 
       return {
         peakLikesSingleShort: metrics.peakLikesSingleShort,
         unlockedAchievements: evalResult.newlyUnlockedIds,
       };
+    }
+
+    if (options?.shortId) {
+      this.logger.debug?.(`FlickShort ${options.shortId} like below peak`);
     }
 
     return {
@@ -399,8 +444,12 @@ export class AchievementAggregatorService implements OnModuleInit {
     userId: string,
     sharesCount: number,
     options?: { shortId?: string },
-  ): Promise<{ peakSharesSingleShort: number; unlockedAchievements: string[] }> {
-    if (!userId || sharesCount < 0) return { peakSharesSingleShort: 0, unlockedAchievements: [] };
+  ): Promise<{
+    peakSharesSingleShort: number;
+    unlockedAchievements: string[];
+  }> {
+    if (!userId || sharesCount < 0)
+      return { peakSharesSingleShort: 0, unlockedAchievements: [] };
 
     const metrics = await this.getOrCreateUserMetrics(userId);
     if (sharesCount > Number(metrics.peakSharesSingleShort || 0)) {
@@ -414,13 +463,19 @@ export class AchievementAggregatorService implements OnModuleInit {
       });
 
       this.logger.log(
-        `Recorded FlickShort shares peak for creator ${userId}: peakSharesSingleShort=${metrics.peakSharesSingleShort}`,
+        `Recorded FlickShort shares peak for creator ${userId}: peakSharesSingleShort=${metrics.peakSharesSingleShort}${
+          options?.shortId ? ` (short: ${options.shortId})` : ''
+        }`,
       );
 
       return {
         peakSharesSingleShort: metrics.peakSharesSingleShort,
         unlockedAchievements: evalResult.newlyUnlockedIds,
       };
+    }
+
+    if (options?.shortId) {
+      this.logger.debug?.(`FlickShort ${options.shortId} share below peak`);
     }
 
     return {
@@ -438,7 +493,8 @@ export class AchievementAggregatorService implements OnModuleInit {
     viewsCount: number,
     options?: { shortId?: string },
   ): Promise<{ peakViewsSingleShort: number; unlockedAchievements: string[] }> {
-    if (!userId || viewsCount < 0) return { peakViewsSingleShort: 0, unlockedAchievements: [] };
+    if (!userId || viewsCount < 0)
+      return { peakViewsSingleShort: 0, unlockedAchievements: [] };
 
     const metrics = await this.getOrCreateUserMetrics(userId);
     if (viewsCount > Number(metrics.peakViewsSingleShort || 0)) {
@@ -452,13 +508,19 @@ export class AchievementAggregatorService implements OnModuleInit {
       });
 
       this.logger.log(
-        `Recorded FlickShort views peak for creator ${userId}: peakViewsSingleShort=${metrics.peakViewsSingleShort}`,
+        `Recorded FlickShort views peak for creator ${userId}: peakViewsSingleShort=${metrics.peakViewsSingleShort}${
+          options?.shortId ? ` (short: ${options.shortId})` : ''
+        }`,
       );
 
       return {
         peakViewsSingleShort: Number(metrics.peakViewsSingleShort || 0),
         unlockedAchievements: evalResult.newlyUnlockedIds,
       };
+    }
+
+    if (options?.shortId) {
+      this.logger.debug?.(`FlickShort ${options.shortId} view below peak`);
     }
 
     return {
@@ -475,9 +537,17 @@ export class AchievementAggregatorService implements OnModuleInit {
   async recordTeammatesConnected(
     userId: string,
     count = 1,
-    options?: { teammateUserId?: string; totalCount?: number; circleId?: string },
-  ): Promise<{ totalTeammatesConnected: number; unlockedAchievements: string[] }> {
-    if (!userId) return { totalTeammatesConnected: 0, unlockedAchievements: [] };
+    options?: {
+      teammateUserId?: string;
+      totalCount?: number;
+      circleId?: string;
+    },
+  ): Promise<{
+    totalTeammatesConnected: number;
+    unlockedAchievements: string[];
+  }> {
+    if (!userId)
+      return { totalTeammatesConnected: 0, unlockedAchievements: [] };
 
     const metrics = await this.getOrCreateUserMetrics(userId);
     if (options?.totalCount !== undefined && options.totalCount >= 0) {
@@ -520,15 +590,24 @@ export class AchievementAggregatorService implements OnModuleInit {
     const metrics = await this.getOrCreateUserMetrics(userId);
     let changed = false;
 
-    if (stats.likes !== undefined && stats.likes > Number(metrics.peakLikesSingleShort || 0)) {
+    if (
+      stats.likes !== undefined &&
+      stats.likes > Number(metrics.peakLikesSingleShort || 0)
+    ) {
       metrics.peakLikesSingleShort = stats.likes;
       changed = true;
     }
-    if (stats.shares !== undefined && stats.shares > Number(metrics.peakSharesSingleShort || 0)) {
+    if (
+      stats.shares !== undefined &&
+      stats.shares > Number(metrics.peakSharesSingleShort || 0)
+    ) {
       metrics.peakSharesSingleShort = stats.shares;
       changed = true;
     }
-    if (stats.views !== undefined && stats.views > Number(metrics.peakViewsSingleShort || 0)) {
+    if (
+      stats.views !== undefined &&
+      stats.views > Number(metrics.peakViewsSingleShort || 0)
+    ) {
       metrics.peakViewsSingleShort = stats.views;
       changed = true;
     }
@@ -564,9 +643,11 @@ export class AchievementAggregatorService implements OnModuleInit {
         value,
       );
     } else if (type === 'messages') {
-      metrics.messagesSentCount = Number(metrics.messagesSentCount || 0) + value;
+      metrics.messagesSentCount =
+        Number(metrics.messagesSentCount || 0) + value;
     } else if (type === 'referrals') {
-      metrics.referralsCompletedCount = Number(metrics.referralsCompletedCount || 0) + value;
+      metrics.referralsCompletedCount =
+        Number(metrics.referralsCompletedCount || 0) + value;
     }
 
     await this.metricsRepo.save(metrics);
@@ -591,11 +672,22 @@ export class AchievementAggregatorService implements OnModuleInit {
     flagValue?: boolean;
     useBuffer?: boolean;
   }): Promise<{ currentMetricValue: number; unlockedAchievements: string[] }> {
-    const { userId, metricKey, incrementBy, value, flagValue, useBuffer = false } = args;
+    const {
+      userId,
+      metricKey,
+      incrementBy,
+      value,
+      flagValue,
+      useBuffer = false,
+    } = args;
 
     if (useBuffer) {
       if (incrementBy !== undefined) {
-        await this.bufferService.bufferIncrement(userId, metricKey, incrementBy);
+        await this.bufferService.bufferIncrement(
+          userId,
+          metricKey,
+          incrementBy,
+        );
       } else if (value !== undefined) {
         await this.bufferService.bufferPeak(userId, metricKey, value);
       } else if (flagValue !== undefined) {
@@ -609,19 +701,24 @@ export class AchievementAggregatorService implements OnModuleInit {
     let currentVal = 0;
 
     if (metricKey === 'matches_played') {
-      metrics.matchesPlayed = Number(metrics.matchesPlayed || 0) + (incrementBy ?? 1);
+      metrics.matchesPlayed =
+        Number(metrics.matchesPlayed || 0) + (incrementBy ?? 1);
       currentVal = metrics.matchesPlayed;
     } else if (metricKey === 'goals_scored') {
-      metrics.goalsScored = Number(metrics.goalsScored || 0) + (incrementBy ?? 1);
+      metrics.goalsScored =
+        Number(metrics.goalsScored || 0) + (incrementBy ?? 1);
       currentVal = metrics.goalsScored;
     } else if (metricKey === 'mvp_matches_count') {
-      metrics.mvpMatchesCount = Number(metrics.mvpMatchesCount || 0) + (incrementBy ?? 1);
+      metrics.mvpMatchesCount =
+        Number(metrics.mvpMatchesCount || 0) + (incrementBy ?? 1);
       currentVal = metrics.mvpMatchesCount;
     } else if (metricKey === 'streak_days') {
-      metrics.streakDays = value ?? (Number(metrics.streakDays || 0) + (incrementBy ?? 1));
+      metrics.streakDays =
+        value ?? Number(metrics.streakDays || 0) + (incrementBy ?? 1);
       currentVal = metrics.streakDays;
     } else if (metricKey === 'match_win_streak') {
-      metrics.matchWinStreak = value ?? (Number(metrics.matchWinStreak || 0) + (incrementBy ?? 1));
+      metrics.matchWinStreak =
+        value ?? Number(metrics.matchWinStreak || 0) + (incrementBy ?? 1);
       currentVal = metrics.matchWinStreak;
     } else if (metricKey === 'flickshorts_uploaded_count') {
       metrics.flickshortsUploadedCount =
@@ -647,7 +744,8 @@ export class AchievementAggregatorService implements OnModuleInit {
       currentVal = metrics.peakViewsSingleShort;
     } else if (metricKey === 'teammates_connected_count') {
       metrics.teammatesConnectedCount =
-        value ?? (Number(metrics.teammatesConnectedCount || 0) + (incrementBy ?? 1));
+        value ??
+        Number(metrics.teammatesConnectedCount || 0) + (incrementBy ?? 1);
       currentVal = metrics.teammatesConnectedCount;
     } else if (metricKey === 'referrals_completed_count') {
       metrics.referralsCompletedCount =
@@ -667,15 +765,21 @@ export class AchievementAggregatorService implements OnModuleInit {
       currentVal = metrics.highlightsCreatedCount;
     } else if (flagValue !== undefined) {
       if (metricKey === 'beta_tester_flag') metrics.betaTesterFlag = flagValue;
-      if (metricKey === 'lifetime_legend_flag') metrics.lifetimeLegendFlag = flagValue;
+      if (metricKey === 'lifetime_legend_flag')
+        metrics.lifetimeLegendFlag = flagValue;
       if (metricKey === 'fast_start_flag') metrics.fastStartFlag = flagValue;
       if (metricKey === 'exceptional_competitive_flag')
         metrics.exceptionalCompetitiveFlag = flagValue;
-      if (metricKey === 'standout_content_flag') metrics.standoutContentFlag = flagValue;
-      if (metricKey === 'community_notable_flag') metrics.communityNotableFlag = flagValue;
-      if (metricKey === 'sustained_activity_flag') metrics.sustainedActivityFlag = flagValue;
-      if (metricKey === 'community_icon_flag') metrics.communityIconFlag = flagValue;
-      if (metricKey === 'legacy_contribution_flag') metrics.legacyContributionFlag = flagValue;
+      if (metricKey === 'standout_content_flag')
+        metrics.standoutContentFlag = flagValue;
+      if (metricKey === 'community_notable_flag')
+        metrics.communityNotableFlag = flagValue;
+      if (metricKey === 'sustained_activity_flag')
+        metrics.sustainedActivityFlag = flagValue;
+      if (metricKey === 'community_icon_flag')
+        metrics.communityIconFlag = flagValue;
+      if (metricKey === 'legacy_contribution_flag')
+        metrics.legacyContributionFlag = flagValue;
       currentVal = flagValue ? 1 : 0;
     }
 

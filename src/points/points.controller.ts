@@ -65,7 +65,8 @@ export class PointsController {
    */
   @Get('leaderboard')
   @ApiOperation({
-    summary: 'Leaderboard for a period (daily / today / weekly / monthly / all)',
+    summary:
+      'Leaderboard for a period (daily / today / weekly / monthly / all)',
   })
   async getLeaderboard(
     @Req() req: Request & { user: ILocalLoginPayload },

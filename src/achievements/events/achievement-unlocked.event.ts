@@ -1,4 +1,7 @@
-import { AchievementCategory, AchievementTier } from 'src/interface/achievement.interface';
+import {
+  AchievementCategory,
+  AchievementTier,
+} from 'src/interface/achievement.interface';
 
 export class AchievementUnlockedEvent {
   public static readonly EVENT_NAME = 'achievement.unlocked';
