@@ -57,6 +57,9 @@ export class FlickShort {
   @Column({ name: 'views_count', type: 'int', default: 0 })
   viewsCount: number;
 
+  @Column({ name: 'shares_count', type: 'int', default: 0, nullable: true })
+  sharesCount: number;
+
   /** User ids that currently like this short (used for toggle + per-user state). */
   @Column({ name: 'liked_user_ids', type: 'jsonb', default: () => "'[]'" })
   likedUserIds: string[];

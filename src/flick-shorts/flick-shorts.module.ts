@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { AdminModule } from 'src/admin/admin.module';
 import { UserModule } from 'src/user/user.module';
@@ -9,6 +9,7 @@ import { FlickShort } from './entities/flick-short.entity';
 import { FlickShortsService } from './flick-shorts.service';
 import { FlickShortsController } from './flick-shorts.controller';
 import { PointsModule } from 'src/points/points.module';
+import { AchievementsModule } from 'src/achievements/achievements.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { PointsModule } from 'src/points/points.module';
     UserModule,
     AdminModule,
     PointsModule,
+    forwardRef(() => AchievementsModule),
   ],
   providers: [FlickShortsService],
   controllers: [FlickShortsController],

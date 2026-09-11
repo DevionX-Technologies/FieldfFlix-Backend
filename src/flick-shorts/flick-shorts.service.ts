@@ -1,8 +1,11 @@
 import {
   BadRequestException,
   ForbiddenException,
+  forwardRef,
+  Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { deriveFlickSportFromTurf } from 'src/common/turf-flick-sport.util';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -24,6 +27,7 @@ import { PointsService } from 'src/points/points.service';
 import { PointEventType } from 'src/points/entities/point-event.entity';
 import { RecordingHighlights } from 'src/recording/entities/recording-highlights.entity';
 import { SharedRecording } from 'src/recording/entities/shared-recording.entity';
+import { AchievementsService } from 'src/achievements/achievements.service';
 
 export type FlickShortPublicDto = {
   id: string;
@@ -39,6 +43,7 @@ export type FlickShortPublicDto = {
   approved: boolean;
   likesCount: number;
   viewsCount: number;
+  sharesCount: number;
   likedByCurrentUser: boolean;
   comments: {
     id: string;
@@ -80,6 +85,9 @@ export class FlickShortsService {
     private readonly userService: UserService,
     private readonly adminRole: AdminRoleService,
     private readonly pointsService: PointsService,
+    @Inject(forwardRef(() => AchievementsService))
+    @Optional()
+    private readonly achievementsService?: AchievementsService,
   ) {}
 
   private toPublic(
@@ -101,6 +109,7 @@ export class FlickShortsService {
       approved: s.approved,
       likesCount: s.likesCount,
       viewsCount: s.viewsCount ?? 0,
+      sharesCount: s.sharesCount ?? 0,
       likedByCurrentUser: viewerUserId
         ? likedUserIds.includes(String(viewerUserId))
         : false,
@@ -177,6 +186,18 @@ export class FlickShortsService {
       comments: [],
     });
     const saved = await this.flickRepo.save(row);
+
+    if (saved.createdByUserId) {
+      void this.achievementsService
+        ?.recordShortUploaded(saved.createdByUserId, 1, {
+          shortId: saved.id,
+          recordingId: saved.recordingId,
+        })
+        .catch(() => {
+          /* achievement evaluation errors must not break upload */
+        });
+    }
+
     return this.toPublic(saved, userId);
   }
 
@@ -335,6 +356,17 @@ export class FlickShortsService {
       }
       throw err;
     }
+    if (saved.createdByUserId) {
+      void this.achievementsService
+        ?.recordShortUploaded(saved.createdByUserId, 1, {
+          shortId: saved.id,
+          recordingId: saved.recordingId,
+        })
+        .catch(() => {
+          /* achievement evaluation errors must not break upload */
+        });
+    }
+
     return this.toPublic(saved, userId);
   }
 
@@ -389,7 +421,43 @@ export class FlickShortsService {
     row.likedUserIds = Array.from(likedUserIds);
     row.likesCount = row.likedUserIds.length;
     const saved = await this.flickRepo.save(row);
+
+    if (saved.createdByUserId && saved.likesCount > 0) {
+      void this.achievementsService
+        ?.recordShortLiked(saved.createdByUserId, saved.likesCount, {
+          shortId: saved.id,
+        })
+        .catch(() => {
+          /* achievement evaluation errors must not break like */
+        });
+    }
+
     return this.toPublic(saved, userId);
+  }
+
+  async addShare(
+    id: string,
+    sharerUserId?: string | null,
+  ): Promise<FlickShortPublicDto> {
+    const row = await this.flickRepo.findOne({ where: { id } });
+    if (!row) throw new NotFoundException();
+    if (!row.approved) {
+      throw new NotFoundException();
+    }
+    row.sharesCount = (row.sharesCount ?? 0) + 1;
+    const saved = await this.flickRepo.save(row);
+
+    if (saved.createdByUserId && saved.sharesCount > 0) {
+      void this.achievementsService
+        ?.recordShortShared(saved.createdByUserId, saved.sharesCount, {
+          shortId: saved.id,
+        })
+        .catch(() => {
+          /* achievement evaluation errors must not break share */
+        });
+    }
+
+    return this.toPublic(saved, sharerUserId);
   }
 
   async addView(
@@ -403,6 +471,17 @@ export class FlickShortsService {
     }
     row.viewsCount = (row.viewsCount ?? 0) + 1;
     const saved = await this.flickRepo.save(row);
+
+    if (saved.createdByUserId && saved.viewsCount > 0) {
+      void this.achievementsService
+        ?.recordShortViewed(saved.createdByUserId, saved.viewsCount, {
+          shortId: saved.id,
+        })
+        .catch(() => {
+          /* achievement evaluation errors must not break view */
+        });
+    }
+
     return this.toPublic(saved, viewerUserId);
   }
 

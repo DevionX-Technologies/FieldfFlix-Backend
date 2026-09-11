@@ -97,6 +97,15 @@ export class FlickShortsController {
     return this.service.addLike(req.user.user_id, id);
   }
 
+  @Post(':id/share')
+  @Public()
+  addShare(
+    @Req() req: Request & { user?: ILocalLoginPayload },
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.service.addShare(id, req.user?.user_id);
+  }
+
   @Post(':id/view')
   @Public()
   addView(
