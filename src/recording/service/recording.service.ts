@@ -2354,7 +2354,6 @@ export class RecordingService {
     const recordings = await this.recordingRepository.find({
       where: {
         userId: userId,
-        status: Not('failed'),
       },
       relations: [
         'camera',
@@ -2750,6 +2749,8 @@ export class RecordingService {
             userId: recording.userId,
             owner_name: owner?.name || '',
             owner_phone: owner?.phone_number || '',
+            recording_name: recording.recording_name || null,
+            metadata: recording.metadata || null,
             turfId: recording.turfId || null,
             turf_detail: turfDetail,
             startTime: recording.startTime,

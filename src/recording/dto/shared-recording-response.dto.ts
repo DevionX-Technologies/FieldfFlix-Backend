@@ -35,6 +35,8 @@ export interface RecordingDetailDto {
   id: string;
   userId: string;
   owner_name: string;
+  recording_name?: string | null;
+  metadata?: any;
   turfId: string | null;
   turf_detail: TurfDetailDto | null;
   startTime: Date;

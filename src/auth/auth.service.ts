@@ -13,7 +13,7 @@ import { Fast2SmsService } from 'src/common/service/fast2sms.service';
 import { PhoneOtpStore } from 'src/common/service/phone-otp.store';
 import {
   DEMO_OTP,
-  DEMO_USER_NAME,
+  getDemoUserName,
   isDemoOtp,
   isDemoPhone,
   phoneDigitsOnly,
@@ -62,6 +62,9 @@ export class AuthService {
       return mobile;
     }
     const digits = phoneDigitsOnly(mobile);
+    if (digits === '77777777') {
+      return '+917777777777';
+    }
     if (digits.length === 10) {
       return `+91${digits}`;
     }
@@ -97,7 +100,7 @@ export class AuthService {
         user = await this.userService.create({
           phone_number: phoneNumber,
           singUp_Method: SingUpType.PHONE_NUMBER,
-          ...(demoLogin ? { name: DEMO_USER_NAME } : {}),
+          ...(demoLogin ? { name: getDemoUserName(mobile) } : {}),
         });
         isFirstTimeLogin = true;
       }
