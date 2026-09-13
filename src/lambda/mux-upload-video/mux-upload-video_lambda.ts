@@ -85,13 +85,19 @@ const findRecordingByRaspberryPiId = async (
   repository: Repository<Recording>,
   raspberryPiRecordingId: string,
 ): Promise<Recording> => {
-  const recording = await repository.findOne({
-    where: { raspberryPiRecordingId },
+  let recording = await repository.findOne({
+    where: { id: raspberryPiRecordingId },
   });
 
   if (!recording) {
+    recording = await repository.findOne({
+      where: { raspberryPiRecordingId },
+    });
+  }
+
+  if (!recording) {
     throw new Error(
-      `Recording not found for raspberryPiRecordingId: ${raspberryPiRecordingId}`,
+      `Recording not found for ID or raspberryPiRecordingId: ${raspberryPiRecordingId}`,
     );
   }
 

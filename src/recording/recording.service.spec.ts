@@ -24,6 +24,14 @@ import { SharedRecording } from './entities/shared-recording.entity';
 import { CreateSharedRecordingDto } from './dto/create-shared-recording.dto';
 import { BadRequestException } from '@nestjs/common';
 import { RecordingService } from './service/recording.service';
+import { RecordingHighlights } from './entities/recording-highlights.entity';
+import { MuxService } from 'src/mux/mux.service';
+import { FireBaseNotificationService } from 'src/common/service/fire-base.service';
+import { RecordingHighlightEngagementService } from './service/recording-highlight-engagement.service';
+import { RecordingHighlightsService } from './service/recording-highlight.service';
+import { PaymentRestrictionService } from 'src/payment/payment-restriction.service';
+import { PointsService } from 'src/points/points.service';
+import { PricingConfigService } from 'src/payment/pricing-config.service';
 
 jest.mock('uuid', () => ({
   v4: jest.fn(),
@@ -40,7 +48,7 @@ const mockRecordingEntity = {
   status: 'completed',
   s3Path: 'test/path',
   sharedRecordings: [],
-} as Recording;
+} as unknown as Recording;
 
 const mockUser = {
   id: 'user-2',
@@ -53,7 +61,7 @@ const mockSharedRecording = {
   shared_by_user_id: 'user-1',
   shared_with_user_id: 'user-2',
   is_active: true,
-} as SharedRecording;
+} as unknown as SharedRecording;
 
 describe('RecordingService', () => {
   let service: RecordingService;
@@ -212,6 +220,47 @@ describe('RecordingService', () => {
             findOne: jest.fn(),
           },
         },
+        {
+          provide: getRepositoryToken(RecordingHighlights),
+          useValue: {
+            find: jest.fn(),
+            findOne: jest.fn(),
+            save: jest.fn(),
+            create: jest.fn(),
+          },
+        },
+        {
+          provide: MuxService,
+          useValue: {
+            getAssetDetails: jest.fn(),
+          },
+        },
+        {
+          provide: FireBaseNotificationService,
+          useValue: {
+            sendNotification: jest.fn(),
+          },
+        },
+        {
+          provide: RecordingHighlightEngagementService,
+          useValue: {},
+        },
+        {
+          provide: RecordingHighlightsService,
+          useValue: {},
+        },
+        {
+          provide: PaymentRestrictionService,
+          useValue: {},
+        },
+        {
+          provide: PointsService,
+          useValue: {},
+        },
+        {
+          provide: PricingConfigService,
+          useValue: {},
+        },
       ],
     }).compile();
 
@@ -302,7 +351,7 @@ describe('RecordingService', () => {
         // What save should produce
         ...newRecordingEntity,
         id: 'saved-rec-id', // Simulate generated ID
-      } as Recording;
+      } as unknown as Recording;
 
       // Mock create to return the entity before saving
       recordingRepository.create.mockReturnValue(newRecordingEntity);
@@ -382,7 +431,7 @@ describe('RecordingService', () => {
         raspberryPiRecordingId: 'rpi-existing-id', // Add RPi ID
         userId: 'test-user-id', // Add userId
         sharedRecordings: [],
-      } as Recording;
+      } as unknown as Recording;
       // Mock findOne to return an existing recording
       recordingRepository.findOne.mockResolvedValue(existingRecording);
 
@@ -469,7 +518,7 @@ describe('RecordingService', () => {
         // What save should produce
         ...newRecordingEntity,
         id: 'saved-rec-id-retry', // Simulate generated ID
-      } as Recording;
+      } as unknown as Recording;
 
       // Mock create to return the entity before saving
       recordingRepository.create.mockReturnValue(newRecordingEntity);
@@ -535,7 +584,7 @@ describe('RecordingService', () => {
       // Add turf_id as it's a column in the entity
       turf_id: 123, // Example turf ID
       sharedRecordings: [],
-    } as Recording;
+    } as unknown as Recording;
 
     // Define a complete stopped recording entity with all expected properties
     const stoppedRecording = {
@@ -547,7 +596,7 @@ describe('RecordingService', () => {
       updatedAt: expect.any(Date), // Expect updated date
       updated_at: expect.any(Date), // Expect updated_at date
       // user, camera, etc. should be present from inProgressRecording spread
-    } as Recording;
+    } as unknown as Recording;
 
     it('should successfully stop a recording if it is in progress', async () => {
       // Arrange
@@ -606,7 +655,7 @@ describe('RecordingService', () => {
       const recordingWithoutRPiId = {
         ...inProgressRecording,
         raspberryPiRecordingId: undefined,
-      } as Recording;
+      } as unknown as Recording;
       // Explicitly mock findOne to return the entity missing RPi ID for this test case
       recordingRepository.findOne.mockResolvedValue(recordingWithoutRPiId);
 
@@ -675,7 +724,7 @@ describe('RecordingService', () => {
         s3Path: s3PathAfterRetry,
         updatedAt: expect.any(Date), // Expect updated date
         updated_at: expect.any(Date), // Expect updated_at date
-      } as Recording;
+      } as unknown as Recording;
 
       // Mock save to return the updated entity
       recordingRepository.save.mockResolvedValue(stoppedRecordingAfterRetry);
@@ -730,7 +779,7 @@ describe('RecordingService', () => {
       // Add turf_id as it's used in getFavoriteVideos and is a column
       turf_id: 123, // Use number as per DTO
       sharedRecordings: [],
-    } as Recording;
+    } as unknown as Recording;
 
     it('should return a presigned URL for a valid shareToken', async () => {
       // Ensure findOne returns the mock recording entity
@@ -844,7 +893,7 @@ describe('RecordingService', () => {
       // Add turf_id as it's a column in the entity
       turf_id: 123, // Use number as per DTO
       sharedRecordings: [],
-    } as Recording;
+    } as unknown as Recording;
 
     it('should generate and save a new share token if one does not exist', async () => {
       // Ensure findOne returns the mock recording entity
@@ -907,7 +956,7 @@ describe('RecordingService', () => {
         ...mockRecordingEntity,
         user_id: 'another-user-id',
         userId: 'another-user-id', // Use userId field
-      } as Recording;
+      } as unknown as Recording;
       // Ensure findOne returns the recording owned by another user
       recordingRepository.findOne.mockResolvedValue(
         recordingOwnedByAnotherUser,
@@ -946,7 +995,7 @@ describe('RecordingService', () => {
       // Add turf_id as it's a column in the entity
       turf_id: 123, // Use number as per DTO
       sharedRecordings: [],
-    } as Recording;
+    } as unknown as Recording;
 
     it('should toggle is_favorite from false to true and save', async () => {
       // Ensure findOne returns the mock recording entity
@@ -1001,7 +1050,7 @@ describe('RecordingService', () => {
         ...mockRecordingEntity,
         user_id: 'another-user-id',
         userId: 'another-user-id', // Use userId field
-      } as Recording;
+      } as unknown as Recording;
       // Ensure findOne returns the recording owned by another user
       recordingRepository.findOne.mockResolvedValue(
         recordingOwnedByAnotherUser,
@@ -1047,7 +1096,7 @@ describe('RecordingService', () => {
         camera: { id: 'cam-1' } as Camera, // Add minimal mock camera
         turf_id: 123, // Add turf_id
         sharedRecordings: [],
-      } as Recording,
+      } as unknown as Recording,
       {
         id: 'rec-2',
         userId: userId,
@@ -1066,7 +1115,7 @@ describe('RecordingService', () => {
         camera: { id: 'cam-2' } as Camera, // Add minimal mock camera
         turf_id: 123, // Add turf_id
         sharedRecordings: [],
-      } as Recording,
+      } as unknown as Recording,
     ];
 
     it('should return a list of favorite recordings for the user', async () => {

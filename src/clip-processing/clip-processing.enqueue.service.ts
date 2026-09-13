@@ -1,6 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
 import { ClipProcessingSource } from './types/clip-processing.types';
+import { ClipProcessingProcessor } from './clip-processing.processor';
 
 @Injectable()
 export class ClipProcessingEnqueueService {
@@ -8,7 +9,9 @@ export class ClipProcessingEnqueueService {
   private readonly sqsClient: SQSClient;
   private readonly queueUrl: string;
 
-  constructor() {
+  constructor(
+    @Optional() private readonly processor?: ClipProcessingProcessor,
+  ) {
     this.sqsClient = new SQSClient({
       region: process.env.AWS_REGION || 'ap-south-1',
       useQueueUrlAsEndpoint: true,
@@ -22,8 +25,27 @@ export class ClipProcessingEnqueueService {
   ): Promise<string | undefined> {
     if (!this.queueUrl) {
       this.logger.warn(
-        'CLIP_PROCESSING_QUEUE_URL not configured, skipping SQS enqueue',
+        'CLIP_PROCESSING_QUEUE_URL not configured, falling back to in-process clip processing',
       );
+      if (this.processor) {
+        setImmediate(() => {
+          this.processor
+            .processRecording(recordingId)
+            .then((res) => {
+              this.logger.log(
+                `In-process clip processing finished for recording ${recordingId}`,
+                res,
+              );
+            })
+            .catch((err) => {
+              this.logger.error(
+                `In-process clip processing failed for recording ${recordingId}: ${err.message}`,
+                err.stack,
+              );
+            });
+        });
+        return 'in-process';
+      }
       return undefined;
     }
 

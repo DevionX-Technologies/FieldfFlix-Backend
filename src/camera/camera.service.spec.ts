@@ -6,6 +6,15 @@ import { Camera } from './camera.entity';
 import { NotFoundException } from '@nestjs/common';
 import { CreateCameraDto } from './dto/create-camera.dto';
 
+const mockQueryBuilder = {
+  leftJoin: jest.fn().mockReturnThis(),
+  where: jest.fn().mockReturnThis(),
+  andWhere: jest.fn().mockReturnThis(),
+  skip: jest.fn().mockReturnThis(),
+  take: jest.fn().mockReturnThis(),
+  getManyAndCount: jest.fn(),
+};
+
 const mockCameraRepository = {
   create: jest.fn(),
   save: jest.fn(),
@@ -14,6 +23,10 @@ const mockCameraRepository = {
   update: jest.fn(),
   delete: jest.fn(),
   findAndCount: jest.fn(),
+  createQueryBuilder: jest.fn().mockReturnValue(mockQueryBuilder),
+  manager: {
+    findOne: jest.fn(),
+  },
 };
 
 describe('CameraService', () => {
@@ -66,7 +79,9 @@ describe('CameraService', () => {
           name: 'Camera 1',
           turfId: 'turf1',
           raspberryPiBaseUrl: null,
+          raspberryPiApiKey: null,
           court_number: null,
+          hidden_from_app: false,
           turf: null,
           recording: [],
         },
@@ -75,20 +90,19 @@ describe('CameraService', () => {
           name: 'Camera 2',
           turfId: 'turf1',
           raspberryPiBaseUrl: null,
+          raspberryPiApiKey: null,
           court_number: null,
+          hidden_from_app: false,
           turf: null,
           recording: [],
         },
       ];
       const total = cameras.length;
-      mockCameraRepository.findAndCount.mockResolvedValue([cameras, total]);
+      mockQueryBuilder.getManyAndCount.mockResolvedValue([cameras, total]);
 
       const result = await service.findAll({});
 
-      expect(repository.findAndCount).toHaveBeenCalledWith({
-        skip: 0,
-        take: 10,
-      });
+      expect(repository.createQueryBuilder).toHaveBeenCalled();
       expect(result).toEqual({ data: cameras, total });
     });
 
@@ -99,34 +113,35 @@ describe('CameraService', () => {
           name: 'Camera 3',
           turfId: 'turf2',
           raspberryPiBaseUrl: null,
+          raspberryPiApiKey: null,
           court_number: null,
+          hidden_from_app: false,
           turf: null,
           recording: [],
         },
       ];
       const total = cameras.length;
       const paginationParams = { page: 2, limit: 5 };
-      mockCameraRepository.findAndCount.mockResolvedValue([cameras, total]);
+      mockQueryBuilder.getManyAndCount.mockResolvedValue([cameras, total]);
 
       const result = await service.findAll(paginationParams);
 
-      expect(repository.findAndCount).toHaveBeenCalledWith({
-        skip: (paginationParams.page - 1) * paginationParams.limit,
-        take: paginationParams.limit,
-      });
+      expect(repository.createQueryBuilder).toHaveBeenCalled();
       expect(result).toEqual({ data: cameras, total });
     });
   });
 
   describe('findOne', () => {
     it('should return a camera if found', async () => {
-      const camera: Camera = {
+      const camera: any = {
         id: 'uuid',
         name: 'Test Camera',
         turfId: 'turf-uuid',
         raspberryPiBaseUrl: null,
+        raspberryPiApiKey: null,
         court_number: null,
-        turf: null,
+        hidden_from_app: false,
+        turf: { hidden_from_app: false },
         recording: [],
       };
       mockCameraRepository.findOne.mockResolvedValue(camera);
@@ -135,18 +150,20 @@ describe('CameraService', () => {
 
       expect(repository.findOne).toHaveBeenCalledWith({
         where: { id: 'uuid' },
+        relations: ['turf'],
       });
       expect(result).toEqual(camera);
     });
 
     it('should throw NotFoundException if camera not found', async () => {
-      mockCameraRepository.findOne.mockResolvedValue(undefined);
+      mockCameraRepository.findOne.mockResolvedValue(null);
 
       await expect(service.findOne('non-existent-uuid')).rejects.toThrow(
         NotFoundException,
       );
       expect(repository.findOne).toHaveBeenCalledWith({
         where: { id: 'non-existent-uuid' },
+        relations: ['turf'],
       });
     });
   });

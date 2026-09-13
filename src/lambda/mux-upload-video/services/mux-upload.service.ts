@@ -200,6 +200,7 @@ export class MuxUploadService {
         input: muxInputs,
         playback_policy: ['public'],
         encoding_tier: 'smart',
+        passthrough: recordingId,
       },
       maxBodyLength: Infinity,
       maxContentLength: Infinity,

@@ -118,7 +118,7 @@ export class RecordingService {
   private static readonly STALE_IN_PROGRESS_MS = 2 * 60 * 60 * 1000; // 2 hours
 
   /** On-demand extractions without Mux playback older than this are failed (max 3 attempts). */
-  private static readonly STALE_EXTRACTION_MS = 6 * 60 * 60 * 1000; // 6 hours
+  private static readonly STALE_EXTRACTION_MS = 30 * 60 * 1000; // 30 minutes
   private static readonly MAX_EXTRACT_ATTEMPTS = 3;
   private staleExtractionRunning = false;
   private staleMuxHealRunning = false;
@@ -505,7 +505,7 @@ export class RecordingService {
             metadata: {
               ...meta,
               extract_failed_reason:
-                'No playable video after 6 hours — extraction timed out',
+                'No playable video after 30 minutes — extraction timed out',
             } as Recording['metadata'],
           });
           this.logger.warn(
@@ -518,7 +518,7 @@ export class RecordingService {
               ...meta,
               extract_attempts: attempts,
               extract_failed_reason:
-                'No playable video after 6 hours — please try claiming again',
+                'No playable video after 30 minutes — please try claiming again',
             } as Recording['metadata'],
           });
         }
@@ -1542,6 +1542,18 @@ export class RecordingService {
       }
 
       await queryRunner.commitTransaction();
+
+      // Trigger Mux ingestion for the uploaded recording S3 file
+      try {
+        await this.retryMuxIngestion(recordingId);
+        this.logger.log(
+          `Triggered Mux ingestion for stopped recording ${recordingId}`,
+        );
+      } catch (muxError: any) {
+        this.logger.error(
+          `Failed to trigger Mux ingestion for recording ${recordingId}: ${muxError?.message}`,
+        );
+      }
     } catch (error) {
       this.logger.error(
         `Error in background stop recording processing for ${recordingId}:`,
@@ -1776,6 +1788,11 @@ export class RecordingService {
     });
     if (!recording) return null;
 
+    // Fast-return if recording is already playable — avoid redundant external Mux API calls on every playback request
+    if (this.isRecordingMuxPlayable(recording)) {
+      return recording;
+    }
+
     // Self-heal from Mux when webhook was missed or uploadFromS3 wrote IDs too early.
     if (recording.mux_asset_id) {
       try {
@@ -1924,7 +1941,7 @@ export class RecordingService {
     const isOwner = recording.userId === userId;
     const hasUnlockAccess =
       !isOwner &&
-      (await this.paymentRestrictionService.hasCompletedRecordingOrHighlightAccess(
+      (await this.paymentRestrictionService?.hasCompletedRecordingOrHighlightAccess?.(
         userId,
         recordingId,
       ));
@@ -2023,7 +2040,7 @@ export class RecordingService {
    */
   async getMediaByShareToken(
     shareToken: string,
-    userId: string,
+    userId?: string,
   ): Promise<string | null> {
     const recording = await this.recordingRepositoryForMedia.findOne({
       where: {
@@ -2745,22 +2762,24 @@ export class RecordingService {
           id: sharedRecording.id,
           shared_with_user_id: sharedRecording.shared_with_user_id,
           shared_with_user_name: sharedWithUser?.name || '',
-          recording: {
-            id: recording.id,
-            userId: recording.userId,
-            owner_name: owner?.name || '',
-            owner_phone: owner?.phone_number || '',
-            turfId: recording.turfId || null,
-            turf_detail: turfDetail,
-            startTime: recording.startTime,
-            endTime: recording.endTime || null,
-            s3Path: presignedS3Path,
-            status: recording.status,
-            mux_asset_id: recording.mux_asset_id || null,
-            mux_playback_id: recording.mux_playback_id || null,
-            mux_media_url: recording.mux_media_url || null,
-            recordingHighlights,
-          },
+          recording: recording
+            ? {
+                id: recording.id,
+                userId: recording.userId,
+                owner_name: owner?.name || '',
+                owner_phone: owner?.phone_number || '',
+                turfId: recording.turfId || null,
+                turf_detail: turfDetail,
+                startTime: recording.startTime,
+                endTime: recording.endTime || null,
+                s3Path: presignedS3Path,
+                status: recording.status,
+                mux_asset_id: recording.mux_asset_id || null,
+                mux_playback_id: recording.mux_playback_id || null,
+                mux_media_url: recording.mux_media_url || null,
+                recordingHighlights,
+              }
+            : (null as any),
         };
       }),
     );
@@ -4274,12 +4293,35 @@ export class RecordingService {
       });
 
       if (priorClaim) {
-        throw new ConflictException({
-          message:
-            'You have already claimed this match for this court and time window.',
-          recordingId: priorClaim.id,
-          status: priorClaim.status,
-        });
+        const isStalled =
+          !priorClaim.mux_playback_id &&
+          ['extracting', 'uploaded', 'requested', 'pending'].includes(
+            priorClaim.status,
+          ) &&
+          priorClaim.updated_at &&
+          Date.now() - new Date(priorClaim.updated_at).getTime() >
+            20 * 60 * 1000;
+
+        if (isStalled) {
+          this.logger.warn(
+            `Prior claim ${priorClaim.id} has been stuck in '${priorClaim.status}' for >20m without playback ID. Marking failed to allow re-claim.`,
+          );
+          await this.recordingRepositoryForMedia.update(priorClaim.id, {
+            status: 'failed',
+            metadata: {
+              ...((priorClaim.metadata as Record<string, unknown>) ?? {}),
+              extract_failed_reason:
+                'Extraction stalled (>20m) — auto-superseded by new claim',
+            } as Recording['metadata'],
+          });
+        } else {
+          throw new ConflictException({
+            message:
+              'You have already claimed this match for this court and time window.',
+            recordingId: priorClaim.id,
+            status: priorClaim.status,
+          });
+        }
       }
     }
 

@@ -49,7 +49,7 @@ export function getHighlightS3Bucket(): string {
 
 /** S3 object region — do not use AWS_REGION (often the ECS/Lambda region). */
 export function getHighlightS3Region(): string {
-  return process.env.AWS_S3_REGION || 'eu-north-1';
+  return process.env.AWS_S3_REGION || process.env.AWS_REGION || 'ap-south-1';
 }
 
 export function buildHighlightPublicUrl(

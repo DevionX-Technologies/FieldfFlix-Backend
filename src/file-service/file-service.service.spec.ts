@@ -52,9 +52,9 @@ describe('FileServiceService', () => {
       expect(result).toBe(expectedSignedUrl);
       expect(mockGetSignedUrl).toHaveBeenCalledTimes(1);
       expect(mockGetSignedUrl).toHaveBeenCalledWith(
-        mockS3Client, // Expect the S3 client instance
-        expect.any(GetObjectCommand), // Expect a GetObjectCommand
-        { expiresIn: 300 }, // 60 * 5 = 300 seconds
+        expect.any(S3Client),
+        expect.any(GetObjectCommand),
+        { expiresIn: 604800 }, // Default: 7 days (604800 seconds)
       );
 
       // Optionally, check the GetObjectCommand params

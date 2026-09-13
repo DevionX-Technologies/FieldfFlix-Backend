@@ -9,11 +9,13 @@ import {
   InternalServerErrorException,
 } from '@nestjs/common';
 import { FileServiceService } from '../file-service/file-service.service';
-import { StreamableFile } from '@nestjs/common';
-import { Readable } from 'stream';
 import { CommonService } from 'src/common/service/common.service';
 import { ConfigService } from '@nestjs/config';
 import { RecordingService } from './service/recording.service';
+
+import { RecordingHighlightsService } from './service/recording-highlight.service';
+import { MuxService } from '../mux/mux.service';
+import { RecordingHighlightEngagementService } from './service/recording-highlight-engagement.service';
 
 describe('RecordingController', () => {
   let controller: RecordingController;
@@ -27,10 +29,12 @@ describe('RecordingController', () => {
       findActiveRecordingByCamera: jest.fn(),
       getRecordingById: jest.fn(),
       getRecordingS3Path: jest.fn(),
+      getMuxPublicUrl: jest.fn(),
     } as any;
 
     fileServiceService = {
       getVideoStream: jest.fn(),
+      getSignedUrlFromS3: jest.fn(),
     } as any;
 
     const module: TestingModule = await Test.createTestingModule({
@@ -52,6 +56,18 @@ describe('RecordingController', () => {
           provide: ConfigService,
           useValue: {},
         },
+        {
+          provide: RecordingHighlightsService,
+          useValue: {},
+        },
+        {
+          provide: MuxService,
+          useValue: {},
+        },
+        {
+          provide: RecordingHighlightEngagementService,
+          useValue: {},
+        },
       ],
     }).compile();
 
@@ -66,6 +82,7 @@ describe('RecordingController', () => {
     const startRecordingDto: StartRecordingDto = {
       userId: 'test-user-id',
       cameraId: 'test-camera-id',
+      turfId: 'test-turf-id',
       metadata: { key: 'value' },
     };
 
@@ -178,13 +195,22 @@ describe('RecordingController', () => {
         camera: { id: 'camera-id' },
       } as Recording;
       recordingService.getRecordingById.mockResolvedValue(expectedRecording);
+      recordingService.getMuxPublicUrl.mockResolvedValue({
+        publicUrl: 'https://stream.mux.com/test.m3u8',
+      } as any);
 
       const result = await controller.getRecordingById(recordingId);
 
       expect(recordingService.getRecordingById).toHaveBeenCalledWith(
         recordingId,
       );
-      expect(result).toEqual(expectedRecording);
+      expect(recordingService.getMuxPublicUrl).toHaveBeenCalledWith(
+        recordingId,
+      );
+      expect(result).toEqual({
+        ...expectedRecording,
+        mux_public_url: 'https://stream.mux.com/test.m3u8',
+      });
     });
 
     it('should throw NotFoundException if recording is not found', async () => {
@@ -202,31 +228,22 @@ describe('RecordingController', () => {
   describe('streamRecording', () => {
     const recordingId = 'test-recording-id';
     const dummyS3Key = 'dummy/s3/path/video.mp4';
-    const dummyVideoStream = Readable.from(['dummy video data']);
-    const mockResponse = { set: jest.fn() } as any;
+    const dummySignedUrl = 'https://s3.signed.url/video.mp4';
+    const mockResponse = { redirect: jest.fn() } as any;
 
-    it('should call services and return a StreamableFile on success', async () => {
+    it('should redirect to signed S3 URL on success', async () => {
       recordingService.getRecordingS3Path.mockResolvedValue(dummyS3Key);
-      fileServiceService.getVideoStream.mockResolvedValue(dummyVideoStream);
+      fileServiceService.getSignedUrlFromS3.mockResolvedValue(dummySignedUrl);
 
-      const result = await controller.streamRecording(
-        recordingId,
-        mockResponse,
-      );
+      await controller.streamRecording(recordingId, mockResponse);
 
       expect(recordingService.getRecordingS3Path).toHaveBeenCalledWith(
         recordingId,
       );
-      const expectedBucketName = `${process.env.APP_NAME}-${process.env.ENVIRONMENT}-media`;
-      expect(fileServiceService.getVideoStream).toHaveBeenCalledWith(
+      expect(fileServiceService.getSignedUrlFromS3).toHaveBeenCalledWith(
         dummyS3Key,
-        expectedBucketName,
       );
-      expect(result).toBeInstanceOf(StreamableFile);
-      expect(mockResponse.set).toHaveBeenCalledWith({
-        'Content-Type': 'video/mp4',
-        'Content-Disposition': `inline; filename="recording-${recordingId}.mp4"`,
-      });
+      expect(mockResponse.redirect).toHaveBeenCalledWith(302, dummySignedUrl);
     });
 
     it('should re-throw NotFoundException from getRecordingS3Path', async () => {
@@ -240,7 +257,7 @@ describe('RecordingController', () => {
       expect(recordingService.getRecordingS3Path).toHaveBeenCalledWith(
         recordingId,
       );
-      expect(fileServiceService.getVideoStream).not.toHaveBeenCalled();
+      expect(fileServiceService.getSignedUrlFromS3).not.toHaveBeenCalled();
     });
 
     it('should re-throw InternalServerErrorException from getRecordingS3Path', async () => {
@@ -254,12 +271,12 @@ describe('RecordingController', () => {
       expect(recordingService.getRecordingS3Path).toHaveBeenCalledWith(
         recordingId,
       );
-      expect(fileServiceService.getVideoStream).not.toHaveBeenCalled();
+      expect(fileServiceService.getSignedUrlFromS3).not.toHaveBeenCalled();
     });
 
-    it('should re-throw NotFoundException from getVideoStream', async () => {
+    it('should re-throw NotFoundException from getSignedUrlFromS3', async () => {
       recordingService.getRecordingS3Path.mockResolvedValue(dummyS3Key);
-      fileServiceService.getVideoStream.mockRejectedValue(
+      fileServiceService.getSignedUrlFromS3.mockRejectedValue(
         new NotFoundException(),
       );
 
@@ -269,16 +286,14 @@ describe('RecordingController', () => {
       expect(recordingService.getRecordingS3Path).toHaveBeenCalledWith(
         recordingId,
       );
-      const expectedBucketName = `${process.env.APP_NAME}-${process.env.ENVIRONMENT}-media`;
-      expect(fileServiceService.getVideoStream).toHaveBeenCalledWith(
+      expect(fileServiceService.getSignedUrlFromS3).toHaveBeenCalledWith(
         dummyS3Key,
-        expectedBucketName,
       );
     });
 
-    it('should re-throw InternalServerErrorException from getVideoStream', async () => {
+    it('should re-throw InternalServerErrorException from getSignedUrlFromS3', async () => {
       recordingService.getRecordingS3Path.mockResolvedValue(dummyS3Key);
-      fileServiceService.getVideoStream.mockRejectedValue(
+      fileServiceService.getSignedUrlFromS3.mockRejectedValue(
         new InternalServerErrorException(),
       );
 
@@ -288,10 +303,8 @@ describe('RecordingController', () => {
       expect(recordingService.getRecordingS3Path).toHaveBeenCalledWith(
         recordingId,
       );
-      const expectedBucketName = `${process.env.APP_NAME}-${process.env.ENVIRONMENT}-media`;
-      expect(fileServiceService.getVideoStream).toHaveBeenCalledWith(
+      expect(fileServiceService.getSignedUrlFromS3).toHaveBeenCalledWith(
         dummyS3Key,
-        expectedBucketName,
       );
     });
   });

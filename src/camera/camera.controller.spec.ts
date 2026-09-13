@@ -61,7 +61,9 @@ describe('CameraController', () => {
           name: 'Camera 1',
           turfId: 'turf1',
           raspberryPiBaseUrl: null,
+          raspberryPiApiKey: null,
           court_number: null,
+          hidden_from_app: false,
           turf: null,
           recording: [],
         },
@@ -82,7 +84,9 @@ describe('CameraController', () => {
           name: 'Camera 2',
           turfId: 'turf2',
           raspberryPiBaseUrl: null,
+          raspberryPiApiKey: null,
           court_number: null,
+          hidden_from_app: false,
           turf: null,
           recording: [],
         },
@@ -104,7 +108,9 @@ describe('CameraController', () => {
         name: 'Test Camera',
         turfId: 'turf-uuid',
         raspberryPiBaseUrl: null,
+        raspberryPiApiKey: null,
         court_number: null,
+        hidden_from_app: false,
         turf: null,
         recording: [],
       };
@@ -113,7 +119,12 @@ describe('CameraController', () => {
       const result = await controller.findOne('uuid');
 
       expect(service.findOne).toHaveBeenCalledWith('uuid');
-      expect(result).toEqual(camera);
+      expect(result).toEqual({
+        id: camera.id,
+        name: camera.name,
+        turfId: camera.turfId,
+        court_number: camera.court_number,
+      });
     });
 
     it('should throw NotFoundException if camera not found', async () => {

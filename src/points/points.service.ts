@@ -545,7 +545,7 @@ export class PointsService implements OnModuleInit {
       .addSelect('COALESCE(up.current_streak, 0)', 'streak')
       .addSelect('COALESCE(up.accuracy_percent, 0)', 'accuracy')
       .addSelect(
-        `(SELECT COUNT(*)::int FROM recordings r WHERE r."userId" = e."userId" AND r.status IN ('ready','completed'))`,
+        `(SELECT COUNT(DISTINCT COALESCE(NULLIF(r.metadata->>'extract_session_key', ''), concat(COALESCE(r."turfId"::text, r.id::text), ':', date_trunc('minute', r."startTime"))))::int FROM recordings r WHERE r."userId" = e."userId" AND (r.status IN ('ready','completed') OR r.mux_playback_id IS NOT NULL))`,
         'matches',
       )
       .addSelect(

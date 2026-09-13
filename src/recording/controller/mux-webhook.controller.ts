@@ -49,9 +49,12 @@ export class MuxWebhookController {
     description: 'Internal server error processing webhook',
   })
   async handleMuxWebhook(@Req() req: any, @Body() body: any) {
+    const signature = req.headers['mux-signature'] as string;
+    let rawBody = req.rawBody;
+
     this.logger.log('Mux webhook received', {
       headers: {
-        'mux-signature': req.headers['mux-signature'],
+        'mux-signature': signature ? 'present' : 'absent',
         'content-type': req.headers['content-type'],
       },
       rawBodyLength: req.rawBody?.length || 0,
@@ -59,87 +62,93 @@ export class MuxWebhookController {
       parsedBodyType: typeof body,
     });
 
-    // const signature = req.headers['mux-signature'] as string;
-    let rawBody = req.rawBody;
-
-    if (!this.muxSigningSecret) {
-      this.logger.error('MUX_WEBHOOK_SECRET not configured in environment');
-      throw new InternalServerErrorException(
-        'Server webhook secret not configured',
-      );
-    }
-
+    // Ensure rawBody is a string
     if (!rawBody) {
-      this.logger.error('Raw body not available for signature verification');
-      throw new BadRequestException('Raw body not available');
-    }
-
-    // Ensure rawBody is a string as required by Mux signature verification
-    if (typeof rawBody !== 'string') {
+      if (body && typeof body === 'object') {
+        try {
+          rawBody = JSON.stringify(body);
+        } catch {
+          rawBody = '';
+        }
+      } else {
+        rawBody = '';
+      }
+    } else if (typeof rawBody !== 'string') {
       if (Buffer.isBuffer(rawBody)) {
         rawBody = rawBody.toString('utf8');
-        this.logger.debug('Converted Buffer to string for verification');
       } else if (typeof rawBody === 'object') {
         try {
           rawBody = JSON.stringify(rawBody);
-          this.logger.debug('Converted object to JSON string for verification');
-        } catch (e) {
-          this.logger.error('Failed to convert object to JSON string', {
-            rawBodyType: typeof rawBody,
-            error: e.message,
-          });
-          throw new BadRequestException('Invalid raw body format');
+        } catch {
+          rawBody = '';
         }
       } else {
         rawBody = String(rawBody);
-        this.logger.debug('Converted raw body to string using String() method');
       }
     }
 
-    this.logger.debug('Final raw body details', {
-      rawBodyType: typeof rawBody,
-      rawBodyLength: rawBody.length,
-      rawBodyPreview: rawBody.substring(0, 200),
-    });
+    // Verify signature if secret and signature are available
+    if (!this.muxSigningSecret) {
+      this.logger.warn(
+        'MUX_WEBHOOK_SECRET not configured in environment, proceeding without signature verification',
+      );
+    } else if (signature && rawBody) {
+      try {
+        this.muxService.verifyWebhookSignature(
+          rawBody,
+          signature,
+          this.muxSigningSecret,
+        );
+        this.logger.log('Webhook signature verified successfully');
+      } catch (error) {
+        this.logger.error(
+          `Webhook signature verification failed: ${error.message}`,
+          {
+            signature,
+            bodyLength: rawBody?.length,
+          },
+        );
+        throw new BadRequestException(
+          `Invalid webhook signature: ${error.message}`,
+        );
+      }
+    } else if (signature && !rawBody) {
+      this.logger.warn(
+        'Mux signature provided but rawBody could not be resolved',
+      );
+    }
 
-    // Check if the body was already parsed by NestJS
-    if (!body || Object.keys(body).length === 0) {
+    // Parse body if req.body wasn't parsed by json middleware
+    let parsedPayload = body;
+    if (!parsedPayload || Object.keys(parsedPayload).length === 0) {
+      if (rawBody) {
+        try {
+          parsedPayload = JSON.parse(rawBody);
+        } catch (e) {
+          this.logger.error(
+            'Failed to parse webhook rawBody as JSON',
+            e.message,
+          );
+        }
+      }
+    }
+
+    if (!parsedPayload || Object.keys(parsedPayload).length === 0) {
       this.logger.error('Parsed body is empty');
       throw new BadRequestException('Invalid JSON payload');
     }
 
-    // try {
-    //   // Use the corrected Mux webhook signature verification
-    //   this.muxService.verifyWebhookSignatureOld(
-    //     rawBody, // Raw body as string
-    //     req.headers, // Mux-signature header value
-    //     this.muxSigningSecret, // Webhook secret
-    //   );
-    //   this.logger.log('Webhook signature verified successfully');
-    // } catch (error) {
-    //   this.logger.error(`Webhook verification failed: ${error.message}`, {
-    //     signature,
-    //     bodyType: typeof rawBody,
-    //     bodyLength: rawBody?.length,
-    //     hasSecret: !!this.muxSigningSecret,
-    //   });
-    //   throw new BadRequestException(
-    //     `Invalid webhook signature: ${error.message}`,
-    //   );
-    // }
-
     try {
-      // Use the parsed body for processing
-      await this.recordingHighlightsService.handleMuxWebhook(body);
+      await this.recordingHighlightsService.handleMuxWebhook(parsedPayload);
       this.logger.log('Webhook processed successfully', {
-        eventType: body?.type,
-        assetId: body?.data?.id,
+        eventType: parsedPayload?.type,
+        assetId: parsedPayload?.data?.id,
       });
       return { success: true };
     } catch (error) {
       this.logger.error(`Webhook processing failed: ${error.message}`, {
-        eventType: body?.type,
-        assetId: body?.data?.id,
+        eventType: parsedPayload?.type,
+        assetId: parsedPayload?.data?.id,
         error: error.stack,
       });
       throw new InternalServerErrorException(

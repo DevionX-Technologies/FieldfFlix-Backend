@@ -1447,8 +1447,10 @@ export class RecordingHighlightsService {
         );
       }
 
-      // Webhook idempotency check
-      const muxEventId = `${type}:${assetId}:${data?.status || 'unknown'}`;
+      // Webhook idempotency check: prefer Mux event ID, fallback to composite key
+      const muxEventId = webhookBody.id
+        ? String(webhookBody.id)
+        : `${type}:${assetId}:${data?.status || 'unknown'}:${data?.created_at || ''}`;
       const idempotencyResult = await queryRunner.query(
         `INSERT INTO webhook_events (mux_event_id, event_type, asset_id, processed_at, response_status)
          VALUES ($1, $2, $3, NOW(), 'processing')
@@ -1667,7 +1669,7 @@ export class RecordingHighlightsService {
       isVideoCreated: true,
       mux_asset_id: assetId,
     };
-    if (webhookPlaybackId && !recording.mux_playback_id) {
+    if (webhookPlaybackId) {
       recordingUpdate.mux_playback_id = webhookPlaybackId;
       recordingUpdate.mux_media_url = `https://stream.mux.com/${webhookPlaybackId}.m3u8`;
     }

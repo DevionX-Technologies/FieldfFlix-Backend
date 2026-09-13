@@ -90,7 +90,10 @@ export class AppModule {
   configure(consumer: MiddlewareConsumer) {
     consumer
       .apply(RawBodyMiddleware)
-      .forRoutes({ path: 'webhooks/mux', method: RequestMethod.POST })
+      .forRoutes(
+        { path: 'webhooks/mux', method: RequestMethod.POST },
+        { path: 'mux/webhook', method: RequestMethod.POST },
+      )
       .apply(RequestLoggerMiddleware)
       .forRoutes('*');
   }

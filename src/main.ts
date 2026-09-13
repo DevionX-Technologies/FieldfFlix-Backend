@@ -28,7 +28,16 @@ async function bootstrap() {
     }),
   );
 
-  app.use(json({ limit: '50mb' }));
+  app.use(
+    json({
+      limit: '50mb',
+      verify: (req: any, _res, buf) => {
+        if (buf && buf.length) {
+          req.rawBody = buf.toString('utf8');
+        }
+      },
+    }),
+  );
   app.use(urlencoded({ extended: true, limit: '50mb' }));
 
   app.enableCors({

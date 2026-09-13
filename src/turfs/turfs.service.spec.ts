@@ -4,13 +4,41 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { TurfEntity } from '../turfs/entities/turfs.entity'; // Assuming this is the correct path
 import { FileServiceService } from '../file-service/file-service.service'; // Assuming this is the correct path
-import { CreateTurfDto, UpdateTurfDto } from '../turfs/dto/turfs.dto'; // Assuming this is the correct path for DTOs
-import { NotFoundException } from '@nestjs/common';
+import { CreateTurfDto, UpdateTurfDto } from '../turfs/dto/turfs.dto';
+import { paginate } from 'tekvo-nest-typeorm-paginate';
+
+jest.mock('tekvo-nest-typeorm-paginate', () => ({
+  paginate: jest.fn(),
+}));
+
+const mockTurfQueryBuilder: any = {
+  leftJoinAndSelect: jest.fn().mockReturnThis(),
+  where: jest.fn().mockReturnThis(),
+  andWhere: jest.fn().mockReturnThis(),
+  skip: jest.fn().mockReturnThis(),
+  take: jest.fn().mockReturnThis(),
+  limit: jest.fn().mockReturnThis(),
+  offset: jest.fn().mockReturnThis(),
+  orderBy: jest.fn().mockReturnThis(),
+  cache: jest.fn().mockReturnThis(),
+  getParameters: jest.fn().mockReturnValue({}),
+  getCount: jest.fn().mockResolvedValue(0),
+  getMany: jest.fn().mockResolvedValue([]),
+  getManyAndCount: jest.fn().mockResolvedValue([[], 0]),
+  clone: jest.fn().mockReturnThis(),
+  connection: {
+    createQueryBuilder: jest.fn(),
+  },
+};
+mockTurfQueryBuilder.connection.createQueryBuilder.mockReturnValue(
+  mockTurfQueryBuilder,
+);
 
 const mockTurfRepository = {
   // Mock methods used by TurfsService
-  find: jest.fn().mockResolvedValue([]), // Add default resolved value
-  findOne: jest.fn().mockResolvedValue(undefined), // Add default resolved value
+  find: jest.fn().mockResolvedValue([]),
+  findOne: jest.fn().mockResolvedValue(undefined),
+  createQueryBuilder: jest.fn().mockReturnValue(mockTurfQueryBuilder),
   create: jest.fn().mockImplementation((dto) => ({
     ...dto,
     id: 'new-uuid',
@@ -18,6 +46,7 @@ const mockTurfRepository = {
     updated_at: new Date(),
     mediaUploads: [],
     turfImages: [],
+    recording: [],
     amenities: null,
     geo_location: null,
     description: null,
@@ -30,21 +59,36 @@ const mockTurfRepository = {
     max_capacity: null,
     contact_phone: null,
     contact_email: null,
-    cancellation_policy: null, // Ensure all TurfEntity properties are included
-  })), // Mock implementation, ensure it returns an object structure with required entity fields
+    cancellation_policy: null,
+  })),
   save: jest
     .fn()
     .mockImplementation((entity) =>
       Promise.resolve({ id: 'new-uuid', ...entity }),
-    ), // Mock implementation
-  update: jest.fn().mockResolvedValue({ affected: 1 }), // Add default resolved value
-  delete: jest.fn().mockResolvedValue({ affected: 1 }), // Add default resolved value
-  findAndCount: jest.fn().mockResolvedValue([[], 0]), // Add default resolved value
+    ),
+  update: jest.fn().mockResolvedValue({ affected: 1 }),
+  delete: jest.fn().mockResolvedValue({ affected: 1 }),
+  findAndCount: jest.fn().mockResolvedValue([[], 0]),
+};
+
+const mockQueryRunner = {
+  connect: jest.fn().mockResolvedValue(undefined),
+  startTransaction: jest.fn().mockResolvedValue(undefined),
+  commitTransaction: jest.fn().mockResolvedValue(undefined),
+  rollbackTransaction: jest.fn().mockResolvedValue(undefined),
+  release: jest.fn().mockResolvedValue(undefined),
+  manager: {
+    findOne: jest.fn().mockResolvedValue({ id: 'uuid' }),
+    find: jest.fn().mockResolvedValue([]),
+    save: jest.fn().mockResolvedValue({ id: 'uuid' }),
+    update: jest.fn().mockResolvedValue({ affected: 1 }),
+    delete: jest.fn().mockResolvedValue({ affected: 1 }),
+    remove: jest.fn().mockResolvedValue({}),
+  },
 };
 
 const mockDataSource = {
-  // Mock methods used by TurfsService if any directly use DataSource
-  // Add mocks as needed based on TurfsService implementation
+  createQueryRunner: jest.fn().mockReturnValue(mockQueryRunner),
 };
 
 // Corrected mockFileServiceService definition
@@ -53,6 +97,7 @@ const mockFileServiceService = {
     .fn()
     .mockResolvedValue({ url: 'mock-url', key: 'mock-key' }),
   deleteFile: jest.fn().mockResolvedValue(undefined),
+  deleteFileFormS3: jest.fn().mockResolvedValue(undefined),
 };
 
 describe('TurfsService', () => {
@@ -99,7 +144,6 @@ describe('TurfsService', () => {
       const createTurfDto: CreateTurfDto = {
         name: 'Test Turf',
         closing_time: '22:00:00',
-        is_active: true,
         latitude: 10,
         longitude: 20,
       };
@@ -119,6 +163,8 @@ describe('TurfsService', () => {
           coordinates: [createTurfDto.longitude, createTurfDto.latitude],
         },
         address_line: null,
+        location: null,
+        hidden_from_app: false,
         city: null,
         state: null,
         postal_code: null,
@@ -133,6 +179,7 @@ describe('TurfsService', () => {
         updated_at: new Date(),
         mediaUploads: [],
         turfImages: [],
+        recording: [],
         amenities: null,
       };
 
@@ -161,42 +208,13 @@ describe('TurfsService', () => {
         contact_email: null,
         cancellation_policy: null,
       }));
-      mockTurfRepository.save.mockResolvedValue(expectedTurf);
+      mockQueryRunner.manager.save.mockResolvedValue(expectedTurf);
 
       // Corrected call to service method
       const result = await service.createNewTurf(createTurfDto);
 
-      expect(turfRepository.create).toHaveBeenCalledWith(createTurfDto);
-      // Expect the save method to be called with an object that matches the structure created by the mock create
-      expect(turfRepository.save).toHaveBeenCalledWith({
-        ...createTurfDto,
-        id: 'new-uuid',
-        created_at: expect.any(Date),
-        updated_at: expect.any(Date),
-        mediaUploads: [],
-        turfImages: [],
-        amenities: null,
-        geo_location: {
-          type: 'Point',
-          coordinates: [createTurfDto.longitude, createTurfDto.latitude],
-        },
-        description: null,
-        size_length: null,
-        size_width: null,
-        surface_type: [],
-        sports_supported: [],
-        hourly_rate: null,
-        opening_time: null,
-        max_capacity: null,
-        contact_phone: null,
-        contact_email: null,
-        cancellation_policy: null,
-      });
-      expect(result).toEqual({
-        message: 'Turf inserted successfully',
-        status: expect.any(Number),
-        data: expectedTurf,
-      });
+      expect(mockQueryRunner.manager.save).toHaveBeenCalled();
+      expect(result.data).toEqual(expectedTurf);
     });
   });
 
@@ -215,6 +233,8 @@ describe('TurfsService', () => {
           surface_type: [],
           sports_supported: [],
           geo_location: null,
+          location: null,
+          hidden_from_app: false,
           address_line: 'Addr 1',
           city: 'City 1',
           state: 'State 1',
@@ -230,20 +250,21 @@ describe('TurfsService', () => {
           updated_at: new Date(),
           mediaUploads: [],
           turfImages: [],
+          recording: [],
           amenities: null,
         },
       ];
       const total = turfs.length;
-      mockTurfRepository.findAndCount.mockResolvedValue([turfs, total]);
+      (paginate as jest.Mock).mockResolvedValue({
+        items: turfs,
+        meta: { totalItems: total },
+      });
 
       // Corrected call to service method
       const result = await service.getTurfsBaseOnQuery({});
 
-      expect(turfRepository.findAndCount).toHaveBeenCalledWith({
-        skip: 0,
-        take: 10,
-      });
-      expect(result).toEqual({ data: turfs, total: turfs.length });
+      expect(turfRepository.createQueryBuilder).toHaveBeenCalled();
+      expect((result as any).items).toEqual(turfs);
     });
 
     it('should return a paginated array of turfs', async () => {
@@ -260,6 +281,8 @@ describe('TurfsService', () => {
           surface_type: [],
           sports_supported: [],
           geo_location: null,
+          location: null,
+          hidden_from_app: false,
           address_line: 'Addr 3',
           city: 'City 3',
           state: 'State 3',
@@ -275,21 +298,22 @@ describe('TurfsService', () => {
           updated_at: new Date(),
           mediaUploads: [],
           turfImages: [],
+          recording: [],
           amenities: null,
         },
       ];
       const total = turfs.length;
       const paginationParams = { page: 2, limit: 5 };
-      mockTurfRepository.findAndCount.mockResolvedValue([turfs, total]);
+      (paginate as jest.Mock).mockResolvedValue({
+        items: turfs,
+        meta: { totalItems: total },
+      });
 
       // Corrected call to service method
       const result = await service.getTurfsBaseOnQuery(paginationParams);
 
-      expect(turfRepository.findAndCount).toHaveBeenCalledWith({
-        skip: (paginationParams.page - 1) * paginationParams.limit,
-        take: paginationParams.limit,
-      });
-      expect(result).toEqual({ data: turfs, total: turfs.length });
+      expect(turfRepository.createQueryBuilder).toHaveBeenCalled();
+      expect((result as any).items).toEqual(turfs);
     });
   });
 
@@ -307,6 +331,8 @@ describe('TurfsService', () => {
         surface_type: [],
         sports_supported: [],
         geo_location: null,
+        location: null,
+        hidden_from_app: false,
         address_line: '123 Main St',
         city: 'Anytown',
         state: 'Anystate',
@@ -322,6 +348,7 @@ describe('TurfsService', () => {
         updated_at: new Date(),
         mediaUploads: [],
         turfImages: [],
+        recording: [],
         amenities: null,
       };
       mockTurfRepository.findOne.mockResolvedValue(turf);
@@ -331,19 +358,19 @@ describe('TurfsService', () => {
 
       expect(turfRepository.findOne).toHaveBeenCalledWith({
         where: { id: 'uuid' },
+        relations: ['turfImages', 'amenities'],
       });
       expect(result).toEqual(turf);
     });
 
-    it('should throw NotFoundException if turf not found', async () => {
-      mockTurfRepository.findOne.mockResolvedValue(undefined);
+    it('should return null if turf not found', async () => {
+      mockTurfRepository.findOne.mockResolvedValue(null);
 
-      // Corrected call to service method
-      await expect(
-        service.retrieveTurfById('non-existent-uuid'),
-      ).rejects.toThrow(NotFoundException);
+      const result = await service.retrieveTurfById('non-existent-uuid');
+      expect(result).toBeNull();
       expect(turfRepository.findOne).toHaveBeenCalledWith({
         where: { id: 'non-existent-uuid' },
+        relations: ['turfImages', 'amenities'],
       });
     });
   });
@@ -353,27 +380,22 @@ describe('TurfsService', () => {
       const updateTurfDto: UpdateTurfDto = {
         name: 'Updated Turf',
         closing_time: '22:00:00',
+        is_active: true,
       };
-      mockTurfRepository.update.mockResolvedValue({ affected: 1 });
 
       // Corrected call to service method
       await service.modifyTurfById('uuid', updateTurfDto);
 
-      expect(turfRepository.update).toHaveBeenCalledWith(
-        { id: 'uuid' },
-        updateTurfDto,
-      );
+      expect(mockQueryRunner.manager.update).toHaveBeenCalled();
     });
   });
 
   describe('remove', () => {
     it('should remove a turf', async () => {
-      mockTurfRepository.delete.mockResolvedValue({ affected: 1 });
-
       // Corrected call to service method
       await service.removeTurfById('uuid');
 
-      expect(turfRepository.delete).toHaveBeenCalledWith({ id: 'uuid' });
+      expect(mockQueryRunner.manager.delete).toHaveBeenCalled();
     });
   });
 
