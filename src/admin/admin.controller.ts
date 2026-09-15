@@ -95,7 +95,7 @@ export class AdminController {
           metadata = jsonb_set(metadata, '{extract_failed_reason}', '"Automatically reset after being stuck for 1 hour"')
       WHERE status IN ('uploaded', 'extracting', 'processing')
         AND mux_playback_id IS NULL
-        AND "updatedAt" < $1
+        AND updated_at < $1
       RETURNING id, status
     `,
       [cutoff],
