@@ -644,6 +644,18 @@ export class RecordingService {
     const bucketName = RecordingService.defaultMediaBucket();
     const meta = (recording.metadata ?? {}) as Record<string, unknown>;
 
+    const muxRetries = Number(meta.mux_retries ?? 0);
+    if (muxRetries >= 3) {
+      await this.recordingRepositoryForMedia.update(recordingId, {
+        status: 'failed',
+        metadata: {
+          ...meta,
+          extract_failed_reason: 'Video processing failed repeatedly on Mux.',
+        } as any,
+      });
+      return { ok: false, action: 'mux_retries_exhausted' };
+    }
+
     if (recording.mux_asset_id) {
       try {
         const asset = await this.muxService.getAssetDetails(
@@ -745,6 +757,7 @@ export class RecordingService {
       await this.recordingRepositoryForMedia.update(recordingId, {
         s3Path: `s3://${bucketName}/${key}`,
         status: 'uploaded',
+        metadata: { ...meta, mux_retries: muxRetries + 1 } as any,
       });
       return { ok: true, action: 'mux_upload_started' };
     } catch (muxErr: any) {

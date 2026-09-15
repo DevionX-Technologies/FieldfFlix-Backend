@@ -82,6 +82,32 @@ export class UpdatePricingConfigDto {
 @Controller('admin')
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
 export class AdminController {
+  @Public()
+  @Get('reset-stuck-games')
+  async resetStuckGames() {
+    const ds = this.recordingRepo.manager.connection;
+    const cutoff = new Date(Date.now() - 60 * 60 * 1000); // 1 hour ago
+
+    const result = await ds.query(
+      `
+      UPDATE recordings
+      SET status = 'failed',
+          metadata = jsonb_set(metadata, '{extract_failed_reason}', '"Automatically reset after being stuck for 1 hour"')
+      WHERE status IN ('uploaded', 'extracting', 'processing')
+        AND mux_playback_id IS NULL
+        AND "updatedAt" < $1
+      RETURNING id, status
+    `,
+      [cutoff],
+    );
+
+    return {
+      success: true,
+      resetCount: result[0]?.length || 0,
+      games: result[0],
+    };
+  }
+
   constructor(
     private readonly adminRole: AdminRoleService,
     private readonly adminAnalytics: AdminAnalyticsService,
