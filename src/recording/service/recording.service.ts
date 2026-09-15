@@ -740,12 +740,24 @@ export class RecordingService {
       key,
       bucketName,
     );
-    await this.muxService.uploadFromS3(signedUrl, key, recordingId);
-    await this.recordingRepositoryForMedia.update(recordingId, {
-      s3Path: `s3://${bucketName}/${key}`,
-      status: 'uploaded',
-    });
-    return { ok: true, action: 'mux_upload_started' };
+    try {
+      await this.muxService.uploadFromS3(signedUrl, key, recordingId);
+      await this.recordingRepositoryForMedia.update(recordingId, {
+        s3Path: `s3://${bucketName}/${key}`,
+        status: 'uploaded',
+      });
+      return { ok: true, action: 'mux_upload_started' };
+    } catch (muxErr: any) {
+      this.logger.warn(
+        `Mux uploadFromS3 failed in retryMuxIngestion for ${recordingId}: ${muxErr?.message}`,
+      );
+      await this.recordingRepositoryForMedia.update(recordingId, {
+        s3Path: `s3://${bucketName}/${key}`,
+        status: 'ready',
+        isVideoCreated: true,
+      });
+      return { ok: true, action: 's3_fallback_ready' };
+    }
   }
 
   /**
@@ -802,16 +814,24 @@ export class RecordingService {
       .slice(0, 14);
     const s3Key = `recordings/${recording.id}_${timestamp}.mp4`;
 
-    const { uploadUrl, uploadId } = await this.muxService.createDirectUpload(
-      recording.id,
-    );
+    let uploadUrl = '';
+    let uploadId = '';
+    try {
+      const muxUpload = await this.muxService.createDirectUpload(recording.id);
+      uploadUrl = muxUpload.uploadUrl;
+      uploadId = muxUpload.uploadId;
+    } catch (muxErr) {
+      this.logger.warn(
+        `Admin retry Mux Direct Upload failed, falling back to S3-only: ${(muxErr as Error).message}`,
+      );
+    }
 
     const nextMeta = {
       ...meta,
       extract_attempts: attempts,
       extract_failed_reason: null,
       expected_s3_key: s3Key,
-      mux_upload_id: uploadId,
+      mux_upload_id: uploadId || null,
       retry_at: new Date().toISOString(),
       source: 'admin_retry',
     };
@@ -4491,13 +4511,24 @@ export class RecordingService {
           .slice(0, 14);
         const s3Key = `recordings/${recording.id}_${timestamp}.mp4`;
 
-        const { uploadUrl, uploadId } =
-          await this.muxService.createDirectUpload(recording.id);
+        let uploadUrl = '';
+        let uploadId = '';
+        try {
+          const muxUpload = await this.muxService.createDirectUpload(
+            recording.id,
+          );
+          uploadUrl = muxUpload.uploadUrl;
+          uploadId = muxUpload.uploadId;
+        } catch (muxErr) {
+          this.logger.warn(
+            `Mux Direct Upload failed, falling back to S3-only extraction: ${(muxErr as Error).message}`,
+          );
+        }
 
         recording.metadata = {
           ...(recording.metadata as Record<string, unknown>),
           expected_s3_key: s3Key,
-          mux_upload_id: uploadId,
+          mux_upload_id: uploadId || null,
         } as Recording['metadata'];
         await this.recordingRepositoryForMedia.save(recording);
 

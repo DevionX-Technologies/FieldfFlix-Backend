@@ -22,7 +22,9 @@ describe('ClipProcessingEnqueueService', () => {
   });
 
   it('should fall back to in-process clip processing when queue URL is unset', async () => {
-    service = new ClipProcessingEnqueueService(mockProcessor as ClipProcessingProcessor);
+    service = new ClipProcessingEnqueueService(
+      mockProcessor as ClipProcessingProcessor,
+    );
 
     const result = await service.enqueueRecording('rec-123', 'webhook');
     expect(result).toBe('in-process');

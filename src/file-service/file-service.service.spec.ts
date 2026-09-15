@@ -12,7 +12,6 @@ jest.mock('@aws-sdk/s3-request-presigner', () => ({
 
 describe('FileServiceService', () => {
   let service: FileServiceService;
-  let mockS3Client: S3Client;
   const mockGetSignedUrl = getSignedUrl as jest.MockedFunction<
     typeof getSignedUrl
   >;
@@ -32,7 +31,6 @@ describe('FileServiceService', () => {
     }).compile();
 
     service = module.get<FileServiceService>(FileServiceService);
-    mockS3Client = module.get<S3Client>(AWSS3Bucket);
   });
 
   it('should be defined', () => {

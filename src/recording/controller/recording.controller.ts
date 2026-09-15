@@ -661,35 +661,78 @@ export class RecordingController {
     const blocked = ['failed', 'cancelled', 'interrupted'].includes(status);
 
     if (
-      !playbackId ||
-      blocked ||
-      !this.recordingService.isRecordingMuxPlayable(recording)
+      playbackId &&
+      !blocked &&
+      this.recordingService.isRecordingMuxPlayable(recording)
     ) {
+      const signed = await this.muxService.signPlaybackToken(playbackId);
+      const publicUrl = `https://stream.mux.com/${playbackId}.m3u8`;
       return {
         recording_id: recording.id,
         playback_id: playbackId,
-        mux_public_url: null,
-        signed_token: null,
-        signed_url: null,
-        expires_at: null,
-        playable: false,
-        status: recording.status ?? 'processing',
+        mux_public_url: publicUrl,
+        signed_token: signed?.token ?? null,
+        signed_url: signed?.token
+          ? `${publicUrl}?token=${encodeURIComponent(signed.token)}`
+          : publicUrl,
+        expires_at: signed?.expires_at ?? null,
+        playable: true,
+        status: 'ready',
       };
     }
 
-    const signed = await this.muxService.signPlaybackToken(playbackId);
-    const publicUrl = `https://stream.mux.com/${playbackId}.m3u8`;
+    // Direct S3 Fallback: When Mux is unavailable (e.g. 402 billing lockout, outage)
+    // but the raw recording MP4 exists in S3, stream directly from S3!
+    if (
+      recording.s3Path &&
+      status !== 'cancelled' &&
+      status !== 'interrupted'
+    ) {
+      try {
+        const s3Clean = recording.s3Path.replace(/^s3:\/\//, '');
+        const firstSlash = s3Clean.indexOf('/');
+        const bucket =
+          firstSlash > 0
+            ? s3Clean.substring(0, firstSlash)
+            : process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
+        const key =
+          firstSlash > 0 ? s3Clean.substring(firstSlash + 1) : s3Clean;
+
+        if (key) {
+          const s3SignedUrl = await this.fileServiceService.getSignedUrlFromS3(
+            key,
+            bucket,
+            604800, // 7 days
+          );
+          if (s3SignedUrl) {
+            return {
+              recording_id: recording.id,
+              playback_id: null,
+              mux_public_url: s3SignedUrl,
+              signed_token: null,
+              signed_url: s3SignedUrl,
+              expires_at: Math.floor(Date.now() / 1000) + 604800,
+              playable: true,
+              status: 'ready',
+            };
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `S3 playback fallback failed for recording ${recordingId}: ${err?.message || err}`,
+        );
+      }
+    }
+
     return {
       recording_id: recording.id,
       playback_id: playbackId,
-      mux_public_url: publicUrl,
-      signed_token: signed?.token ?? null,
-      signed_url: signed?.token
-        ? `${publicUrl}?token=${encodeURIComponent(signed.token)}`
-        : publicUrl,
-      expires_at: signed?.expires_at ?? null,
-      playable: true,
-      status: 'ready',
+      mux_public_url: null,
+      signed_token: null,
+      signed_url: null,
+      expires_at: null,
+      playable: false,
+      status: recording.status ?? 'processing',
     };
   }
 

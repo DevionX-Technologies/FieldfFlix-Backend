@@ -140,9 +140,22 @@ export class MuxService {
         this.logger.error(`Error details: ${error.message}`);
         this.logger.error(error.stack);
       }
-      await this.recordingRepository.update(recordingId, {
-        status: 'failed',
-      });
+      const bucketName =
+        process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
+      if (key) {
+        await this.recordingRepository.update(recordingId, {
+          s3Path: `s3://${bucketName}/${key}`,
+          status: 'ready',
+          isVideoCreated: true,
+        });
+        this.logger.warn(
+          `Mux API ingestion failed for recording ${recordingId} (Status: ${error.response?.status || error.message}). Preserved video as ready via S3 playback fallback: s3://${bucketName}/${key}`,
+        );
+      } else {
+        await this.recordingRepository.update(recordingId, {
+          status: 'failed',
+        });
+      }
     }
   }
 

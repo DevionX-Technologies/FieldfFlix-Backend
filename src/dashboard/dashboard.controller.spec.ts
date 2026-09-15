@@ -36,13 +36,17 @@ describe('DashboardController', () => {
   });
 
   it('should return home dashboard', async () => {
-    const result = await controller.getHomeDashboard({ user: { id: 'user-1' } } as any);
+    const result = await controller.getHomeDashboard({
+      user: { id: 'user-1' },
+    } as any);
     expect(serviceMock.getHomeDashboard).toHaveBeenCalledWith('user-1');
     expect(result.weeklySnapshot.totalSessions).toBe(2);
   });
 
   it('should return analytics', async () => {
-    const result = await controller.getAnalytics({ user: { id: 'user-1' } } as any);
+    const result = await controller.getAnalytics({
+      user: { id: 'user-1' },
+    } as any);
     expect(serviceMock.getAnalytics).toHaveBeenCalledWith('user-1');
     expect(result.overview.totalSessions).toBe(2);
   });
