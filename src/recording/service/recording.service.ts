@@ -240,7 +240,8 @@ export class RecordingService {
     const candidates = await this.recordingRepositoryForMedia.find({
       where: {
         startTime: Between(dayStart, dayEnd),
-        status: Not(In(['failed', 'cancelled'])),
+        // Include failed rows — S3 may exist even when DB status/extract callback failed.
+        status: Not(In(['cancelled'])),
       },
       order: { startTime: 'ASC', id: 'ASC' },
     });
@@ -901,6 +902,20 @@ export class RecordingService {
 
     for (const rec of failed) {
       try {
+        const s3Key =
+          await this.fileServiceService.findFirstObjectKeyWithPrefix(
+            `recordings/${rec.id}_`,
+          );
+        if (s3Key) {
+          const mux = await this.retryMuxIngestion(rec.id);
+          results.push({
+            recordingId: rec.id,
+            ok: mux.ok,
+            error: mux.ok ? undefined : mux.action,
+          });
+          continue;
+        }
+
         const out = await this.retryFailedExtraction(rec.id);
         results.push({
           recordingId: rec.id,
@@ -4678,8 +4693,9 @@ export class RecordingService {
       throw new NotFoundException(`Recording not found: ${dto.recordingId}`);
     }
 
+    const bucketName = RecordingService.defaultMediaBucket();
+
     if (dto.status === 'SUCCESS') {
-      const bucketName = RecordingService.defaultMediaBucket();
       const key =
         dto.s3Key || recording.s3Path?.replace(`s3://${bucketName}/`, '');
 
@@ -4698,6 +4714,29 @@ export class RecordingService {
     } else {
       const meta = (recording.metadata ?? {}) as Record<string, unknown>;
       const attempts = Number(meta.extract_attempts ?? 1);
+      const orphanKey =
+        await this.fileServiceService.findFirstObjectKeyWithPrefix(
+          `recordings/${recording.id}_`,
+        );
+      if (orphanKey) {
+        this.logger.warn(
+          `Pi FAILURE for ${recording.id} but S3 object ${orphanKey} exists — recovering for Mux ingest`,
+        );
+        await this.recordingRepositoryForMedia.update(recording.id, {
+          status: 'uploaded',
+          s3Path: `s3://${bucketName}/${orphanKey}`,
+          metadata: {
+            ...meta,
+            extract_attempts: attempts,
+            extract_failed_reason:
+              dto.error ?? 'Pi reported extraction failure',
+            s3_recovered_from_failure: true,
+          } as Recording['metadata'],
+        });
+        await this.retryMuxIngestion(recording.id);
+        return { success: true };
+      }
+
       await this.recordingRepositoryForMedia.update(recording.id, {
         status: 'failed',
         metadata: {
