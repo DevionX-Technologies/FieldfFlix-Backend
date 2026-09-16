@@ -71,8 +71,8 @@ export class MuxService {
       const data = {
         input: cleanUrl,
         playback_policy: ['public'],
-        mp4_support: 'standard',
-        encoding_tier: 'smart',
+        mp4_support: 'none',
+        encoding_tier: 'baseline',
         passthrough: recordingId,
       };
 
@@ -529,7 +529,8 @@ export class MuxService {
       const upload = await this.mux.video.uploads.create({
         new_asset_settings: {
           playback_policy: ['public'],
-          mp4_support: 'standard',
+          mp4_support: 'none',
+          encoding_tier: 'baseline',
           passthrough: recordingId,
         },
         cors_origin: '*',

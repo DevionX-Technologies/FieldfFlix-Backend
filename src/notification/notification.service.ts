@@ -131,4 +131,21 @@ export class NotificationService {
 
     return 'Notification deleted successfully';
   }
+
+  async markAllAsRead(req: Request): Promise<boolean> {
+    const decode = await this.commonService.extractDataFromToken(req);
+    const userId = decode.user_id;
+    await this.notificationRepository.update(
+      {
+        user_id: userId,
+        message_status: MessageStatus.UNREAD,
+        is_soft_delete: false,
+      },
+      {
+        message_status: MessageStatus.READ,
+        read_at: new Date(),
+      },
+    );
+    return true;
+  }
 }

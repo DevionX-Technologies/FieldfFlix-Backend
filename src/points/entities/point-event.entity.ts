@@ -34,6 +34,7 @@ export enum PointEventType {
  */
 @Entity('point_events')
 @Index('IDX_point_events_user_created', ['userId', 'createdAt'])
+@Index('IDX_point_events_created_user_points', ['createdAt', 'userId', 'points'])
 @Index('IDX_point_events_idempotency', ['idempotencyKey'], { unique: true })
 @Index('IDX_point_events_type_created', ['eventType', 'createdAt'])
 export class PointEvent {

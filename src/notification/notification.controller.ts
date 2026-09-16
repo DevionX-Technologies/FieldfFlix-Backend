@@ -47,6 +47,11 @@ export class NotificationController {
     return this.notificationService.findNotificationById(req, id);
   }
 
+  @Patch('user/mark-all-read')
+  markAllAsRead(@Req() req: Request): Promise<boolean> {
+    return this.notificationService.markAllAsRead(req);
+  }
+
   @Patch('/:id')
   softDelete(@Param('id') id: string): Promise<string> {
     return this.notificationService.softDelete(id);
