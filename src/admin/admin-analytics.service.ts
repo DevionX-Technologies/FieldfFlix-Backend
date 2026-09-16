@@ -828,7 +828,7 @@ export class AdminAnalyticsService {
       recordings.map(async (rec) => {
         const synced = muxSynced.get(rec.id);
         const hasS3 = !!rec.s3Path;
-        const status = hasS3 ? 'ready' : synced?.status ?? rec.status;
+        const status = hasS3 ? 'ready' : (synced?.status ?? rec.status);
         const muxPlaybackId = synced?.mux_playback_id ?? rec.mux_playback_id;
         const muxAssetId = rec.mux_asset_id;
         const isMuxPlayable = this.recordingService.isRecordingMuxPlayable({
@@ -1040,10 +1040,10 @@ export class AdminAnalyticsService {
       const sessionStatus = allPlayable
         ? 'ready'
         : anyStillProcessing
-        ? 'extracting'
-        : allMuxReady
-          ? 'ready'
-          : pickBestExtractionStatus(sorted.map((r) => r.status));
+          ? 'extracting'
+          : allMuxReady
+            ? 'ready'
+            : pickBestExtractionStatus(sorted.map((r) => r.status));
 
       const channelDetails = sorted.map((r) => ({
         id: r.id,

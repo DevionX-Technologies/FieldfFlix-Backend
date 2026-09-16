@@ -315,10 +315,10 @@ describe('RecordingService Stale Extraction and Prior Claim Recovery', () => {
 
       expect(result.status).toBe('ready');
       expect(result.s3Path).toContain('recordings/status.mp4');
-      expect(mockRecordingRepo.update).toHaveBeenCalledWith(
-        'rec-s3-status',
-        { status: 'ready', isVideoCreated: true },
-      );
+      expect(mockRecordingRepo.update).toHaveBeenCalledWith('rec-s3-status', {
+        status: 'ready',
+        isVideoCreated: true,
+      });
     });
   });
 

@@ -614,12 +614,17 @@ export class RecordingService {
     try {
       const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
       const stuck = await this.recordingRepositoryForMedia.find({
-        where: [{ status: 'uploaded' }, { status: 'processing' }],
+        where: [
+          { status: 'uploaded' },
+          { status: 'processing' },
+          { status: 'ready' },
+        ],
       });
 
       const targets = stuck.filter(
         (rec) =>
           !rec.mux_playback_id &&
+          !!rec.s3Path &&
           rec.updated_at &&
           new Date(rec.updated_at) >= cutoff,
       );
