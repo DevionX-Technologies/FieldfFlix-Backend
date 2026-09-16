@@ -2563,6 +2563,7 @@ export class RecordingService {
         // Get game duration from Mux asset only if needed for self-heal or not ready yet
         if (
           recording.mux_asset_id &&
+          !recording.s3Path &&
           (recording.status !== 'ready' || !recording.mux_playback_id)
         ) {
           const muxFetch = Promise.race([
