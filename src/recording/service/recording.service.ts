@@ -1728,11 +1728,34 @@ export class RecordingService {
         'mux_asset_id',
         'mux_playback_id',
         'mux_media_url',
+        's3Path',
       ],
     });
 
     if (!recording) {
       return null;
+    }
+
+    // S3 is a playable source even when Mux ingestion is still pending.
+    // Keep Mux healing asynchronous so it never blocks playback readiness.
+    if (
+      recording.s3Path &&
+      !['failed', 'cancelled', 'interrupted'].includes(
+        String(recording.status ?? '').toLowerCase(),
+      )
+    ) {
+      if (recording.status !== 'ready') {
+        await this.recordingRepository.update(recordingId, {
+          status: 'ready',
+          isVideoCreated: true,
+        });
+        recording.status = 'ready';
+      }
+      return {
+        status: recording.status,
+        mux_playback_id: recording.mux_playback_id ?? null,
+        mux_asset_id: recording.mux_asset_id ?? null,
+      };
     }
 
     if (!recording.mux_asset_id || this.isRecordingMuxPlayable(recording)) {

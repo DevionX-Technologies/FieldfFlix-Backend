@@ -827,7 +827,8 @@ export class AdminAnalyticsService {
     const items = await Promise.all(
       recordings.map(async (rec) => {
         const synced = muxSynced.get(rec.id);
-        const status = synced?.status ?? rec.status;
+        const hasS3 = !!rec.s3Path;
+        const status = hasS3 ? 'ready' : synced?.status ?? rec.status;
         const muxPlaybackId = synced?.mux_playback_id ?? rec.mux_playback_id;
         const muxAssetId = rec.mux_asset_id;
         const isMuxPlayable = this.recordingService.isRecordingMuxPlayable({
@@ -992,9 +993,10 @@ export class AdminAnalyticsService {
       const anyStillProcessing = sorted.some(
         (r) =>
           String(r.status ?? '').toLowerCase() === 'extracting' ||
-          r.muxProcessing ||
-          (r.hasS3 && !r.hasMux),
+          (r.muxProcessing && !r.hasS3),
       );
+      const allPlayable =
+        sorted.length > 0 && sorted.every((r) => r.hasMux || r.hasS3);
 
       const mergedHighlightMux = sorted.reduce(
         (acc, row) => {
@@ -1035,7 +1037,9 @@ export class AdminAnalyticsService {
         mergedHighlightMux.status = 'pending';
       }
 
-      const sessionStatus = anyStillProcessing
+      const sessionStatus = allPlayable
+        ? 'ready'
+        : anyStillProcessing
         ? 'extracting'
         : allMuxReady
           ? 'ready'

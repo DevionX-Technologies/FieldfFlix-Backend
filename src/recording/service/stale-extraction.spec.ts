@@ -297,6 +297,31 @@ describe('RecordingService Stale Extraction and Prior Claim Recovery', () => {
     });
   });
 
+  describe('getRecordingStatus', () => {
+    it('should immediately expose S3-backed extraction as ready', async () => {
+      const s3Recording = {
+        id: 'rec-s3-status',
+        status: 'extracting',
+        s3Path: 's3://fieldflicks-media-assets/recordings/status.mp4',
+        mux_asset_id: null,
+        mux_playback_id: null,
+        startTime: new Date('2026-09-15T04:30:00.000Z'),
+        endTime: new Date('2026-09-15T05:30:00.000Z'),
+      } as unknown as Recording;
+
+      mockRecordingRepo.findOne.mockResolvedValue(s3Recording);
+
+      const result = await service.getRecordingStatus('rec-s3-status');
+
+      expect(result.status).toBe('ready');
+      expect(result.s3Path).toContain('recordings/status.mp4');
+      expect(mockRecordingRepo.update).toHaveBeenCalledWith(
+        'rec-s3-status',
+        { status: 'ready', isVideoCreated: true },
+      );
+    });
+  });
+
   describe('requestOnDemandExtraction', () => {
     it('should auto-mark stalled prior claim as failed and allow re-claim instead of throwing 409', async () => {
       const now = Date.now();
