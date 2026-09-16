@@ -4854,6 +4854,7 @@ export class RecordingService {
           nvr_channel: nvrChannel,
           camera_label: cameraLabel,
           mux_playback_id: row.mux_playback_id ?? null,
+          s3Path: row.s3Path ?? null,
           status: row.status ?? null,
           startTime: row.startTime ?? null,
           endTime: row.endTime ?? null,
