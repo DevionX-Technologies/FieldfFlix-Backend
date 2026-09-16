@@ -12,7 +12,7 @@ import {
 } from '../types/lambda.types';
 import { formatLogMessage } from '../utils/lambda.util';
 import { MUX_API_BASE_URL } from 'src/constant/constant';
-import { Recording } from '../types/recording.entity';
+import { Recording } from '../types/recording.lambda';
 
 const DEFAULT_URL_EXPIRY_SECONDS = 604_800; // 7 days
 

@@ -118,7 +118,7 @@ export class RecordingService {
   private static readonly STALE_IN_PROGRESS_MS = 2 * 60 * 60 * 1000; // 2 hours
 
   /** On-demand extractions without Mux playback older than this are failed (max 3 attempts). */
-  private static readonly STALE_EXTRACTION_MS = 30 * 60 * 1000; // 30 minutes
+  private static readonly STALE_EXTRACTION_MS = 120 * 60 * 1000; // 120 minutes (2 hours)
   private static readonly MAX_EXTRACT_ATTEMPTS = 3;
   private staleExtractionRunning = false;
   private staleMuxHealRunning = false;
@@ -252,7 +252,7 @@ export class RecordingService {
   private static readonly MUX_CYCLE_MAX_IDLE_ROUNDS = 2;
 
   private static defaultMediaBucket(): string {
-    return process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
+    return process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
   }
 
   /**
@@ -497,32 +497,103 @@ export class RecordingService {
           new Date(rec.updated_at) < cutoff,
       );
 
+      const bucketName = RecordingService.defaultMediaBucket();
+
       for (const rec of targets) {
         const meta = (rec.metadata ?? {}) as Record<string, unknown>;
         const attempts = Number(meta.extract_attempts ?? 1);
-        if (attempts >= RecordingService.MAX_EXTRACT_ATTEMPTS) {
-          await this.recordingRepositoryForMedia.update(rec.id, {
-            status: 'failed',
-            metadata: {
-              ...meta,
-              extract_failed_reason:
-                'No playable video after 30 minutes — extraction timed out',
-            } as Recording['metadata'],
-          });
+
+        // 1. Check if S3 actually contains the recording MP4
+        let s3Key: string | null = null;
+        try {
+          if (this.fileServiceService?.findFirstObjectKeyWithPrefix) {
+            s3Key = await this.fileServiceService.findFirstObjectKeyWithPrefix(
+              `recordings/${rec.id}_`,
+            );
+          }
+        } catch (s3Err) {
           this.logger.warn(
-            `Marked stale extraction ${rec.id} as failed (${attempts} attempts)`,
+            `S3 prefix check failed for stale recording ${rec.id}: ${(s3Err as Error)?.message}`,
           );
-        } else {
+        }
+
+        if (s3Key) {
+          this.logger.log(
+            `Stale extraction ${rec.id} found S3 key ${s3Key} — recovering to uploaded and triggering Mux ingest`,
+          );
           await this.recordingRepositoryForMedia.update(rec.id, {
-            status: 'failed',
+            status: 'uploaded',
+            s3Path: `s3://${bucketName}/${s3Key}`,
             metadata: {
               ...meta,
-              extract_attempts: attempts,
-              extract_failed_reason:
-                'No playable video after 30 minutes — please try claiming again',
-            } as Recording['metadata'],
+              recovered_from_stale: true,
+              s3_recovered_at: new Date().toISOString(),
+            } as any,
           });
+          try {
+            await this.retryMuxIngestion(rec.id);
+          } catch (muxErr) {
+            this.logger.warn(
+              `retryMuxIngestion failed during stale sweep recovery for ${rec.id}: ${(muxErr as Error)?.message}`,
+            );
+          }
+          continue;
         }
+
+        // 2. Check if Mux asset exists and is ready or processing
+        if (rec.mux_asset_id && this.muxService?.getAssetDetails) {
+          try {
+            const asset = await this.muxService.getAssetDetails(
+              rec.mux_asset_id,
+            );
+            if (asset?.status === 'ready') {
+              const livePlaybackId = Array.isArray(asset.playback_ids)
+                ? (asset.playback_ids.find((p: any) => p?.policy === 'public')
+                    ?.id ?? asset.playback_ids[0]?.id)
+                : null;
+              if (livePlaybackId) {
+                this.logger.log(
+                  `Stale extraction ${rec.id} found ready Mux asset — healing to ready`,
+                );
+                await this.recordingRepositoryForMedia.update(rec.id, {
+                  status: 'ready',
+                  isVideoCreated: true,
+                  mux_playback_id: livePlaybackId,
+                  mux_media_url: `https://stream.mux.com/${livePlaybackId}.m3u8`,
+                });
+                continue;
+              }
+            } else if (asset?.status === 'preparing') {
+              this.logger.log(
+                `Stale extraction ${rec.id} is still preparing on Mux — keeping active`,
+              );
+              continue;
+            }
+          } catch (assetErr) {
+            this.logger.warn(
+              `Mux asset check failed for stale extraction ${rec.id}: ${(assetErr as Error)?.message}`,
+            );
+          }
+        }
+
+        // 3. If neither S3 file nor Mux asset exists after 120 minutes, mark failed with clear reason
+        const failReason =
+          attempts >= RecordingService.MAX_EXTRACT_ATTEMPTS
+            ? 'No playable video after 120 minutes — extraction timed out (max attempts reached)'
+            : 'No playable video after 120 minutes — extraction timed out. Venue camera stream was not received.';
+
+        await this.recordingRepositoryForMedia.update(rec.id, {
+          status: 'failed',
+          metadata: {
+            ...meta,
+            extract_attempts: attempts,
+            extract_failed_reason: failReason,
+            failed_at: new Date().toISOString(),
+          } as Recording['metadata'],
+        });
+        this.logger.warn(
+          `Marked stale extraction ${rec.id} as failed after ${RecordingService.STALE_EXTRACTION_MS / 60000}m (${attempts} attempts)`,
+        );
       }
     } catch (e) {
       this.logger.error(
@@ -1328,7 +1399,11 @@ export class RecordingService {
           relations: ['user_devices_token'],
         });
 
-      if (findAllDeviceTokeToSendNotification.user_devices_token.length === 0) {
+      if (
+        !findAllDeviceTokeToSendNotification ||
+        !findAllDeviceTokeToSendNotification.user_devices_token ||
+        findAllDeviceTokeToSendNotification.user_devices_token.length === 0
+      ) {
         await queryRunner.commitTransaction();
         // Best-effort points award — failures here must NEVER break recording start.
         this.awardPointsBestEffort({
@@ -2419,7 +2494,6 @@ export class RecordingService {
     const recordings = await this.recordingRepository.find({
       where: {
         userId: userId,
-        status: Not('failed'),
       },
       relations: [
         'camera',
@@ -2463,17 +2537,22 @@ export class RecordingService {
           recording.mux_asset_id &&
           (recording.status !== 'ready' || !recording.mux_playback_id)
         ) {
-          promises.push(
-            this.muxService
-              .getAssetDetails(recording.mux_asset_id)
-              .catch((error) => {
-                this.logger.warn(
-                  `Failed to get asset details for recording ${recording.id}:`,
-                  error.message,
-                );
-                return null;
-              }),
-          );
+          const muxFetch = Promise.race([
+            this.muxService.getAssetDetails(recording.mux_asset_id),
+            new Promise((_, reject) =>
+              setTimeout(
+                () => reject(new Error('Mux getAssetDetails timeout')),
+                3500,
+              ),
+            ),
+          ]).catch((error) => {
+            this.logger.warn(
+              `Failed to get asset details for recording ${recording.id}:`,
+              error.message,
+            );
+            return null;
+          });
+          promises.push(muxFetch);
         } else {
           promises.push(Promise.resolve(null));
         }
@@ -2581,6 +2660,33 @@ export class RecordingService {
           if (String(recording.status ?? '').toLowerCase() === 'completed') {
             (recording as any).status = 'processing';
           }
+        } else if (!assetDetails && recording.mux_playback_id) {
+          if (recording.status !== 'ready') {
+            (recording as any).status = 'ready';
+            (recording as any).isVideoCreated = true;
+            this.recordingRepository
+              .update(recording.id, { status: 'ready', isVideoCreated: true })
+              .catch(() => {});
+          }
+        }
+
+        // Check if an S3 object exists for this recording if no Mux asset and no s3Path
+        if (!recording.mux_playback_id && !recording.s3Path) {
+          try {
+            if (this.fileServiceService?.findFirstObjectKeyWithPrefix) {
+              const s3Key =
+                await this.fileServiceService.findFirstObjectKeyWithPrefix(
+                  `recordings/${recording.id}_`,
+                );
+              if (s3Key) {
+                const bucketName = RecordingService.defaultMediaBucket();
+                recording.s3Path = `s3://${bucketName}/${s3Key}`;
+                this.recordingRepository
+                  .update(recording.id, { s3Path: recording.s3Path })
+                  .catch(() => {});
+              }
+            }
+          } catch {}
         }
 
         const siblingRows =
@@ -4154,11 +4260,15 @@ export class RecordingService {
     refId?: string | null;
     metadata?: Record<string, unknown>;
   }): void {
-    void this.pointsService
-      .awardPoints(args)
+    if (!this.pointsService?.awardPoints) return;
+    void Promise.resolve(this.pointsService.awardPoints(args))
       .then((awarded) => {
         // Update streak when a recording is created
-        if (awarded && args.eventType === PointEventType.RECORDING_CREATE) {
+        if (
+          awarded &&
+          args.eventType === PointEventType.RECORDING_CREATE &&
+          this.pointsService.updateStreak
+        ) {
           return this.pointsService.updateStreak(args.userId);
         }
       })
@@ -4306,27 +4416,12 @@ export class RecordingService {
       );
     }
 
-    // Ensure userId is never null if table has NOT NULL constraint
-    let resolvedUserId = requestingUserId || dto.userId;
+    // Ensure a valid user ID is provided to associate recording with claimant
+    const resolvedUserId = requestingUserId || dto.userId;
     if (!resolvedUserId) {
-      try {
-        const fallbackUser = await this.userRepository.findOne({
-          order: { created_at: 'ASC' },
-        });
-        if (fallbackUser) {
-          resolvedUserId = fallbackUser.id;
-        }
-      } catch (err) {
-        this.logger.warn(`Could not find fallback user: ${err.message}`);
-      }
-    }
-
-    try {
-      await this.recordingRepositoryForMedia.query(
-        'ALTER TABLE "recordings" ALTER COLUMN "userId" DROP NOT NULL',
+      throw new BadRequestException(
+        'A valid user ID is required to claim match recordings.',
       );
-    } catch {
-      // Ignore if column already allows nulls or permissions don't allow ALTER
     }
 
     if (resolvedUserId) {
@@ -4377,10 +4472,9 @@ export class RecordingService {
 
     for (const camera of camerasToExtract) {
       if (!camera.raspberryPiBaseUrl) {
-        this.logger.warn(
-          `Camera ${camera.name || camera.id} is not configured with an active Edge Pi Gateway URL. Skipping multi-angle extraction for this channel.`,
+        this.logger.log(
+          `Camera ${camera.name || camera.id} is not configured with an active Edge Pi Gateway URL. Registering cloud-direct extraction record.`,
         );
-        continue;
       }
 
       const nvrChannels = resolveNvrChannelsForCamera(camera);
@@ -4560,57 +4654,64 @@ export class RecordingService {
           }
         }
 
-        const callbackWebhookUrl = `${process.env.APP_BASE_URL || 'https://api.fieldflicks.com'}/recording/pi-callback`;
+        if (camera.raspberryPiBaseUrl) {
+          const callbackWebhookUrl = `${process.env.APP_BASE_URL || 'https://api.fieldflicks.com'}/recording/pi-callback`;
 
-        this.logger.log(
-          `Dispatching on-demand extraction for Recording ${recording.id} to Pi (${camera.raspberryPiBaseUrl}) on NVR channel ${channelNumber} (Camera: ${camera.name})`,
-        );
-
-        try {
-          this.raspberryPiApiService
-            .extractSession(
-              camera.raspberryPiBaseUrl,
-              {
-                recordingId: recording.id,
-                channel: channelNumber,
-                startTime: startDate.toISOString(),
-                endTime: endDate.toISOString(),
-                uploadUrl,
-                s3Key,
-                callbackWebhookUrl,
-              },
-              camera.raspberryPiApiKey,
-            )
-            .then((piResponse) => {
-              if (piResponse.status === 'SUCCESS') {
-                this.logger.log(
-                  `Pi reported initial extraction success for recording ${recording.id} (NVR ch ${channelNumber}). Waiting for Mux webhook.`,
-                );
-              } else {
-                this.logger.warn(
-                  `Pi reported non-success status for recording ${recording.id} (NVR ch ${channelNumber}): ${piResponse.status}`,
-                );
-              }
-            })
-            .catch((error) => {
-              this.logger.warn(
-                `Pi extraction HTTP request finished with error or timed out for recording ${recording.id} (NVR ch ${channelNumber}), but extraction may still be running: ${error.message}`,
-              );
-            });
-
-          createdRecordings.push(recording);
-        } catch (error) {
-          await this.recordingRepositoryForMedia.update(recording.id, {
-            status: 'failed',
-            metadata: {
-              ...(recording.metadata as Record<string, unknown>),
-              extract_failed_reason:
-                (error as Error)?.message ?? 'Setup failed',
-            } as Recording['metadata'],
-          });
-          this.logger.error(
-            `Error during on-demand extraction setup for camera ${camera.id} NVR ch ${channelNumber}: ${error.message}`,
+          this.logger.log(
+            `Dispatching on-demand extraction for Recording ${recording.id} to Pi (${camera.raspberryPiBaseUrl}) on NVR channel ${channelNumber} (Camera: ${camera.name})`,
           );
+
+          try {
+            this.raspberryPiApiService
+              .extractSession(
+                camera.raspberryPiBaseUrl,
+                {
+                  recordingId: recording.id,
+                  channel: channelNumber,
+                  startTime: startDate.toISOString(),
+                  endTime: endDate.toISOString(),
+                  uploadUrl,
+                  s3Key,
+                  callbackWebhookUrl,
+                },
+                camera.raspberryPiApiKey,
+              )
+              .then((piResponse) => {
+                if (piResponse.status === 'SUCCESS') {
+                  this.logger.log(
+                    `Pi reported initial extraction success for recording ${recording.id} (NVR ch ${channelNumber}). Waiting for Mux webhook.`,
+                  );
+                } else {
+                  this.logger.warn(
+                    `Pi reported non-success status for recording ${recording.id} (NVR ch ${channelNumber}): ${piResponse.status}`,
+                  );
+                }
+              })
+              .catch((error) => {
+                this.logger.warn(
+                  `Pi extraction HTTP request finished with error or timed out for recording ${recording.id} (NVR ch ${channelNumber}), but extraction may still be running: ${error.message}`,
+                );
+              });
+
+            createdRecordings.push(recording);
+          } catch (error) {
+            await this.recordingRepositoryForMedia.update(recording.id, {
+              status: 'failed',
+              metadata: {
+                ...(recording.metadata as Record<string, unknown>),
+                extract_failed_reason:
+                  (error as Error)?.message ?? 'Setup failed',
+              } as Recording['metadata'],
+            });
+            this.logger.error(
+              `Error during on-demand extraction setup for camera ${camera.id} NVR ch ${channelNumber}: ${error.message}`,
+            );
+          }
+        } else {
+          this.logger.log(
+            `Camera ${camera.id} (${camera.name}) has no Edge Pi Gateway URL configured; created extraction record ${recording.id} (NVR ch ${channelNumber}) awaiting video stream/upload`,
+          );
+          createdRecordings.push(recording);
         }
       }
     }

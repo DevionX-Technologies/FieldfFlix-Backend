@@ -10,7 +10,7 @@ import {
   MuxUploadLambdaEvent,
   MuxUploadLambdaResult,
 } from './types/lambda.types';
-import { Recording } from './types/recording.entity';
+import { Recording } from './types/recording.lambda';
 
 /**
  * Gets S3 object tags for a given bucket and key.

@@ -233,7 +233,8 @@ export class HighlightGapHealService {
     deletedKeys: number;
     deletedHighlights: number;
   }> {
-    const bucket = process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
+    const bucket =
+      process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
     let deletedKeys = 0;
 
     const prefix = `recordings/${rec.id}_`;

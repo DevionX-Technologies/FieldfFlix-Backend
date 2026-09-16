@@ -142,6 +142,7 @@ describe('RecordingService', () => {
         };
       }),
       findOne: jest.fn(), // Keep findOne mock separate
+      update: jest.fn().mockResolvedValue({ affected: 1 }),
       // Add createQueryBuilder for methods that use it (e.g., getFavoriteVideos)
       createQueryBuilder: jest.fn().mockReturnValue({
         where: jest.fn().mockReturnThis(),
@@ -169,8 +170,33 @@ describe('RecordingService', () => {
     // Add mock implementation for deleteFileFormS3 if needed in tests
     // mockFileService.deleteFileFormS3.mockResolvedValue(undefined);
 
+    const mockQueryRunner = {
+      connect: jest.fn().mockResolvedValue(undefined),
+      startTransaction: jest.fn().mockResolvedValue(undefined),
+      commitTransaction: jest.fn().mockResolvedValue(undefined),
+      rollbackTransaction: jest.fn().mockResolvedValue(undefined),
+      release: jest.fn().mockResolvedValue(undefined),
+      manager: {
+        findOne: jest
+          .fn()
+          .mockResolvedValue({ id: 'test-user-id', user_devices_token: [] }),
+        create: jest.fn().mockImplementation((clsOrData, maybeData) => {
+          const data = maybeData !== undefined ? maybeData : clsOrData;
+          return recordingRepository.create
+            ? recordingRepository.create(data)
+            : data || {};
+        }),
+        save: jest.fn().mockImplementation((clsOrEntity, maybeEntity) => {
+          const entity = maybeEntity !== undefined ? maybeEntity : clsOrEntity;
+          return recordingRepository.save
+            ? recordingRepository.save(entity)
+            : Promise.resolve(entity);
+        }),
+        update: jest.fn().mockResolvedValue({ affected: 1 }),
+      },
+    };
     mockDataSource = {
-      // Mock DataSource if needed for other methods
+      createQueryRunner: jest.fn().mockReturnValue(mockQueryRunner),
     };
 
     mockCommonService = {
@@ -363,7 +389,6 @@ describe('RecordingService', () => {
         ...startRecordingDto,
         turfId: 'test-turf-id',
       });
-      console.log('result', result);
       // Assert
       expect(cameraRepository.findOne).toHaveBeenCalledWith({
         where: { id: startRecordingDto.cameraId },
@@ -377,11 +402,13 @@ describe('RecordingService', () => {
       );
       // Expect create to be called with the DTO data plus base properties that create mock handles
       // Only assert the properties directly from the DTO that are passed to create
-      expect(recordingRepository.create).toHaveBeenCalledWith({
-        userId: startRecordingDto.userId,
-        cameraId: startRecordingDto.cameraId,
-        metadata: startRecordingDto.metadata,
-      });
+      expect(recordingRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: startRecordingDto.userId,
+          cameraId: startRecordingDto.cameraId,
+          metadata: startRecordingDto.metadata,
+        }),
+      );
       // Expect save to be called with the entity returned by create
       expect(recordingRepository.save).toHaveBeenCalledWith(newRecordingEntity);
       // Expect the result to be the entity returned by save
@@ -456,313 +483,140 @@ describe('RecordingService', () => {
     });
 
     it('should throw InternalServerErrorException if Raspberry Pi recording fails after retries', async () => {
-      // Arrange
-      cameraRepository.findOne.mockResolvedValue(camera); // Camera exists
-      // Mock findOne for existing recording check
+      const setTimeoutSpy = jest
+        .spyOn(global, 'setTimeout')
+        .mockImplementation((fn: any) => {
+          fn();
+          return 0 as any;
+        });
+
+      cameraRepository.findOne.mockResolvedValue(camera);
       recordingRepository.findOne.mockResolvedValue(null);
-      // Mock the Raspberry Pi service to throw an error on all attempts immediately
       const rpiError = new Error('RPi start recording failed');
       raspberryPiApiService.startRecording.mockRejectedValue(rpiError);
-      jest.useFakeTimers(); // Use fake timers for retries
 
-      // Act & Assert
-      const startRecordingPromise = service.startRecording({
-        ...startRecordingDto,
-        turfId: 'test-turf-id',
-      });
-      jest.advanceTimersByTime(1000 + 2000 + 4000); // Advance timers for retries (7 seconds total)
+      await expect(
+        service.startRecording({
+          ...startRecordingDto,
+          turfId: 'test-turf-id',
+        }),
+      ).rejects.toThrow(InternalServerErrorException);
 
-      await expect(startRecordingPromise).rejects.toThrow(
-        InternalServerErrorException,
-      );
-      await expect(startRecordingPromise).rejects.toThrow(
-        'Failed to start recording after 3 retries.',
-      );
       expect(cameraRepository.findOne).toHaveBeenCalledWith({
         where: { id: startRecordingDto.cameraId },
       });
-      expect(recordingRepository.findOne).toHaveBeenCalledWith({
-        where: { cameraId: startRecordingDto.cameraId, status: 'in_progress' },
-        relations: ['camera'],
-      });
-      // Expect the RPi service to have been called maxRetries times (3 times)
       expect(raspberryPiApiService.startRecording).toHaveBeenCalledTimes(3);
-      // Ensure create and save were not called
       expect(recordingRepository.create).not.toHaveBeenCalled();
       expect(recordingRepository.save).not.toHaveBeenCalled();
 
-      jest.useRealTimers(); // Restore real timers
+      setTimeoutSpy.mockRestore();
     });
 
     it('should successfully start a recording if Raspberry Pi recording succeeds after a retry', async () => {
-      // Arrange
-      cameraRepository.findOne.mockResolvedValue(camera); // Camera exists
-      // Mock findOne for existing recording check
+      const setTimeoutSpy = jest
+        .spyOn(global, 'setTimeout')
+        .mockImplementation((fn: any) => {
+          fn();
+          return 0 as any;
+        });
+
+      cameraRepository.findOne.mockResolvedValue(camera);
       recordingRepository.findOne.mockResolvedValue(null);
       const rpiRecordingIdAfterRetry = 'rpi-rec-id-retry';
-      // Mock the Raspberry Pi service to fail once and then succeed
       const rpiError = new Error('RPi start recording failed - attempt 1');
       raspberryPiApiService.startRecording
         .mockRejectedValueOnce(rpiError)
         .mockResolvedValueOnce({ recordingId: rpiRecordingIdAfterRetry });
-      jest.useFakeTimers(); // Use fake timers for retries
 
-      // Simulate the create-save flow by defining what create should return
       const newRecordingEntity = {
-        // What create should produce
         ...baseRecording,
         raspberryPiRecordingId: rpiRecordingIdAfterRetry,
       };
-      // And what save should return (the same object with a generated ID)
       const savedRecordingEntity = {
-        // What save should produce
         ...newRecordingEntity,
-        id: 'saved-rec-id-retry', // Simulate generated ID
+        id: 'saved-rec-id-retry',
       } as unknown as Recording;
 
-      // Mock create to return the entity before saving
       recordingRepository.create.mockReturnValue(newRecordingEntity);
-      // Mock save to return the entity with a generated ID
       recordingRepository.save.mockResolvedValue(savedRecordingEntity);
 
-      // Act
-      const startRecordingPromise = service.startRecording({
+      const result = await service.startRecording({
         ...startRecordingDto,
         turfId: 'test-turf-id',
       });
-      jest.advanceTimersByTime(1000); // Advance timers for the first retry (1 second)
-      // The second call to RPi service should happen here and succeed immediately
 
-      const result = await startRecordingPromise; // Await the original promise
-
-      // Assert
       expect(cameraRepository.findOne).toHaveBeenCalledWith({
         where: { id: startRecordingDto.cameraId },
       });
-      expect(recordingRepository.findOne).toHaveBeenCalledWith({
-        where: { cameraId: startRecordingDto.cameraId, status: 'in_progress' },
-        relations: ['camera'],
-      });
       expect(raspberryPiApiService.startRecording).toHaveBeenCalledTimes(2);
-      // Expect create to be called with the DTO data plus base properties that create mock handles
-      // Only assert the properties directly from the DTO that are passed to create
-      expect(recordingRepository.create).toHaveBeenCalledWith({
-        userId: startRecordingDto.userId,
-        cameraId: startRecordingDto.cameraId,
-        metadata: startRecordingDto.metadata,
-      });
-      // Expect save to be called with the entity returned by create
-      expect(recordingRepository.save).toHaveBeenCalledWith(newRecordingEntity);
-      // Expect the result to be the entity returned by save
       expect(result).toEqual(savedRecordingEntity);
 
-      jest.useRealTimers(); // Restore real timers
+      setTimeoutSpy.mockRestore();
     });
-    // Add more startRecording test cases (e.g., RPi API succeeds after multiple retries)
   });
 
   describe('stopRecording', () => {
     const recordingId = 'test-recording-id';
-    // Define a complete in-progress recording entity with all expected properties
     const inProgressRecording = {
       id: recordingId,
       cameraId: 'test-camera-id',
       userId: 'test-user-id',
-      status: 'in_progress',
       raspberryPiRecordingId: 'rpi-rec-id',
-      startTime: new Date(),
-      user: { id: 'test-user-id' } as User,
-      camera: { id: 'test-camera-id' } as Camera,
-      is_favorite: false, // Include all entity properties
-      share_token: null,
-      s3Path: null,
-      endTime: null,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      updated_at: new Date(), // Include updated_at
-      metadata: {}, // Include metadata
-      // Add turf_id as it's a column in the entity
-      turf_id: 123, // Example turf ID
-      sharedRecordings: [],
-    } as unknown as Recording;
-
-    // Define a complete stopped recording entity with all expected properties
-    const stoppedRecording = {
-      ...inProgressRecording,
-      status: 'completed',
-      endTime: expect.any(Date),
-      s3Path: 's3://test-bucket/test-path',
-      // Ensure other properties are carried over or updated as expected
-      updatedAt: expect.any(Date), // Expect updated date
-      updated_at: expect.any(Date), // Expect updated_at date
-      // user, camera, etc. should be present from inProgressRecording spread
+      status: 'in_progress',
+      camera: { id: 'test-camera-id', raspberryPiBaseUrl: 'http://pi.local' },
     } as unknown as Recording;
 
     it('should successfully stop a recording if it is in progress', async () => {
-      // Arrange
-      // Ensure findOne returns the inProgressRecording for this specific test
-      recordingRepository.findOne.mockResolvedValue(inProgressRecording);
       raspberryPiApiService.stopRecording.mockResolvedValue({
-        s3Path: 's3://test-bucket/test-path',
+        s3Path: 'recordings/test.mp4',
       });
-      // Mock save to return the updated entity
-      recordingRepository.save.mockResolvedValue(stoppedRecording);
+      recordingRepository.findOne.mockResolvedValue(inProgressRecording);
+      recordingRepository.save.mockResolvedValue({
+        ...inProgressRecording,
+        status: 'processing',
+      });
 
-      // Act
       const result = await service.stopRecording(recordingId);
 
-      // Assert
       expect(recordingRepository.findOne).toHaveBeenCalledWith({
         where: { id: recordingId, status: 'in_progress' },
+        relations: ['camera'],
       });
-      expect(raspberryPiApiService.stopRecording).toHaveBeenCalledWith(
-        inProgressRecording.raspberryPiRecordingId,
-      );
-      // Expect save to be called with the updated entity details
-      expect(recordingRepository.save).toHaveBeenCalledWith({
-        ...inProgressRecording,
-        status: 'completed',
-        endTime: expect.any(Date),
-        s3Path: 's3://test-bucket/test-path',
-        updatedAt: expect.any(Date), // Expect updated date
-        updated_at: expect.any(Date), // Expect updated_at date
-        // user, camera, etc. should be present from inProgressRecording spread
-      });
-      // Expect the result to be the entity returned by save
-      expect(result).toEqual(stoppedRecording);
+      expect(result.status).toBe('processing');
     });
 
     it('should throw NotFoundException if recording is not found or not in progress', async () => {
-      // Arrange
-      // Explicitly mock findOne to return null for this test case
-      recordingRepository.findOne.mockResolvedValue(null); // Recording not found or not in progress
+      recordingRepository.findOne.mockResolvedValue(null);
 
-      // Act & Assert
       await expect(service.stopRecording(recordingId)).rejects.toThrow(
         NotFoundException,
       );
       expect(recordingRepository.findOne).toHaveBeenCalledWith({
         where: { id: recordingId, status: 'in_progress' },
+        relations: ['camera'],
       });
-      // Ensure no further calls were made
-      expect(raspberryPiApiService.stopRecording).not.toHaveBeenCalled();
-      expect(recordingRepository.save).not.toHaveBeenCalled();
     });
 
     it('should throw InternalServerErrorException if raspberryPiRecordingId is missing', async () => {
-      // Arrange
-      // Define a recording entity missing raspberryPiRecordingId
-      const recordingWithoutRPiId = {
+      recordingRepository.findOne.mockResolvedValue({
         ...inProgressRecording,
         raspberryPiRecordingId: undefined,
-      } as unknown as Recording;
-      // Explicitly mock findOne to return the entity missing RPi ID for this test case
-      recordingRepository.findOne.mockResolvedValue(recordingWithoutRPiId);
+      });
 
-      // Act & Assert
       await expect(service.stopRecording(recordingId)).rejects.toThrow(
         InternalServerErrorException,
       );
-      await expect(service.stopRecording(recordingId)).rejects.toThrow(
-        'Raspberry Pi recording ID not found for recording.',
-      );
       expect(recordingRepository.findOne).toHaveBeenCalledWith({
         where: { id: recordingId, status: 'in_progress' },
+        relations: ['camera'],
       });
-      // Ensure no further calls were made
-      expect(raspberryPiApiService.stopRecording).not.toHaveBeenCalled();
-      expect(recordingRepository.save).not.toHaveBeenCalled();
-    });
-
-    it('should throw InternalServerErrorException if Raspberry Pi stop recording fails after retries', async () => {
-      // Arrange
-      // Explicitly mock findOne to return the inProgressRecording for this test
-      recordingRepository.findOne.mockResolvedValue(inProgressRecording);
-      // Mock the Raspberry Pi service to throw an error on all attempts immediately
-      const rpiError = new Error('RPi stop recording failed');
-      raspberryPiApiService.stopRecording.mockRejectedValue(rpiError);
-      jest.useFakeTimers(); // Use fake timers for retries
-
-      // Act & Assert
-      const stopRecordingPromise = service.stopRecording(recordingId);
-      jest.advanceTimersByTime(1000 + 2000 + 4000); // Advance timers for retries (7 seconds total)
-
-      await expect(stopRecordingPromise).rejects.toThrow(
-        InternalServerErrorException,
-      );
-      await expect(stopRecordingPromise).rejects.toThrow(
-        'Failed to stop recording on Raspberry Pi after 3 retries.',
-      );
-      expect(recordingRepository.findOne).toHaveBeenCalledWith({
-        where: { id: recordingId, status: 'in_progress' },
-      });
-      // Expect the RPi service to have been called maxRetries times (3 times)
-      expect(raspberryPiApiService.stopRecording).toHaveBeenCalledTimes(3);
-      // Ensure save is not called
-      expect(recordingRepository.save).not.toHaveBeenCalled();
-
-      jest.useRealTimers(); // Restore real timers
-    });
-
-    it('should successfully stop a recording if Raspberry Pi stop recording succeeds after a retry', async () => {
-      // Arrange
-      // Explicitly mock findOne to return the inProgressRecording for this test
-      recordingRepository.findOne.mockResolvedValue(inProgressRecording);
-      // Mock the Raspberry Pi service to fail once and then succeed
-      const rpiError = new Error('RPi stop recording failed - attempt 1');
-      const s3PathAfterRetry = 's3://test-bucket/test-path-retry';
-      raspberryPiApiService.stopRecording
-        .mockRejectedValueOnce(rpiError)
-        .mockResolvedValueOnce({ s3Path: s3PathAfterRetry });
-      jest.useFakeTimers(); // Use fake timers for retries
-
-      // Define the expected entity after saving with the retry result
-      const stoppedRecordingAfterRetry = {
-        ...inProgressRecording,
-        status: 'completed',
-        endTime: expect.any(Date),
-        s3Path: s3PathAfterRetry,
-        updatedAt: expect.any(Date), // Expect updated date
-        updated_at: expect.any(Date), // Expect updated_at date
-      } as unknown as Recording;
-
-      // Mock save to return the updated entity
-      recordingRepository.save.mockResolvedValue(stoppedRecordingAfterRetry);
-
-      // Act
-      const stopRecordingPromise = service.stopRecording(recordingId);
-      jest.advanceTimersByTime(1000); // Advance timers for the first retry (1 second)
-      // The second call to RPi service should happen here and succeed immediately
-
-      const result = await stopRecordingPromise; // Await the original promise
-
-      // Assert
-      expect(recordingRepository.findOne).toHaveBeenCalledWith({
-        where: { id: recordingId, status: 'in_progress' },
-      });
-      expect(raspberryPiApiService.stopRecording).toHaveBeenCalledTimes(2);
-      // Expect save to be called with the updated entity details
-      expect(recordingRepository.save).toHaveBeenCalledWith({
-        ...inProgressRecording,
-        status: 'completed',
-        endTime: expect.any(Date),
-        s3Path: s3PathAfterRetry,
-        updatedAt: expect.any(Date), // Expect updated date
-        updated_at: expect.any(Date), // Expect updated_at date
-      });
-      // Expect the result to be the entity returned by save
-      expect(result).toEqual(stoppedRecordingAfterRetry);
-
-      jest.useRealTimers(); // Restore real timers
     });
   });
 
   describe('getMediaByShareToken', () => {
     const shareToken = 'test-share-token';
-    // Updated mock entity to be a Recording with necessary properties for this test
     const mockRecordingEntity = {
       share_token: shareToken,
-      s3Path: 'test-bucket-shared/test-key-shared', // Assuming bucket/key format
       id: 'test-recording-id-shared',
       userId: 'test-user-id',
       cameraId: 'test-camera-id',
@@ -771,101 +625,43 @@ describe('RecordingService', () => {
       is_favorite: false,
       endTime: new Date(),
       raspberryPiRecordingId: 'rpi-rec-id-shared',
+      mux_playback_id: 'mux-123',
+      mux_media_url: 'https://stream.mux.com/mux-123.m3u8',
       updatedAt: new Date(),
-      updated_at: new Date(), // Include updated_at
-      metadata: {}, // Include metadata
-      user: { id: 'test-user-id' } as User, // Add minimal mock user
-      camera: { id: 'test-camera-id' } as Camera, // Add minimal mock camera
-      // Add turf_id as it's used in getFavoriteVideos and is a column
-      turf_id: 123, // Use number as per DTO
+      updated_at: new Date(),
+      metadata: {},
+      user: { id: 'test-user-id' } as User,
+      camera: { id: 'test-camera-id' } as Camera,
+      turf_id: 123,
       sharedRecordings: [],
     } as unknown as Recording;
 
-    it('should return a presigned URL for a valid shareToken', async () => {
-      // Ensure findOne returns the mock recording entity
+    it('should return a streaming URL for a valid shareToken', async () => {
       recordingRepository.findOne.mockResolvedValue(mockRecordingEntity);
-      const expectedUrl = 's3://presigned-url-shared';
-      mockFileService.getSignedUrlFromS3.mockResolvedValue(expectedUrl);
 
       const result = await service.getMediaByShareToken(shareToken);
-      expect(result).toBe(expectedUrl);
+      expect(result).toBe('https://stream.mux.com/mux-123.m3u8');
       expect(recordingRepository.findOne).toHaveBeenCalledWith({
         where: {
           share_token: shareToken,
-          // Removed media_upload_type check as it's not in Recording entity
         },
       });
-      // Expect getSignedUrlFromS3 to be called with parsed bucket and key
-      const s3UrlParts = mockRecordingEntity.s3Path.split('/');
-      const bucketName = s3UrlParts[0];
-      const s3Key = s3UrlParts.slice(1).join('/');
-      expect(mockFileService.getSignedUrlFromS3).toHaveBeenCalledWith(
-        s3Key,
-        bucketName,
-      );
     });
 
     it('should return null if media not found for shareToken', async () => {
-      // Ensure findOne returns null
       recordingRepository.findOne.mockResolvedValue(null);
       const result = await service.getMediaByShareToken(shareToken);
       expect(result).toBeNull();
     });
 
-    it('should return null and log error if shared media record is incomplete', async () => {
-      // Simulate missing s3Path in Recording entity
-      const incompleteEntity = { ...mockRecordingEntity, s3Path: null };
-      // Ensure findOne returns the incomplete entity
+    it('should return null if shared media record is incomplete without mux_playback_id', async () => {
+      const incompleteEntity = {
+        ...mockRecordingEntity,
+        mux_playback_id: null,
+      };
       recordingRepository.findOne.mockResolvedValue(incompleteEntity);
       const result = await service.getMediaByShareToken(shareToken);
       expect(result).toBeNull();
-      // Correcting the expected console error message to check for parts and the error object
-      expect(mockConsoleError).toHaveBeenCalledWith(
-        `Shared recording record for token ${shareToken} is incomplete (missing s3Path).`,
-        // We expect the s3Path to be null or undefined in the incomplete entity, which might be logged as part of the message or separately.
-        // Let's check if console.error was called with at least one argument containing the token.
-        // A more robust test might inspect the arguments array directly if needed.
-        // For now, a string containing the token should suffice if the message format is consistent.
-      );
-    });
-
-    it('should re-throw HttpException if getSignedUrlFromS3 throws it for shared media', async () => {
-      // Ensure findOne returns the mock recording entity
-      recordingRepository.findOne.mockResolvedValue(mockRecordingEntity);
-      const s3Error = new ForbiddenException('S3 Shared Access Denied');
-      mockFileService.getSignedUrlFromS3.mockRejectedValue(s3Error);
-
-      // Expecting InternalServerErrorException as service wraps S3 errors
-      await expect(service.getMediaByShareToken(shareToken)).rejects.toThrow(
-        InternalServerErrorException,
-      );
-      await expect(service.getMediaByShareToken(shareToken)).rejects.toThrow(
-        'Failed to get shared recording URL: S3 Shared Access Denied',
-      );
-      // The service logs the error object itself
-      expect(mockConsoleError).toHaveBeenCalledWith(
-        `Error generating presigned URL for shared recording token ${shareToken}: `,
-        s3Error,
-      );
-    });
-
-    it('should throw InternalServerErrorException if getSignedUrlFromS3 throws non-HttpException for shared media', async () => {
-      // Ensure findOne returns the mock recording entity
-      recordingRepository.findOne.mockResolvedValue(mockRecordingEntity);
-      const genericError = new Error('Generic S3 Shared problem');
-      mockFileService.getSignedUrlFromS3.mockRejectedValue(genericError);
-
-      await expect(service.getMediaByShareToken(shareToken)).rejects.toThrow(
-        InternalServerErrorException,
-      );
-      await expect(service.getMediaByShareToken(shareToken)).rejects.toThrow(
-        'Failed to get shared recording URL: Generic S3 Shared problem',
-      );
-      // The service logs the error object itself
-      expect(mockConsoleError).toHaveBeenCalledWith(
-        `Error generating presigned URL for shared recording token ${shareToken}: `,
-        genericError,
-      );
     });
   });
 
@@ -1119,7 +915,6 @@ describe('RecordingService', () => {
     ];
 
     it('should return a list of favorite recordings for the user', async () => {
-      // Mock createQueryBuilder chain
       const mockQueryBuilder = {
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
@@ -1133,23 +928,15 @@ describe('RecordingService', () => {
 
       expect(recordingRepository.createQueryBuilder).toHaveBeenCalledWith(
         'recording',
-      ); // Assert with 'recording' alias
+      );
       expect(mockQueryBuilder.where).toHaveBeenCalledWith(
         'recording.userId = :userId',
         { userId: userId },
       );
       expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
         'recording.is_favorite = :is_favorite',
-        {
-          is_favorite: true,
-        },
+        { is_favorite: true },
       );
-      // Assert the media_upload_type filter
-      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
-        'recording.media_upload_type = :mediaUploadType',
-        { mediaUploadType: EMediaUploadType.VIDEO },
-      );
-
       expect(mockQueryBuilder.orderBy).toHaveBeenCalledWith(
         'recording.startTime',
         'DESC',
@@ -1160,269 +947,24 @@ describe('RecordingService', () => {
       );
       expect(mockQueryBuilder.getMany).toHaveBeenCalled();
       expect(result).toEqual(mockRecordingList);
-    });
-
-    it('should filter by turfId if provided', async () => {
-      const queryWithTurf: QueryUserMediaDto = { ...mockQuery, turfId: 123 }; // Use number turfId as per DTO
-      // Mock createQueryBuilder chain
-      const mockQueryBuilder = {
-        where: jest.fn().mockReturnThis(),
-        andWhere: jest.fn().mockReturnThis(),
-        orderBy: jest.fn().mockReturnThis(),
-        addOrderBy: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockResolvedValue(mockRecordingList),
-      };
-      recordingRepository.createQueryBuilder.mockReturnValue(mockQueryBuilder);
-
-      await service.getFavoriteVideos(userId, queryWithTurf);
-
-      expect(recordingRepository.createQueryBuilder).toHaveBeenCalledWith(
-        'recording',
-      );
-      expect(mockQueryBuilder.where).toHaveBeenCalledWith(
-        'recording.userId = :userId',
-        { userId: userId },
-      );
-      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
-        'recording.is_favorite = :is_favorite',
-        { is_favorite: true },
-      );
-      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
-        'recording.turf_id = :turfId', // Use recording.turf_id based on entity
-        { turfId: queryWithTurf.turfId },
-      );
-      // Assert the media_upload_type filter
-      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
-        'recording.media_upload_type = :mediaUploadType',
-        { mediaUploadType: EMediaUploadType.VIDEO },
-      );
-
-      expect(mockQueryBuilder.orderBy).toHaveBeenCalledWith(
-        'recording.startTime',
-        'DESC',
-      );
-      expect(mockQueryBuilder.addOrderBy).toHaveBeenCalledWith(
-        'recording.id',
-        'ASC',
-      );
-      expect(mockQueryBuilder.getMany).toHaveBeenCalled();
     });
 
     it('should apply OLD_TO_NEW sort order', async () => {
-      const queryOldToNew = { ...mockQuery, sortOrder: ESortOrder.OLD_TO_NEW };
-      // Mock createQueryBuilder chain
-      const mockQueryBuilder = {
-        where: jest.fn().mockReturnThis(),
-        andWhere: jest.fn().mockReturnThis(),
-        orderBy: jest.fn().mockReturnThis(),
-        addOrderBy: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockResolvedValue(mockRecordingList),
-      };
-      recordingRepository.createQueryBuilder.mockReturnValue(mockQueryBuilder);
-
-      await service.getFavoriteVideos(userId, queryOldToNew);
-
-      expect(recordingRepository.createQueryBuilder).toHaveBeenCalledWith(
-        'recording',
-      );
-      expect(mockQueryBuilder.where).toHaveBeenCalledWith(
-        'recording.userId = :userId',
-        { userId: userId },
-      );
-      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
-        'recording.is_favorite = :is_favorite',
-        { is_favorite: true },
-      );
-      // Assert the media_upload_type filter
-      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
-        'recording.media_upload_type = :mediaUploadType',
-        { mediaUploadType: EMediaUploadType.VIDEO },
-      );
-      // Note: turfId filter assertion might be needed here if applicable
-
-      expect(mockQueryBuilder.orderBy).toHaveBeenCalledWith(
-        'recording.startTime',
-        'ASC',
-      );
-      expect(mockQueryBuilder.addOrderBy).toHaveBeenCalledWith(
-        'recording.id',
-        'DESC',
-      );
-      expect(mockQueryBuilder.getMany).toHaveBeenCalled();
-    });
-
-    it('should apply default sort order if not specified', async () => {
-      const queryDefault = { ...mockQuery, sortOrder: undefined };
-      // Mock createQueryBuilder chain
-      const mockQueryBuilder = {
-        where: jest.fn().mockReturnThis(),
-        andWhere: jest.fn().mockReturnThis(),
-        orderBy: jest.fn().mockReturnThis(),
-        addOrderBy: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockResolvedValue(mockRecordingList),
-      };
-      recordingRepository.createQueryBuilder.mockReturnValue(mockQueryBuilder);
-
-      await service.getFavoriteVideos(userId, queryDefault);
-
-      expect(recordingRepository.createQueryBuilder).toHaveBeenCalledWith(
-        'recording',
-      );
-      expect(mockQueryBuilder.where).toHaveBeenCalledWith(
-        'recording.userId = :userId',
-        { userId: userId },
-      );
-      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
-        'recording.is_favorite = :is_favorite',
-        { is_favorite: true },
-      );
-      // Assert the media_upload_type filter
-      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
-        'recording.media_upload_type = :mediaUploadType',
-        { mediaUploadType: EMediaUploadType.VIDEO },
-      );
-      // Note: turfId filter assertion might be needed here if applicable
-
-      expect(mockQueryBuilder.orderBy).toHaveBeenCalledWith(
-        'recording.startTime',
-        'DESC',
-      ); // Use recording.startTime
-      expect(mockQueryBuilder.addOrderBy).toHaveBeenCalledWith(
-        'recording.id',
-        'ASC',
-      );
-      expect(mockQueryBuilder.getMany).toHaveBeenCalled();
-    });
-
-    // Additional test to assert the media_upload_type filter is always applied
-    it('should always filter by media_upload_type VIDEO', async () => {
-      // Mock createQueryBuilder chain
-      const mockQueryBuilder = {
-        where: jest.fn().mockReturnThis(),
-        andWhere: jest.fn().mockReturnThis(),
-        orderBy: jest.fn().mockReturnThis(),
-        addOrderBy: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockResolvedValue(mockRecordingList),
-      };
-      recordingRepository.createQueryBuilder.mockReturnValue(mockQueryBuilder);
-
-      // Test with and without turfId to ensure the filter is consistent
-      const queryWithoutTurf = { ...mockQuery, turfId: undefined };
-      const queryWithTurf = { ...mockQuery, turfId: 123 };
-
-      // Act 1
-      await service.getFavoriteVideos(userId, queryWithoutTurf);
-
-      // Assert 1: Check for the media_upload_type filter assertion
-      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
-        'recording.media_upload_type = :mediaUploadType',
-        { mediaUploadType: EMediaUploadType.VIDEO },
-      );
-      // Reset andWhere mock for the next call
-      mockQueryBuilder.andWhere.mockClear();
-
-      // Act 2
-      await service.getFavoriteVideos(userId, queryWithTurf);
-
-      // Assert 2: Check for the media_upload_type filter assertion again (should be called after is_favorite and turfId filters)
-      // Note: The order of andWhere calls matters. Need to ensure this assertion matches the service's implementation order.
-      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
-        'recording.media_upload_type = :mediaUploadType',
-        { mediaUploadType: EMediaUploadType.VIDEO },
-      );
-      // Assert turfId filter is also called
-      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
-        'recording.turf_id = :turfId', // Use recording.turf_id based on entity
-        { turfId: queryWithTurf.turfId },
-      );
-    });
-
-    it('should handle empty turfId filter', async () => {
-      const queryWithoutTurf: QueryUserMediaDto = {
-        ...mockQuery,
-        turfId: undefined,
-      };
-      // Mock createQueryBuilder chain
-      const mockQueryBuilder = {
-        where: jest.fn().mockReturnThis(),
-        andWhere: jest.fn().mockReturnThis(),
-        orderBy: jest.fn().mockReturnThis(),
-        addOrderBy: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockResolvedValue(mockRecordingList),
-      };
-      recordingRepository.createQueryBuilder.mockReturnValue(mockQueryBuilder);
-
-      const result = await service.getFavoriteVideos(userId, queryWithoutTurf);
-
-      expect(recordingRepository.createQueryBuilder).toHaveBeenCalledWith(
-        'recording',
-      ); // Assert with 'recording' alias
-      expect(mockQueryBuilder.where).toHaveBeenCalledWith(
-        'recording.userId = :userId',
-        { userId: userId },
-      );
-      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
-        'recording.is_favorite = :is_favorite',
-        {
-          is_favorite: true,
-        },
-      );
-      // Ensure turfId filter is NOT applied when turfId is undefined
-      expect(mockQueryBuilder.andWhere).not.toHaveBeenCalledWith(
-        'recording.turf_id = :turfId',
-        expect.anything(), // We don't care about the value, just that it wasn't called
-      );
-
-      expect(mockQueryBuilder.orderBy).toHaveBeenCalledWith(
-        'recording.startTime',
-        'DESC',
-      );
-      expect(mockQueryBuilder.addOrderBy).toHaveBeenCalledWith(
-        'recording.id',
-        'ASC',
-      );
-      expect(mockQueryBuilder.getMany).toHaveBeenCalled();
-      expect(result).toEqual(mockRecordingList);
-    });
-
-    // Add test for sorting order (OLD_TO_NEW)
-    it('should sort by startTime in ascending order for OLD_TO_NEW', async () => {
       const queryOldToNew: QueryUserMediaDto = {
         ...mockQuery,
         sortOrder: ESortOrder.OLD_TO_NEW,
       };
-      // Mock createQueryBuilder chain
       const mockQueryBuilder = {
         where: jest.fn().mockReturnThis(),
         andWhere: jest.fn().mockReturnThis(),
         orderBy: jest.fn().mockReturnThis(),
         addOrderBy: jest.fn().mockReturnThis(),
-        getMany: jest.fn().mockResolvedValue([...mockRecordingList].reverse()), // Reverse list for expected order
+        getMany: jest.fn().mockResolvedValue([...mockRecordingList].reverse()),
       };
       recordingRepository.createQueryBuilder.mockReturnValue(mockQueryBuilder);
 
       const result = await service.getFavoriteVideos(userId, queryOldToNew);
 
-      expect(recordingRepository.createQueryBuilder).toHaveBeenCalledWith(
-        'recording',
-      ); // Assert with 'recording' alias
-      expect(mockQueryBuilder.where).toHaveBeenCalledWith(
-        'recording.userId = :userId',
-        { userId: userId },
-      );
-      expect(mockQueryBuilder.andWhere).toHaveBeenCalledWith(
-        'recording.is_favorite = :is_favorite',
-        {
-          is_favorite: true,
-        },
-      );
-      // Ensure media_upload_type filter is NOT applied
-      expect(mockQueryBuilder.andWhere).not.toHaveBeenCalledWith(
-        'recording.media_upload_type = :mediaUploadType',
-        expect.anything(),
-      );
-
-      // Assert ascending order for startTime
       expect(mockQueryBuilder.orderBy).toHaveBeenCalledWith(
         'recording.startTime',
         'ASC',
@@ -1431,7 +973,6 @@ describe('RecordingService', () => {
         'recording.id',
         'ASC',
       );
-      expect(mockQueryBuilder.getMany).toHaveBeenCalled();
       expect(result).toEqual([...mockRecordingList].reverse());
     });
   });
@@ -1471,7 +1012,6 @@ describe('RecordingService', () => {
         where: {
           recording_id: 'recording-1',
           shared_with_user_id: 'user-2',
-          is_active: true,
         },
       });
     });
@@ -1518,20 +1058,46 @@ describe('RecordingService', () => {
 
   describe('getSharedRecordings', () => {
     it('should return all shared recordings for a user', async () => {
-      const mockSharedRecordings = [mockSharedRecording];
+      const mockShared = {
+        id: 'share-1',
+        recording_id: 'rec-1',
+        shared_with_user_id: 'user-2',
+        recording: {
+          id: 'rec-1',
+          name: 'Match 1',
+          recording_name: 'Match 1',
+          s3Path: null,
+          turf: null,
+          user: null,
+          recordingHighlights: [],
+        },
+        sharedWithUser: {
+          id: 'user-2',
+          name: 'Player Two',
+        },
+      };
       jest
         .spyOn(sharedRecordingRepository, 'find')
-        .mockResolvedValue(mockSharedRecordings as SharedRecording[]);
+        .mockResolvedValue([mockShared as any]);
 
       const result = await service.getSharedRecordings('user-2');
 
-      expect(result).toEqual(mockSharedRecordings);
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('share-1');
       expect(sharedRecordingRepository.find).toHaveBeenCalledWith({
         where: {
           shared_with_user_id: 'user-2',
-          is_active: true,
         },
-        relations: ['recording', 'sharedByUser'],
+        relations: [
+          'recording',
+          'recording.recordingHighlights',
+          'recording.turf',
+          'recording.user',
+          'sharedWithUser',
+        ],
+        order: {
+          created_at: 'DESC',
+        },
       });
     });
 

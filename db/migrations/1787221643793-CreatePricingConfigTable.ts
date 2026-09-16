@@ -14,7 +14,7 @@ export class CreatePricingConfigTable1787221643793 implements MigrationInterface
       `ALTER TABLE "recordings" DROP CONSTRAINT "FK_99947ce5bbb28e4ccbd5672e283"`,
     );
     await queryRunner.query(
-      `CREATE TABLE "pricing_configs" ("id" character varying(50) NOT NULL DEFAULT 'default', "cricket_hourly_rate" numeric(10,2) NOT NULL DEFAULT '300', "pickleball_hourly_rate" numeric(10,2) NOT NULL DEFAULT '200', "padel_hourly_rate" numeric(10,2) NOT NULL DEFAULT '250', "default_hourly_rate" numeric(10,2) NOT NULL DEFAULT '250', "highlight_base_price" numeric(10,2) NOT NULL DEFAULT '100', "shorts_base_price" numeric(10,2) NOT NULL DEFAULT '50', "gst_rate" numeric(5,4) NOT NULL DEFAULT '0.18', "created_at" TIMESTAMP NOT NULL DEFAULT now(), "updated_at" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_68f45b3c5c0404cfa95eada68f2" PRIMARY KEY ("id"))`,
+      `CREATE TABLE IF NOT EXISTS "pricing_configs" ("id" character varying(50) NOT NULL DEFAULT 'default', "cricket_hourly_rate" numeric(10,2) NOT NULL DEFAULT '300', "pickleball_hourly_rate" numeric(10,2) NOT NULL DEFAULT '200', "padel_hourly_rate" numeric(10,2) NOT NULL DEFAULT '250', "default_hourly_rate" numeric(10,2) NOT NULL DEFAULT '250', "highlight_base_price" numeric(10,2) NOT NULL DEFAULT '100', "shorts_base_price" numeric(10,2) NOT NULL DEFAULT '50', "gst_rate" numeric(5,4) NOT NULL DEFAULT '0.18', "created_at" TIMESTAMP NOT NULL DEFAULT now(), "updated_at" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_68f45b3c5c0404cfa95eada68f2" PRIMARY KEY ("id"))`,
     );
     await queryRunner.query(
       `ALTER TABLE "recordings" DROP COLUMN "recording_name"`,

@@ -141,7 +141,7 @@ export class MuxService {
         this.logger.error(error.stack);
       }
       const bucketName =
-        process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
+        process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
       if (key) {
         await this.recordingRepository.update(recordingId, {
           s3Path: `s3://${bucketName}/${key}`,

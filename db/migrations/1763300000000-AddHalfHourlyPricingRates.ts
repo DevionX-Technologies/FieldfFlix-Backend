@@ -5,6 +5,21 @@ export class AddHalfHourlyPricingRates1763300000000 implements MigrationInterfac
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`
+      CREATE TABLE IF NOT EXISTS "pricing_configs" (
+        "id" character varying(50) NOT NULL DEFAULT 'default',
+        "cricket_hourly_rate" numeric(10,2) NOT NULL DEFAULT '300',
+        "pickleball_hourly_rate" numeric(10,2) NOT NULL DEFAULT '200',
+        "padel_hourly_rate" numeric(10,2) NOT NULL DEFAULT '250',
+        "default_hourly_rate" numeric(10,2) NOT NULL DEFAULT '250',
+        "highlight_base_price" numeric(10,2) NOT NULL DEFAULT '100',
+        "shorts_base_price" numeric(10,2) NOT NULL DEFAULT '50',
+        "gst_rate" numeric(5,4) NOT NULL DEFAULT '0.18',
+        "created_at" TIMESTAMP NOT NULL DEFAULT now(),
+        "updated_at" TIMESTAMP NOT NULL DEFAULT now(),
+        CONSTRAINT "PK_pricing_configs_id" PRIMARY KEY ("id")
+      );
+    `);
+    await queryRunner.query(`
       ALTER TABLE "pricing_configs"
         ADD COLUMN IF NOT EXISTS "cricket_half_hourly_rate" numeric(10,2) NOT NULL DEFAULT 150,
         ADD COLUMN IF NOT EXISTS "pickleball_half_hourly_rate" numeric(10,2) NOT NULL DEFAULT 100,

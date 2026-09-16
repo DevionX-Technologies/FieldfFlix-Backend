@@ -167,9 +167,15 @@ export class RecordingController {
       const tokenData = await this.commonService.extractDataFromToken(req);
       userId = tokenData?.user_id;
     } catch {
-      // Allow optional user attribution
+      // Token extraction failed
     }
-    return this.recordingService.requestOnDemandExtraction(dto, userId);
+    const resolvedUserId = userId || dto.userId;
+    if (!resolvedUserId) {
+      throw new UnauthorizedException(
+        'User authentication required to extract match footage',
+      );
+    }
+    return this.recordingService.requestOnDemandExtraction(dto, resolvedUserId);
   }
 
   /**
@@ -656,9 +662,35 @@ export class RecordingController {
       throw new NotFoundException(`Recording with ID ${recordingId} not found`);
     }
 
-    const playbackId = recording.mux_playback_id?.trim() || null;
-    const status = String(recording.status ?? '').toLowerCase();
-    const blocked = ['failed', 'cancelled', 'interrupted'].includes(status);
+    let playbackId = recording.mux_playback_id?.trim() || null;
+    let status = String(recording.status ?? '').toLowerCase();
+    const blocked = ['cancelled', 'interrupted'].includes(status);
+
+    if (
+      !blocked &&
+      !this.recordingService.isRecordingMuxPlayable(recording) &&
+      recording.mux_asset_id
+    ) {
+      try {
+        const synced =
+          await this.recordingService.syncMuxReadyStatus(recordingId);
+        if (
+          synced &&
+          (synced.status === 'ready' || synced.status === 'completed')
+        ) {
+          status = synced.status;
+          recording.status = synced.status;
+          if (synced.mux_playback_id) {
+            playbackId = synced.mux_playback_id;
+            recording.mux_playback_id = synced.mux_playback_id;
+          }
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `syncMuxReadyStatus check failed for ${recordingId}: ${err?.message || err}`,
+        );
+      }
+    }
 
     if (
       playbackId &&
@@ -694,7 +726,7 @@ export class RecordingController {
         const bucket =
           firstSlash > 0
             ? s3Clean.substring(0, firstSlash)
-            : process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
+            : process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
         const key =
           firstSlash > 0 ? s3Clean.substring(firstSlash + 1) : s3Clean;
 

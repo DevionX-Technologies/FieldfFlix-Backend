@@ -44,7 +44,7 @@ export function highlightCourtCamPrefix(court: number, nvrCam: number): string {
 }
 
 export function getHighlightS3Bucket(): string {
-  return process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
+  return process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
 }
 
 /** S3 object region — do not use AWS_REGION (often the ECS/Lambda region). */

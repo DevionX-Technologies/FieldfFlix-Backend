@@ -27,7 +27,7 @@ import {
 export class S3HighlightSyncService {
   private readonly logger = new Logger(S3HighlightSyncService.name);
   private readonly bucket =
-    process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
+    process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
 
   constructor(
     @InjectDataSource() private readonly dataSource: DataSource,

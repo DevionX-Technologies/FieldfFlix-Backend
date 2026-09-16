@@ -42,7 +42,7 @@ export class FileServiceService {
     tagsQueryString: string,
   ): Promise<string> {
     const bucketName =
-      process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
+      process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
     const command = new PutObjectCommand({
       Bucket: bucketName,
       Key: fileName,
@@ -123,7 +123,7 @@ export class FileServiceService {
     maxKeys?: number,
   ): Promise<string[]> {
     const bucketName =
-      process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
+      process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
     const keys: string[] = [];
     let continuationToken: string | undefined;
 
@@ -154,7 +154,7 @@ export class FileServiceService {
     expiresInSeconds = 604800,
   ): Promise<string> {
     const defaultBucket =
-      process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-media-assets';
+      process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
 
     let bucket = defaultBucket;
     let key = param1 || '';
@@ -306,7 +306,7 @@ export class FileServiceService {
     fileName: string,
     contentType: string,
     bucketName: string = process.env.AWS_S3_BUCKET_NAME ||
-      'fieldflicks-media-assets',
+      'fieldflicks-production-media',
   ): Promise<{ fileKey: string; bucketName: string; url: string }> {
     const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
     const fileKey = `media/${uuidv4()}-${sanitizedFileName}`;
