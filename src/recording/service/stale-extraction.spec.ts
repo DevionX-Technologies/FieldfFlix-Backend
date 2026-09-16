@@ -275,6 +275,26 @@ describe('RecordingService Stale Extraction and Prior Claim Recovery', () => {
         expect.objectContaining({ status: 'ready', isVideoCreated: true }),
       );
     });
+
+    it('should self-heal recording status to ready when s3Path exists even without mux', async () => {
+      const s3Rec = {
+        id: 'rec-s3-heal',
+        userId: 'user-1',
+        status: 'uploaded',
+        s3Path: 's3://fieldflicks-media-assets/recordings/test.mp4',
+        mux_playback_id: null,
+      } as unknown as Recording;
+
+      mockRecordingRepo.find.mockResolvedValue([s3Rec]);
+
+      const results = await service.getMyRecordings('user-1');
+
+      expect(results[0].status).toBe('ready');
+      expect(mockRecordingRepo.update).toHaveBeenCalledWith(
+        'rec-s3-heal',
+        expect.objectContaining({ status: 'ready', isVideoCreated: true }),
+      );
+    });
   });
 
   describe('requestOnDemandExtraction', () => {

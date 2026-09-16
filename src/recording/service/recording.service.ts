@@ -2689,6 +2689,20 @@ export class RecordingService {
           } catch {}
         }
 
+        // When S3 video exists and Mux has not yet processed (e.g. Mux invoice lock),
+        // self-heal status to ready so the app immediately reflects 100% and enables playback.
+        if (recording.s3Path && recording.status !== 'ready') {
+          (recording as any).status = 'ready';
+          (recording as any).isVideoCreated = true;
+          this.recordingRepository
+            .update(recording.id, {
+              status: 'ready',
+              isVideoCreated: true,
+              s3Path: recording.s3Path,
+            })
+            .catch(() => {});
+        }
+
         const siblingRows =
           recording.cameraId && recording.startTime && recording.endTime
             ? await this.recordingRepository.find({
