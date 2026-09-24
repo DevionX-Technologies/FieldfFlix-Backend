@@ -33,6 +33,7 @@ import { PointsModule } from './points/points.module';
 import { CouponsModule } from './coupons/coupons.module';
 import { TournamentModule } from './tournament/tournament.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { MediaProviderModule } from './media-provider/media-provider.module';
 
 @Module({
   imports: [
@@ -75,6 +76,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
     CouponsModule,
     TournamentModule,
     DashboardModule,
+    MediaProviderModule,
   ],
   controllers: [AppController, SharedMediaRootController],
   providers: [
@@ -93,6 +95,7 @@ export class AppModule {
       .forRoutes(
         { path: 'webhooks/mux', method: RequestMethod.POST },
         { path: 'mux/webhook', method: RequestMethod.POST },
+        { path: 'webhooks/cloudflare', method: RequestMethod.POST },
       )
       .apply(RequestLoggerMiddleware)
       .forRoutes('*');

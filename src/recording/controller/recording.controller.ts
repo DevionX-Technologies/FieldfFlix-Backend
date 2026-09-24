@@ -18,6 +18,7 @@ import {
   BadRequestException,
   Query,
   UseGuards,
+  Optional,
 } from '@nestjs/common';
 import { Response, Request } from 'express';
 import { FileServiceService } from '../../file-service/file-service.service';
@@ -57,6 +58,7 @@ import { RecordingHighlightEngagementService } from '../service/recording-highli
 import { MuxService } from '../../mux/mux.service';
 import { ActiveHighlightDto } from '../dto/active-highlight.dto';
 import { resolvePublicAppBaseUrl } from 'src/utils/public-app-base-url.util';
+import { CloudflarePlaybackTokenService } from 'src/media-provider/services/cloudflare-playback-token.service';
 
 /**
  * Controller for handling recording-related requests.
@@ -78,6 +80,8 @@ export class RecordingController {
     private readonly recordingHighlightsService: RecordingHighlightsService,
     private readonly muxService: MuxService,
     private readonly recordingHighlightEngagementService: RecordingHighlightEngagementService,
+    @Optional()
+    private readonly cloudflarePlaybackTokenService?: CloudflarePlaybackTokenService,
   ) {}
 
   /**
@@ -666,8 +670,55 @@ export class RecordingController {
     let status = String(recording.status ?? '').toLowerCase();
     const blocked = ['cancelled', 'interrupted'].includes(status);
 
+    // 1. Cloudflare Stream support:
+    const recMeta = (recording.metadata as any) || {};
+    const cfUid =
+      recMeta.cloudflareStreamUid ||
+      (recMeta.provider === 'cloudflare' ? recMeta.playbackId : null) ||
+      (recording.mux_playback_id &&
+      /^[a-f0-9]{32}$/i.test(recording.mux_playback_id)
+        ? recording.mux_playback_id
+        : null);
+    const isCloudflare = recMeta.provider === 'cloudflare' || Boolean(cfUid);
+
+    if (cfUid && !blocked && isCloudflare) {
+      let signedToken: string | null = null;
+      let signedUrl = `https://videodelivery.net/${cfUid}/manifest/video.m3u8`;
+      let expiresAt: any = Math.floor(Date.now() / 1000) + 21600;
+
+      if (this.cloudflarePlaybackTokenService) {
+        try {
+          const res =
+            await this.cloudflarePlaybackTokenService.generateSignedToken(
+              cfUid,
+              21600,
+            );
+          signedToken = res.token;
+          signedUrl = `https://videodelivery.net/${signedToken}/manifest/video.m3u8`;
+          expiresAt = res.expiresAt;
+        } catch (err: any) {
+          this.logger.warn(
+            `Cloudflare token generation failed, falling back to public manifest: ${err?.message}`,
+          );
+        }
+      }
+
+      return {
+        recording_id: recording.id,
+        playback_id: cfUid,
+        mux_public_url: `https://videodelivery.net/${cfUid}/manifest/video.m3u8`,
+        signed_token: signedToken,
+        signed_url: signedUrl,
+        expires_at: expiresAt,
+        playable: true,
+        status: 'ready',
+      };
+    }
+
+    // 2. Mux Playback support:
     if (
       !blocked &&
+      this.recordingService.isRecordingMuxPlayable &&
       !this.recordingService.isRecordingMuxPlayable(recording) &&
       recording.mux_asset_id
     ) {

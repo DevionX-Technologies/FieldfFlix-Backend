@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, QueryRunner } from 'typeorm';
 import axios from 'axios';
+import { MediaProviderFactory } from 'src/media-provider/services/media-provider-factory.service';
 import {
   DURATION_TO_BACKTRACK_SECONDS,
   MUX_API_BASE_URL,
@@ -24,7 +25,10 @@ import {
 export class ClipProcessingProcessor {
   private readonly logger = new Logger(ClipProcessingProcessor.name);
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    @Optional() private readonly mediaProviderFactory?: MediaProviderFactory,
+  ) {}
 
   async processRecording(
     recordingId: string,
@@ -84,15 +88,29 @@ export class ClipProcessingProcessor {
           };
         }
 
-        // 3. Fetch recording's mux_asset_id
+        // 3. Fetch recording's video asset (Mux or Cloudflare)
         const recording = await queryRunner.query(
-          `SELECT id, mux_asset_id AS "muxAssetId" FROM recordings WHERE id = $1`,
+          `SELECT id, mux_asset_id AS "muxAssetId", metadata FROM recordings WHERE id = $1`,
           [recordingId],
         );
 
-        if (!recording[0]?.muxAssetId) {
+        const recRow = recording[0];
+        const recMeta = recRow?.metadata || {};
+        const cfUid = recMeta.cloudflareStreamUid;
+        const isCloudflare =
+          recMeta.provider === 'cloudflare' ||
+          (this.mediaProviderFactory &&
+            this.mediaProviderFactory.getVodProvider().providerName ===
+              'cloudflare') ||
+          !!cfUid;
+
+        const parentAssetId = isCloudflare
+          ? cfUid || recRow?.muxAssetId
+          : recRow?.muxAssetId;
+
+        if (!parentAssetId) {
           this.logger.warn(
-            `Recording ${recordingId} has no mux_asset_id, skipping all highlights`,
+            `Recording ${recordingId} has no video asset ID, skipping all highlights`,
           );
           return {
             recordingId,
@@ -106,10 +124,8 @@ export class ClipProcessingProcessor {
           };
         }
 
-        const muxAssetId = recording[0].muxAssetId;
-
         this.logger.log(
-          `Processing ${highlights.length} highlights for recording ${recordingId}`,
+          `Processing ${highlights.length} highlights for recording ${recordingId} (provider: ${isCloudflare ? 'cloudflare' : 'mux'}, parent: ${parentAssetId})`,
         );
 
         // 4. Process each highlight sequentially
@@ -118,7 +134,8 @@ export class ClipProcessingProcessor {
           const result = await this.processHighlight(
             queryRunner,
             highlight,
-            muxAssetId,
+            parentAssetId,
+            isCloudflare,
           );
           results.push(result);
 
@@ -172,7 +189,8 @@ export class ClipProcessingProcessor {
   private async processHighlight(
     queryRunner: QueryRunner,
     highlight: any,
-    muxAssetId: string,
+    parentAssetId: string,
+    isCloudflare = false,
   ): Promise<HighlightProcessingResult> {
     const highlightId = highlight.id;
 
@@ -221,12 +239,13 @@ export class ClipProcessingProcessor {
         };
       }
 
-      // Create clip in Mux with in-process rate limit retry
+      // Create clip via Cloudflare Stream or Mux with in-process rate limit retry
       const clipResult = await this.createClipWithRateLimitRetry(
         queryRunner,
         highlightId,
-        muxAssetId,
+        parentAssetId,
         highlight.relativeTimestamp,
+        isCloudflare,
       );
 
       return clipResult;
@@ -238,8 +257,9 @@ export class ClipProcessingProcessor {
   private async createClipWithRateLimitRetry(
     queryRunner: QueryRunner,
     highlightId: string,
-    muxAssetId: string,
+    parentAssetId: string,
     relativeTimestamp: string,
+    isCloudflare = false,
   ): Promise<HighlightProcessingResult> {
     const highlightTimeInSeconds =
       parseRelativeTimestampToSeconds(relativeTimestamp);
@@ -248,6 +268,59 @@ export class ClipProcessingProcessor {
       0,
       highlightTimeInSeconds - DURATION_TO_BACKTRACK_SECONDS,
     );
+
+    // 1. Cloudflare Stream clipping path
+    if (isCloudflare && this.mediaProviderFactory) {
+      const vodProvider = this.mediaProviderFactory.getVodProvider();
+      if (vodProvider.providerName === 'cloudflare') {
+        try {
+          this.logger.log(
+            `Creating Cloudflare clip for highlight ${highlightId}: ${startTime}s - ${endTime}s (parent: ${parentAssetId})`,
+          );
+          const clipOutput = await vodProvider.createClip({
+            parentAssetId,
+            startTimeSeconds: startTime,
+            endTimeSeconds: endTime,
+            passthrough: highlightId,
+          });
+
+          await queryRunner.query(
+            `UPDATE recording_highlights
+             SET status = $1,
+                 asset_id = $2,
+                 playback_id = $3,
+                 source_asset_id = $4,
+                 "isClipCreated" = true,
+                 "retryCount" = 0,
+                 rate_limit_retry_count = 0,
+                 lock_version = lock_version + 1,
+                 error_message = NULL,
+                 last_retry_at = NULL,
+                 updated_at = NOW()
+             WHERE id = $5`,
+            [
+              clipOutput.status === 'ready' ? 'ready' : 'processing',
+              clipOutput.clipAssetId,
+              clipOutput.playbackId || null,
+              parentAssetId,
+              highlightId,
+            ],
+          );
+
+          return {
+            highlightId,
+            success: true,
+            action: 'processed',
+            message: 'Cloudflare clip created',
+          };
+        } catch (err: any) {
+          this.logger.error(
+            `Cloudflare clip creation failed for highlight ${highlightId}: ${err.message}`,
+          );
+          throw err;
+        }
+      }
+    }
 
     const muxTokenId = process.env.MUX_TOKEN_ID;
     const muxTokenSecret = process.env.MUX_TOKEN_SECRET;
@@ -285,7 +358,7 @@ export class ClipProcessingProcessor {
           data: {
             input: [
               {
-                url: `mux://assets/${muxAssetId}`,
+                url: `mux://assets/${parentAssetId}`,
                 start_time: startTime,
                 end_time: endTime,
               },
@@ -330,7 +403,7 @@ export class ClipProcessingProcessor {
             HIGHLIGHT_STATUS.CLIP_CREATED,
             clipAssetId,
             playbackId,
-            muxAssetId,
+            parentAssetId,
             highlightId,
           ],
         );

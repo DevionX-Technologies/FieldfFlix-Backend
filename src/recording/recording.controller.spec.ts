@@ -16,6 +16,7 @@ import { RecordingService } from './service/recording.service';
 import { RecordingHighlightsService } from './service/recording-highlight.service';
 import { MuxService } from '../mux/mux.service';
 import { RecordingHighlightEngagementService } from './service/recording-highlight-engagement.service';
+import { CloudflarePlaybackTokenService } from '../media-provider/services/cloudflare-playback-token.service';
 
 describe('RecordingController', () => {
   let controller: RecordingController;
@@ -30,6 +31,7 @@ describe('RecordingController', () => {
       getRecordingById: jest.fn(),
       getRecordingS3Path: jest.fn(),
       getMuxPublicUrl: jest.fn(),
+      isRecordingMuxPlayable: jest.fn().mockReturnValue(true),
     } as any;
 
     fileServiceService = {
@@ -67,6 +69,15 @@ describe('RecordingController', () => {
         {
           provide: RecordingHighlightEngagementService,
           useValue: {},
+        },
+        {
+          provide: CloudflarePlaybackTokenService,
+          useValue: {
+            generateSignedToken: jest.fn().mockResolvedValue({
+              token: 'signed_cf_jwt_token_123',
+              expiresAt: new Date('2026-09-24T18:00:00Z'),
+            }),
+          },
         },
       ],
     }).compile();
@@ -306,6 +317,38 @@ describe('RecordingController', () => {
       expect(fileServiceService.getSignedUrlFromS3).toHaveBeenCalledWith(
         dummyS3Key,
       );
+    });
+  });
+
+  describe('getRecordingPlayback', () => {
+    it('returns signed Cloudflare playback URL for Cloudflare-backed recordings', async () => {
+      recordingService.getRecordingById.mockResolvedValue({
+        id: 'rec_cf_1',
+        status: 'ready',
+        metadata: {
+          provider: 'cloudflare',
+          cloudflareStreamUid: 'cf_stream_uid_999',
+        },
+      } as any);
+
+      const res = await controller.getRecordingPlayback('rec_cf_1');
+
+      expect(res.playable).toBe(true);
+      expect(res.playback_id).toBe('cf_stream_uid_999');
+      expect(res.mux_public_url).toBe(
+        'https://videodelivery.net/cf_stream_uid_999/manifest/video.m3u8',
+      );
+      expect(res.signed_url).toContain(
+        'https://videodelivery.net/signed_cf_jwt_token_123/manifest/video.m3u8',
+      );
+    });
+
+    it('throws NotFoundException if recording does not exist', async () => {
+      recordingService.getRecordingById.mockResolvedValue(null);
+
+      await expect(
+        controller.getRecordingPlayback('non_existent_rec'),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 });

@@ -100,20 +100,26 @@ export function muxHighlightHlsUrl(playbackId?: string | null): string | null {
   return id ? `https://stream.mux.com/${id}.m3u8` : null;
 }
 
-/** Best playable stream URL for a highlight row (Mux preferred over S3). */
+/** Best playable stream URL for a highlight row (Cloudflare/Mux preferred over S3). */
 export function resolveHighlightStreamUrl(highlight: {
   playback_id?: string | null;
   mux_public_playback_url?: string | null;
   s3path?: string | null;
 }): string | null {
-  const muxUrl = muxHighlightHlsUrl(highlight.playback_id);
-  if (muxUrl) return muxUrl;
-
   const stored = highlight.mux_public_playback_url?.trim();
   if (stored?.startsWith('http')) {
+    if (
+      stored.includes('videodelivery.net') ||
+      stored.includes('cloudflarestream.com')
+    ) {
+      return stored;
+    }
     if (stored.includes('stream.mux.com')) return stored;
     return normalizeS3HighlightUrl(stored, highlight.s3path);
   }
+
+  const muxUrl = muxHighlightHlsUrl(highlight.playback_id);
+  if (muxUrl) return muxUrl;
 
   const s3path = highlight.s3path?.trim();
   if (!s3path) return null;

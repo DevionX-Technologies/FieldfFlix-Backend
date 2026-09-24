@@ -7,7 +7,10 @@ import {
   ForbiddenException,
   BadRequestException,
   HttpException,
+  Optional,
 } from '@nestjs/common';
+import { MediaProviderFactory } from 'src/media-provider/services/media-provider-factory.service';
+import { MediaFeatureFlagsService } from 'src/media-provider/services/media-feature-flags.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import {
@@ -289,6 +292,10 @@ export class RecordingService {
     private readonly paymentRestrictionService: PaymentRestrictionService,
     private readonly pointsService: PointsService,
     private readonly pricingConfigService: PricingConfigService,
+    @Optional()
+    private readonly mediaProviderFactory?: MediaProviderFactory,
+    @Optional()
+    private readonly mediaFeatureFlags?: MediaFeatureFlagsService,
   ) {
     // Match S3 client: use explicit keys when present (local/.env), else default chain (IAM role).
     const region = process.env.AWS_REGION || 'ap-south-1';
@@ -609,6 +616,9 @@ export class RecordingService {
    */
   @Cron(CronExpression.EVERY_10_MINUTES)
   async sweepStuckMuxIngestion(): Promise<void> {
+    if (process.env.MEDIA_VOD_PROVIDER === 'cloudflare') {
+      return;
+    }
     if (this.staleMuxHealRunning) return;
     this.staleMuxHealRunning = true;
     try {
@@ -802,10 +812,7 @@ export class RecordingService {
       }
     }
 
-    let key =
-      recording.s3Path?.replace(`s3://${bucketName}/`, '') ||
-      recording.s3Path?.replace(/^s3:\/\/[^/]+\//, '') ||
-      null;
+    let key = recording.s3Path?.replace(/^s3:\/\/[^/]+\//, '') || null;
     if (!key && typeof meta.expected_s3_key === 'string') {
       key = meta.expected_s3_key.trim() || null;
     }
@@ -828,6 +835,52 @@ export class RecordingService {
       key,
       bucketName,
     );
+
+    // If mediaProviderFactory is available and active VOD provider is Cloudflare
+    if (this.mediaProviderFactory) {
+      const vodProvider = this.mediaProviderFactory.getVodProvider();
+      if (vodProvider.providerName === 'cloudflare') {
+        try {
+          const cfAsset = vodProvider.ingestFromUrl
+            ? await vodProvider.ingestFromUrl(signedUrl, {
+                recordingId,
+                metadata: { key, recordingId },
+              })
+            : await vodProvider.createAssetFromUrl({
+                sourceUrl: signedUrl,
+                passthrough: recordingId,
+              });
+
+          await this.recordingRepositoryForMedia.update(recordingId, {
+            s3Path: `s3://${bucketName}/${key}`,
+            status: cfAsset.status === 'ready' ? 'ready' : 'processing',
+            mux_playback_id: cfAsset.playbackId || null,
+            mux_media_url: cfAsset.playbackUrl || null,
+            isVideoCreated: cfAsset.status === 'ready',
+            metadata: {
+              ...meta,
+              provider: 'cloudflare',
+              cloudflareStreamUid: cfAsset.assetId,
+              cloudflarePlaybackUrl: cfAsset.playbackUrl,
+              vod_retries: muxRetries + 1,
+            } as any,
+          });
+
+          return { ok: true, action: 'cloudflare_ingest_started' };
+        } catch (cfErr: any) {
+          this.logger.warn(
+            `Cloudflare ingestFromUrl failed in retryMuxIngestion for ${recordingId}: ${cfErr?.message}`,
+          );
+          await this.recordingRepositoryForMedia.update(recordingId, {
+            s3Path: `s3://${bucketName}/${key}`,
+            status: 'ready',
+            isVideoCreated: true,
+          });
+          return { ok: true, action: 's3_fallback_ready' };
+        }
+      }
+    }
+
     try {
       await this.muxService.uploadFromS3(signedUrl, key, recordingId);
       await this.recordingRepositoryForMedia.update(recordingId, {
@@ -2560,8 +2613,9 @@ export class RecordingService {
         // Create promises for parallel execution
         const promises: Promise<any>[] = [];
 
-        // Get game duration from Mux asset only if needed for self-heal or not ready yet
+        // Get game duration from Mux asset only if needed for legacy self-heal when not on Cloudflare
         if (
+          process.env.MEDIA_VOD_PROVIDER !== 'cloudflare' &&
           recording.mux_asset_id &&
           !recording.s3Path &&
           (recording.status !== 'ready' || !recording.mux_playback_id)
@@ -4421,13 +4475,30 @@ export class RecordingService {
     dto: ExtractSessionRequestDto,
     requestingUserId?: string,
   ): Promise<any> {
-    const primaryCamera = await this.cameraRepository.findOne({
-      where: { id: dto.cameraId },
-      relations: ['turf'],
-    });
+    const targetCamId = dto.cameraId || dto.courtId;
+    let primaryCamera: Camera | null = null;
+
+    if (targetCamId) {
+      primaryCamera = await this.cameraRepository.findOne({
+        where: { id: targetCamId },
+        relations: ['turf'],
+      });
+    } else if (dto.turfId && dto.courtNumber != null) {
+      primaryCamera = await this.cameraRepository.findOne({
+        where: { turfId: dto.turfId, court_number: dto.courtNumber },
+        relations: ['turf'],
+      });
+    } else if (dto.turfId) {
+      primaryCamera = await this.cameraRepository.findOne({
+        where: { turfId: dto.turfId },
+        relations: ['turf'],
+      });
+    }
 
     if (!primaryCamera) {
-      throw new NotFoundException(`Camera not found with ID: ${dto.cameraId}`);
+      throw new NotFoundException(
+        `Camera not found for the requested court or venue.`,
+      );
     }
 
     if (primaryCamera.hidden_from_app) {
@@ -4663,22 +4734,57 @@ export class RecordingService {
 
         let uploadUrl = '';
         let uploadId = '';
-        try {
-          const muxUpload = await this.muxService.createDirectUpload(
-            recording.id,
-          );
-          uploadUrl = muxUpload.uploadUrl;
-          uploadId = muxUpload.uploadId;
-        } catch (muxErr) {
-          this.logger.warn(
-            `Mux Direct Upload failed, falling back to S3-only extraction: ${(muxErr as Error).message}`,
-          );
+        let uploadProvider: 'mux' | 'cloudflare' = 'mux';
+
+        if (this.mediaProviderFactory) {
+          const vodProvider = this.mediaProviderFactory.getVodProvider();
+          if (vodProvider.providerName === 'cloudflare') {
+            try {
+              const matchTitle = `${primaryCamera.turf?.name || 'Venue'} - Court ${defaultChannel} (${startDate.toISOString().slice(0, 10)})`;
+              const cfUpload = await vodProvider.createDirectUpload({
+                recordingId: recording.id,
+                name: matchTitle,
+                maxDurationSeconds: 14400,
+              });
+              uploadUrl = cfUpload.uploadUrl;
+              uploadId = cfUpload.uploadId;
+              uploadProvider = 'cloudflare';
+            } catch (cfErr: any) {
+              this.logger.warn(
+                `Cloudflare Direct Upload failed, falling back: ${cfErr?.message}`,
+              );
+            }
+          }
+        }
+
+        if (!uploadUrl) {
+          try {
+            const muxUpload = await this.muxService.createDirectUpload(
+              recording.id,
+            );
+            uploadUrl = muxUpload.uploadUrl;
+            uploadId = muxUpload.uploadId;
+            uploadProvider = 'mux';
+          } catch (muxErr) {
+            this.logger.warn(
+              `Mux Direct Upload failed, falling back to S3-only extraction: ${(muxErr as Error).message}`,
+            );
+          }
+        }
+
+        if (uploadProvider === 'cloudflare' && uploadId) {
+          recording.mux_playback_id = uploadId;
+          recording.mux_media_url = `https://videodelivery.net/${uploadId}/manifest/video.m3u8`;
         }
 
         recording.metadata = {
           ...(recording.metadata as Record<string, unknown>),
           expected_s3_key: s3Key,
           mux_upload_id: uploadId || null,
+          direct_upload_provider: uploadProvider,
+          provider: uploadProvider,
+          cloudflareStreamUid:
+            uploadProvider === 'cloudflare' ? uploadId : undefined,
         } as Recording['metadata'];
         await this.recordingRepositoryForMedia.save(recording);
 
@@ -4986,12 +5092,26 @@ export class RecordingService {
       }
     }
 
+    let liveProviderName: 'mux' | 'cloudflare' = 'mux';
     if (!rtmpUrl) {
-      // 1. Create Mux Live Stream for non-Botanical or fallback
-      const muxLive = await this.muxService.createLiveStream();
-      rtmpUrl = muxLive.rtmpUrl;
-      liveStreamId = muxLive.liveStreamId;
-      playbackUrl = muxLive.playbackUrl;
+      // 1. Create Live Stream via media provider abstraction (Mux or Cloudflare)
+      if (this.mediaProviderFactory) {
+        const liveProvider = this.mediaProviderFactory.getLiveStreamProvider();
+        const liveOutput = await liveProvider.createLiveStream({
+          courtNumber: camera.court_number,
+          channel: channelNumber,
+          cameraId: camera.id,
+        });
+        rtmpUrl = liveOutput.rtmpUrl;
+        liveStreamId = liveOutput.providerLiveStreamId;
+        playbackUrl = liveOutput.playbackUrl;
+        liveProviderName = liveOutput.provider;
+      } else {
+        const muxLive = await this.muxService.createLiveStream();
+        rtmpUrl = muxLive.rtmpUrl;
+        liveStreamId = muxLive.liveStreamId;
+        playbackUrl = muxLive.playbackUrl;
+      }
     }
 
     // 2. Command Pi to relay RTSP from NVR to Mux RTMP (best-effort — playback URL works without Pi)
@@ -5079,6 +5199,7 @@ export class RecordingService {
       }),
       liveStreamId: liveStreamId,
       playbackUrl: playbackUrl,
+      provider: liveProviderName,
       piStatus,
       warning: piWarning,
     };
@@ -5128,12 +5249,19 @@ export class RecordingService {
       muxLiveStreamId !== 'hardcoded-botanical-live-stream-id'
     ) {
       try {
-        await this.muxService.disableLiveStream(muxLiveStreamId);
-        muxStatus = 'MUX_DISABLED';
+        if (this.mediaProviderFactory) {
+          const liveProvider =
+            this.mediaProviderFactory.getLiveStreamProvider();
+          await liveProvider.deleteLiveStream(muxLiveStreamId);
+          muxStatus = 'STOPPED';
+        } else {
+          await this.muxService.disableLiveStream(muxLiveStreamId);
+          muxStatus = 'MUX_DISABLED';
+        }
       } catch (err: any) {
-        muxStatus = 'MUX_DISABLE_FAILED';
+        muxStatus = 'DISABLE_FAILED';
         this.logger.warn(
-          `Mux disable failed for ${muxLiveStreamId}: ${err.message}`,
+          `Live stream stop failed for ${muxLiveStreamId}: ${err.message}`,
         );
       }
     }

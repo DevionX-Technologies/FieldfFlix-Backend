@@ -3,10 +3,29 @@ import { Type } from 'class-transformer';
 import { IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class ExtractSessionRequestDto {
-  @ApiProperty({ description: 'ID of the camera or court' })
-  @IsNotEmpty()
+  @ApiPropertyOptional({ description: 'ID of the camera or court' })
+  @IsOptional()
   @IsString()
-  cameraId: string;
+  cameraId?: string;
+
+  @ApiPropertyOptional({
+    description: 'ID of the court (alternative to cameraId)',
+  })
+  @IsOptional()
+  @IsString()
+  courtId?: string;
+
+  @ApiPropertyOptional({ description: 'ID of the turf/venue' })
+  @IsOptional()
+  @IsString()
+  turfId?: string;
+
+  @ApiPropertyOptional({
+    description: 'Court number (alternative if cameraId is not provided)',
+  })
+  @IsOptional()
+  @IsNumber()
+  courtNumber?: number;
 
   @ApiProperty({
     description: 'Session start timestamp (ISO 8601 UTC)',
