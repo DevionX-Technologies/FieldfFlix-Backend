@@ -1,8 +1,4 @@
-# FieldFlicks: Recording & Highlight Clip Processing Architecture
 
-> Complete system design for sequential highlight clip creation, Mux error handling, rate limit management, and retry strategy.
-
----
 
 ## Table of Contents
 
