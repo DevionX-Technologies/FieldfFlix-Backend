@@ -45,8 +45,11 @@ export const dataSourceOptions: DataSourceOptions = {
   //   : {}),
   ssl: { rejectUnauthorized: false },
   logging: process.env.DB_LOGGING === 'true' ? true : ['error', 'warn'],
-  // Fresh DB bootstrap only (e.g. Neon): set DB_SYNC=true once, deploy, then remove.
-  synchronize: process.env.DB_SYNC === 'true',
+  // Fresh DB bootstrap only (e.g. Neon): set DB_SYNC=true or ENVIRONMENT=dev
+  synchronize:
+    process.env.DB_SYNC === 'true' ||
+    process.env.ENVIRONMENT === 'dev' ||
+    process.env.ENVIRONMENT === 'development',
   extra: {
     options: '-c timezone=Asia/Kolkata',
   },
