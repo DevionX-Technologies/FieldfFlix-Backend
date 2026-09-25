@@ -103,7 +103,7 @@ describe('RecordingService VOD Ingestion Integration', () => {
     expect(mockRecordingRepo.update).toHaveBeenCalledWith(
       recordingId,
       expect.objectContaining({
-        status: 'processing',
+        status: 'ready',
         metadata: expect.objectContaining({
           provider: 'cloudflare',
           cloudflareStreamUid: 'cf_vod_stream_999',

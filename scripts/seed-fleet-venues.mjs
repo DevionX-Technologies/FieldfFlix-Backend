@@ -33,7 +33,11 @@ const VENUES = [
     sport: 'Pickleball',
     turfId: TURF_IDS.eskay,
     courts: [
-      { id: '27ce1af1-721a-421c-9223-3ddeda95f329', courtNumber: 1 },
+      {
+        id: '27ce1af1-721a-421c-9223-3ddeda95f329',
+        courtNumber: 1,
+        piUrl: PI_PICKPAD,
+      },
       { id: '27ce1af1-721a-421c-9223-3ddeda95f318', courtNumber: 2 },
       { id: '27ce1af1-721a-421c-9223-3ddeda95f319', courtNumber: 3 },
       { id: '27ce1af1-721a-421c-9223-3ddeda95f31a', courtNumber: 4 },

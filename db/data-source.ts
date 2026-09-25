@@ -40,7 +40,7 @@ export const dataSourceOptions: DataSourceOptions = {
   //   ? { ssl: { rejectUnauthorized: false } }
   //   : {}),
   ssl: { rejectUnauthorized: false },
-  logging: process.env.ENVIRONMENT === 'development',
+  logging: process.env.DB_LOGGING === 'true' ? true : ['error', 'warn'],
   // Fresh DB bootstrap only (e.g. Neon): set DB_SYNC=true once, deploy, then remove.
   synchronize: process.env.DB_SYNC === 'true',
   extra: {

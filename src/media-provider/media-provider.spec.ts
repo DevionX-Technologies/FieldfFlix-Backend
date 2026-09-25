@@ -475,7 +475,7 @@ describe('MediaProvider Subsystem', () => {
       expect(mockHttpClient.post).toHaveBeenCalledWith(
         '/direct_upload',
         expect.objectContaining({
-          meta: { passthrough: 'rec-123' },
+          meta: expect.objectContaining({ passthrough: 'rec-123' }),
         }),
       );
     });

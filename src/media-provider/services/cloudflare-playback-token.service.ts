@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { SignJWT, importPKCS8 } from 'jose';
 import * as crypto from 'crypto';
 

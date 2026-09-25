@@ -50,6 +50,9 @@ export class AuthService {
   }
 
   async accountExistsByPhone(mobile: string): Promise<{ exists: boolean }> {
+    if (isDemoPhone(mobile)) {
+      return { exists: true };
+    }
     const phoneNumber = this.formatPhoneForStorage(mobile);
     const user = await this.userService.findUserPhoneNumberOrEmail({
       phone_number: phoneNumber,
@@ -59,10 +62,14 @@ export class AuthService {
 
   private formatPhoneForStorage(mobile: string): string {
     if (mobile.startsWith('+')) {
+      const digits = mobile.replace(/\D/g, '');
+      if (digits.startsWith('9191')) {
+        return `+${digits.slice(2)}`;
+      }
       return mobile;
     }
     const digits = phoneDigitsOnly(mobile);
-    if (digits.length === 10) {
+    if (digits.length === 10 || digits.length === 9 || /^1+$/.test(digits)) {
       return `+91${digits}`;
     }
     return `+${String(mobile).replace(/\D/g, '')}`;
@@ -92,6 +99,15 @@ export class AuthService {
       let user = await this.userService.findUserPhoneNumberOrEmail({
         phone_number: phoneNumber,
       });
+
+      if (!user && demoLogin) {
+        user = await this.userService.findDemoUser();
+        if (user) {
+          this.logger.log(
+            `Demo login matched existing demo user ${user.id} (${user.phone_number}) for requested ${phoneNumber}`,
+          );
+        }
+      }
 
       if (!user) {
         user = await this.userService.create({

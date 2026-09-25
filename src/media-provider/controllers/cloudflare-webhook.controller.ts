@@ -7,17 +7,26 @@ import {
   Logger,
   Post,
   Req,
+  Optional,
 } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { Public } from '../../decorators/public.decorator';
 import { CloudflareWebhookService } from '../services/cloudflare-webhook.service';
+import { Recording } from '../../recording/entities/recording.entity';
 
 @ApiTags('Webhooks')
 @Controller('webhooks')
 export class CloudflareWebhookController {
   private readonly logger = new Logger(CloudflareWebhookController.name);
 
-  constructor(private readonly webhookService: CloudflareWebhookService) {}
+  constructor(
+    private readonly webhookService: CloudflareWebhookService,
+    @Optional()
+    @InjectRepository(Recording)
+    private readonly recordingRepository?: Repository<Recording>,
+  ) {}
 
   @Public()
   @Post('cloudflare')
@@ -148,17 +157,115 @@ export class CloudflareWebhookController {
           );
           break;
 
-        case 'video.ready':
+        case 'video.ready': {
           this.logger.log(
             `VOD asset [${normalized.assetId}] is ready. Playback URL: ${normalized.playbackUrl}`,
           );
-          break;
 
-        case 'video.failed':
+          if (this.recordingRepository && normalized.assetId) {
+            try {
+              const recording = await this.recordingRepository
+                .createQueryBuilder('r')
+                .where("r.metadata->>'cloudflareStreamUid' = :uid", {
+                  uid: normalized.assetId,
+                })
+                .orWhere("r.metadata->>'cf_uid' = :uid", {
+                  uid: normalized.assetId,
+                })
+                .orWhere("r.metadata->>'uploadId' = :uid", {
+                  uid: normalized.assetId,
+                })
+                .orWhere('r.mux_playback_id = :uid', {
+                  uid: normalized.assetId,
+                })
+                .getOne();
+
+              if (recording) {
+                const meta = (recording.metadata ?? {}) as Record<
+                  string,
+                  unknown
+                >;
+                await this.recordingRepository.update(recording.id, {
+                  status: 'ready',
+                  isVideoCreated: true,
+                  mux_playback_id: normalized.assetId,
+                  mux_media_url:
+                    normalized.playbackUrl ||
+                    `https://videodelivery.net/${normalized.assetId}/manifest/video.m3u8`,
+                  metadata: {
+                    ...meta,
+                    cloudflareStreamStatus: 'ready',
+                    cloudflarePlaybackUrl:
+                      normalized.playbackUrl ||
+                      `https://videodelivery.net/${normalized.assetId}/manifest/video.m3u8`,
+                    cloudflareReadyAt: new Date().toISOString(),
+                  } as any,
+                });
+                this.logger.log(
+                  `Updated recording ${recording.id} to ready from Cloudflare Stream webhook`,
+                );
+              }
+            } catch (dbErr: any) {
+              this.logger.warn(
+                `Failed to update recording on video.ready for ${normalized.assetId}: ${dbErr?.message}`,
+              );
+            }
+          }
+          break;
+        }
+
+        case 'video.failed': {
           this.logger.warn(
             `VOD asset [${normalized.assetId}] processing failed.`,
           );
+          if (this.recordingRepository && normalized.assetId) {
+            try {
+              const recording = await this.recordingRepository
+                .createQueryBuilder('r')
+                .where("r.metadata->>'cloudflareStreamUid' = :uid", {
+                  uid: normalized.assetId,
+                })
+                .orWhere("r.metadata->>'cf_uid' = :uid", {
+                  uid: normalized.assetId,
+                })
+                .orWhere("r.metadata->>'uploadId' = :uid", {
+                  uid: normalized.assetId,
+                })
+                .orWhere('r.mux_playback_id = :uid', {
+                  uid: normalized.assetId,
+                })
+                .getOne();
+
+              if (recording) {
+                const meta = (recording.metadata ?? {}) as Record<
+                  string,
+                  unknown
+                >;
+                // If the raw MP4 is already in R2 storage, keep recording playable!
+                const isDirectReady = Boolean(
+                  meta.r2Status === 'ready' || recording.s3Path,
+                );
+                await this.recordingRepository.update(recording.id, {
+                  status: isDirectReady ? 'ready' : 'failed',
+                  metadata: {
+                    ...meta,
+                    cloudflareStreamStatus: 'failed',
+                    cloudflareStreamError:
+                      (normalized as any).rawProviderResponse?.status
+                        ?.errorReasonText ||
+                      (parsedPayload as any)?.status?.errorReasonText ||
+                      'Processing failed',
+                  } as any,
+                });
+              }
+            } catch (dbErr: any) {
+              this.logger.warn(
+                `Failed to update recording on video.failed: ${dbErr?.message}`,
+              );
+            }
+          }
           break;
+        }
 
         case 'video.upload_complete':
           this.logger.log(

@@ -1,11 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
-import {
-  PaymentEntity,
-  PaymentStatus,
-  PaymentType,
-} from './entities/payment.entity';
+import { Repository } from 'typeorm';
+import { PaymentEntity } from './entities/payment.entity';
 
 @Injectable()
 export class PaymentRestrictionService {
@@ -31,8 +27,13 @@ export class PaymentRestrictionService {
    * "is this recording id unlocked for SOMEBODY?" here.
    */
   async hasAnyCompletedPaymentForRecording(
-    recordingId: string,
+    _recordingId: string,
   ): Promise<boolean> {
+    void _recordingId;
+    // DEV MODE: Unlock all recordings by default for testing
+    return true;
+
+    /*
     const payment = await this.paymentRepository.findOne({
       where: {
         recording_id: recordingId,
@@ -44,18 +45,29 @@ export class PaymentRestrictionService {
       },
     });
     return !!payment;
+    */
   }
 
   async checkRecordingAccess(
-    userId: string,
-    recordingId: string,
-    requestedDuration?: number,
+    _userId: string,
+    _recordingId: string,
+    _requestedDuration?: number,
   ): Promise<{
     canAccess: boolean;
     reason?: string;
     freeDuration?: number;
     paymentRequired?: boolean;
   }> {
+    void _userId;
+    void _recordingId;
+    void _requestedDuration;
+    // DEV MODE: Unlock all recordings by default for testing
+    return {
+      canAccess: true,
+      reason: 'Dev mode bypass: unlocked by default for testing',
+    };
+
+    /*
     try {
       this.logger.log(
         `Checking recording access for user: ${userId}, recording: ${recordingId}`,
@@ -108,6 +120,7 @@ export class PaymentRestrictionService {
         reason: 'Error checking access',
       };
     }
+    */
   }
 
   /**

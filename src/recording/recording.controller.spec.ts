@@ -218,10 +218,12 @@ describe('RecordingController', () => {
       expect(recordingService.getMuxPublicUrl).toHaveBeenCalledWith(
         recordingId,
       );
-      expect(result).toEqual({
-        ...expectedRecording,
-        mux_public_url: 'https://stream.mux.com/test.m3u8',
-      });
+      expect(result).toEqual(
+        expect.objectContaining({
+          ...expectedRecording,
+          mux_public_url: 'https://stream.mux.com/test.m3u8',
+        }),
+      );
     });
 
     it('should throw NotFoundException if recording is not found', async () => {

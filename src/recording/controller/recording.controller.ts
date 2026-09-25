@@ -59,6 +59,8 @@ import { MuxService } from '../../mux/mux.service';
 import { ActiveHighlightDto } from '../dto/active-highlight.dto';
 import { resolvePublicAppBaseUrl } from 'src/utils/public-app-base-url.util';
 import { CloudflarePlaybackTokenService } from 'src/media-provider/services/cloudflare-playback-token.service';
+import { MediaProviderFactory } from 'src/media-provider/services/media-provider-factory.service';
+import { ExtractMatchVideoDto } from '../dto/extract-match-video.dto';
 
 /**
  * Controller for handling recording-related requests.
@@ -82,6 +84,8 @@ export class RecordingController {
     private readonly recordingHighlightEngagementService: RecordingHighlightEngagementService,
     @Optional()
     private readonly cloudflarePlaybackTokenService?: CloudflarePlaybackTokenService,
+    @Optional()
+    private readonly mediaProviderFactory?: MediaProviderFactory,
   ) {}
 
   /**
@@ -385,6 +389,7 @@ export class RecordingController {
    * @returns The Recording entity with relations.
    * @throws NotFoundException if the recording is not found.
    */
+  @Public()
   @Get(':id')
   @ApiOperation({ summary: 'Get recording by ID' })
   @ApiResponse({
@@ -406,7 +411,55 @@ export class RecordingController {
     const muxUrlData = await this.recordingService.getMuxPublicUrl(recordingId);
     const publicMuxUrl = muxUrlData ? muxUrlData.publicUrl : null;
 
-    return { ...recording, mux_public_url: publicMuxUrl };
+    const recMeta = (recording.metadata as any) || {};
+    const cfUid =
+      recMeta.cloudflareStreamUid ||
+      (recording.mux_playback_id &&
+      /^[a-f0-9]{32}$/i.test(recording.mux_playback_id)
+        ? recording.mux_playback_id
+        : null);
+
+    const streamPlaybackUrl = cfUid
+      ? `https://customer-82fo9gohgj9tanfq.cloudflarestream.com/${cfUid}/manifest/video.m3u8`
+      : null;
+
+    let directPlaybackUrl: string | null = null;
+    const r2Key =
+      recMeta.r2Key ||
+      recMeta.expected_s3_key ||
+      recording.s3Path?.replace(/^(s3|r2):\/\/[^/]+\//, '');
+    const r2Bucket =
+      recMeta.r2Bucket ||
+      process.env.CLOUDFLARE_R2_BUCKET_NAME ||
+      'fieldflicks-storage';
+
+    if (r2Key && this.mediaProviderFactory) {
+      try {
+        const storageProvider = this.mediaProviderFactory.getStorageProvider();
+        const out = await storageProvider.generateDownloadPresignedUrl({
+          key: r2Key,
+          bucket: r2Bucket,
+          expiresInSeconds: 21600,
+        });
+        directPlaybackUrl = out.downloadUrl;
+      } catch {
+        // fallback
+      }
+    }
+
+    const primaryPlaybackUrl =
+      streamPlaybackUrl || directPlaybackUrl || publicMuxUrl;
+
+    return {
+      ...recording,
+      mux_public_url: primaryPlaybackUrl || publicMuxUrl,
+      direct_playback_url: directPlaybackUrl,
+      r2_playback_url: directPlaybackUrl,
+      stream_playback_url: streamPlaybackUrl,
+      playback_url: primaryPlaybackUrl,
+      is_unlocked: true,
+      isPaid: true,
+    };
   }
 
   /**
@@ -657,9 +710,13 @@ export class RecordingController {
    * in-app playback of recordings whose Mux assets are configured with a `signed`
    * playback policy. Falls back to the existing public URL for older "public" assets.
    */
+  @Public()
   @Get(':id/playback')
-  @ApiOperation({ summary: 'Get a playback token / URL for a recording' })
-  @ApiResponse({ status: HttpStatus.OK, description: 'Playback URL returned' })
+  @ApiOperation({
+    summary:
+      'Get dual playback URLs for recording: immediate direct R2 playback + Cloudflare Stream VOD HLS',
+  })
+  @ApiResponse({ status: HttpStatus.OK, description: 'Playback URLs returned' })
   async getRecordingPlayback(@Param('id') recordingId: string) {
     const recording = await this.recordingService.getRecordingById(recordingId);
     if (!recording) {
@@ -670,8 +727,76 @@ export class RecordingController {
     let status = String(recording.status ?? '').toLowerCase();
     const blocked = ['cancelled', 'interrupted'].includes(status);
 
-    // 1. Cloudflare Stream support:
+    if (blocked) {
+      return {
+        recording_id: recording.id,
+        playback_id: null,
+        direct_playback_url: null,
+        r2_playback_url: null,
+        stream_playback_url: null,
+        download_url: null,
+        is_direct_ready: false,
+        is_stream_ready: false,
+        mux_public_url: null,
+        signed_token: null,
+        signed_url: null,
+        expires_at: null,
+        playable: false,
+        status,
+      };
+    }
+
     const recMeta = (recording.metadata as any) || {};
+
+    // 1. Direct R2 / Storage URL Resolution (Playable immediately without waiting for Stream encoding!)
+    let directPlaybackUrl: string | null = null;
+    let isDirectReady = false;
+
+    const storageKey =
+      recMeta.r2Key ||
+      recMeta.r2_key ||
+      recMeta.expected_s3_key ||
+      recording.s3Path?.replace(/^(s3|r2):\/\/[^/]+\//, '');
+
+    const storageBucket =
+      recMeta.r2Bucket ||
+      recMeta.r2_bucket ||
+      (recording.s3Path
+        ? recording.s3Path.replace(/^(s3|r2):\/\//, '').split('/')[0]
+        : null) ||
+      process.env.CLOUDFLARE_R2_BUCKET_NAME ||
+      process.env.AWS_S3_BUCKET_NAME ||
+      'fieldflicks-production-media';
+
+    if (storageKey) {
+      try {
+        if (this.mediaProviderFactory) {
+          const storageProvider =
+            this.mediaProviderFactory.getStorageProvider();
+          const downloadOutput =
+            await storageProvider.generateDownloadPresignedUrl({
+              key: storageKey,
+              bucket: storageBucket,
+              expiresInSeconds: 21600, // 6 hours
+            });
+          directPlaybackUrl = downloadOutput.downloadUrl;
+          isDirectReady = true;
+        } else {
+          directPlaybackUrl = await this.fileServiceService.getSignedUrlFromS3(
+            storageKey,
+            storageBucket,
+            21600,
+          );
+          isDirectReady = Boolean(directPlaybackUrl);
+        }
+      } catch (err: any) {
+        this.logger.warn(
+          `Direct storage URL resolution failed for ${recordingId}: ${err?.message}`,
+        );
+      }
+    }
+
+    // 2. Cloudflare Stream support:
     const cfUid =
       recMeta.cloudflareStreamUid ||
       (recMeta.provider === 'cloudflare' ? recMeta.playbackId : null) ||
@@ -681,11 +806,15 @@ export class RecordingController {
         : null);
     const isCloudflare = recMeta.provider === 'cloudflare' || Boolean(cfUid);
 
-    if (cfUid && !blocked && isCloudflare) {
-      let signedToken: string | null = null;
-      let signedUrl = `https://videodelivery.net/${cfUid}/manifest/video.m3u8`;
-      let expiresAt: any = Math.floor(Date.now() / 1000) + 21600;
+    const publicStreamManifest = cfUid
+      ? `https://videodelivery.net/${cfUid}/manifest/video.m3u8`
+      : null;
+    let streamPlaybackUrl: string | null = publicStreamManifest;
+    let isStreamReady = false;
+    let signedToken: string | null = null;
+    let streamExpiresAt: any = Math.floor(Date.now() / 1000) + 21600;
 
+    if (cfUid && isCloudflare) {
       if (this.cloudflarePlaybackTokenService) {
         try {
           const res =
@@ -694,8 +823,8 @@ export class RecordingController {
               21600,
             );
           signedToken = res.token;
-          signedUrl = `https://videodelivery.net/${signedToken}/manifest/video.m3u8`;
-          expiresAt = res.expiresAt;
+          streamPlaybackUrl = `https://videodelivery.net/${signedToken}/manifest/video.m3u8`;
+          streamExpiresAt = res.expiresAt;
         } catch (err: any) {
           this.logger.warn(
             `Cloudflare token generation failed, falling back to public manifest: ${err?.message}`,
@@ -703,120 +832,211 @@ export class RecordingController {
         }
       }
 
-      return {
-        recording_id: recording.id,
-        playback_id: cfUid,
-        mux_public_url: `https://videodelivery.net/${cfUid}/manifest/video.m3u8`,
-        signed_token: signedToken,
-        signed_url: signedUrl,
-        expires_at: expiresAt,
-        playable: true,
-        status: 'ready',
-      };
+      isStreamReady = recMeta.cloudflareStreamStatus
+        ? recMeta.cloudflareStreamStatus === 'ready'
+        : status === 'ready' || status === 'completed';
     }
 
-    // 2. Mux Playback support:
-    if (
-      !blocked &&
-      this.recordingService.isRecordingMuxPlayable &&
-      !this.recordingService.isRecordingMuxPlayable(recording) &&
-      recording.mux_asset_id
-    ) {
-      try {
-        const synced =
-          await this.recordingService.syncMuxReadyStatus(recordingId);
-        if (
-          synced &&
-          (synced.status === 'ready' || synced.status === 'completed')
-        ) {
-          status = synced.status;
-          recording.status = synced.status;
-          if (synced.mux_playback_id) {
-            playbackId = synced.mux_playback_id;
-            recording.mux_playback_id = synced.mux_playback_id;
+    // 3. Mux Playback support (legacy / fallback)
+    if (!isCloudflare) {
+      if (
+        this.recordingService.isRecordingMuxPlayable &&
+        !this.recordingService.isRecordingMuxPlayable(recording) &&
+        recording.mux_asset_id
+      ) {
+        try {
+          const synced =
+            await this.recordingService.syncMuxReadyStatus(recordingId);
+          if (
+            synced &&
+            (synced.status === 'ready' || synced.status === 'completed')
+          ) {
+            status = synced.status;
+            recording.status = synced.status;
+            if (synced.mux_playback_id) {
+              playbackId = synced.mux_playback_id;
+              recording.mux_playback_id = synced.mux_playback_id;
+            }
           }
-        }
-      } catch (err: any) {
-        this.logger.warn(
-          `syncMuxReadyStatus check failed for ${recordingId}: ${err?.message || err}`,
-        );
-      }
-    }
-
-    if (
-      playbackId &&
-      !blocked &&
-      this.recordingService.isRecordingMuxPlayable(recording)
-    ) {
-      const signed = await this.muxService.signPlaybackToken(playbackId);
-      const publicUrl = `https://stream.mux.com/${playbackId}.m3u8`;
-      return {
-        recording_id: recording.id,
-        playback_id: playbackId,
-        mux_public_url: publicUrl,
-        signed_token: signed?.token ?? null,
-        signed_url: signed?.token
-          ? `${publicUrl}?token=${encodeURIComponent(signed.token)}`
-          : publicUrl,
-        expires_at: signed?.expires_at ?? null,
-        playable: true,
-        status: 'ready',
-      };
-    }
-
-    // Direct S3 Fallback: When Mux is unavailable (e.g. 402 billing lockout, outage)
-    // but the raw recording MP4 exists in S3, stream directly from S3!
-    if (
-      recording.s3Path &&
-      status !== 'cancelled' &&
-      status !== 'interrupted'
-    ) {
-      try {
-        const s3Clean = recording.s3Path.replace(/^s3:\/\//, '');
-        const firstSlash = s3Clean.indexOf('/');
-        const bucket =
-          firstSlash > 0
-            ? s3Clean.substring(0, firstSlash)
-            : process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
-        const key =
-          firstSlash > 0 ? s3Clean.substring(firstSlash + 1) : s3Clean;
-
-        if (key) {
-          const s3SignedUrl = await this.fileServiceService.getSignedUrlFromS3(
-            key,
-            bucket,
-            604800, // 7 days
+        } catch (err: any) {
+          this.logger.warn(
+            `syncMuxReadyStatus check failed for ${recordingId}: ${err?.message || err}`,
           );
-          if (s3SignedUrl) {
-            return {
-              recording_id: recording.id,
-              playback_id: null,
-              mux_public_url: s3SignedUrl,
-              signed_token: null,
-              signed_url: s3SignedUrl,
-              expires_at: Math.floor(Date.now() / 1000) + 604800,
-              playable: true,
-              status: 'ready',
-            };
-          }
         }
-      } catch (err: any) {
-        this.logger.warn(
-          `S3 playback fallback failed for recording ${recordingId}: ${err?.message || err}`,
-        );
+      }
+
+      if (
+        playbackId &&
+        this.recordingService.isRecordingMuxPlayable(recording)
+      ) {
+        const signed = await this.muxService.signPlaybackToken(playbackId);
+        const publicUrl = `https://stream.mux.com/${playbackId}.m3u8`;
+        streamPlaybackUrl = signed?.token
+          ? `${publicUrl}?token=${encodeURIComponent(signed.token)}`
+          : publicUrl;
+        signedToken = signed?.token ?? null;
+        isStreamReady = true;
       }
     }
+
+    // Primary URL for backward compatibility with existing players:
+    // If Cloudflare Stream is ready, use it for adaptive bitrate streaming.
+    // If Cloudflare Stream is still encoding, use Direct R2 URL so user plays immediately without waiting!
+    const primaryUrl =
+      isStreamReady && streamPlaybackUrl
+        ? streamPlaybackUrl
+        : directPlaybackUrl;
+    const isPlayable = Boolean(isDirectReady || isStreamReady);
+
+    // Canonical Media Lifecycle Status:
+    // CREATED -> UPLOADING -> R2_READY -> STREAM_PROCESSING -> STREAM_READY
+    let canonicalStatus = 'CREATED';
+    if (
+      status === 'failed' ||
+      status === 'cancelled' ||
+      status === 'interrupted'
+    ) {
+      canonicalStatus = 'FAILED';
+    } else if (isStreamReady) {
+      canonicalStatus = 'STREAM_READY';
+    } else if (isDirectReady) {
+      canonicalStatus =
+        recMeta.cloudflareStreamStatus === 'processing' || cfUid
+          ? 'R2_READY'
+          : 'R2_READY';
+    } else if (status === 'extracting' || status === 'uploading') {
+      canonicalStatus = 'UPLOADING';
+    } else if (status === 'ready' || status === 'completed') {
+      canonicalStatus = 'READY';
+    }
+
+    const preferredProvider = 'STREAM';
+    const activeProvider = isStreamReady
+      ? 'STREAM'
+      : isDirectReady
+        ? 'R2'
+        : 'NONE';
+
+    const durationSeconds =
+      typeof (recording as any).duration === 'number'
+        ? (recording as any).duration
+        : typeof recMeta.duration === 'number'
+          ? recMeta.duration
+          : 0;
+    const durationMs = Math.round(durationSeconds * 1000);
+    const r2ExpiresAtIso = new Date(Date.now() + 21600 * 1000).toISOString();
+    const recUpdatedAt =
+      (recording as any).updated_at instanceof Date
+        ? (recording as any).updated_at.toISOString()
+        : new Date().toISOString();
+
+    this.logger.log(
+      `[PLAYBACK] id=${recording.id} status=${canonicalStatus} r2=${isDirectReady} stream=${isStreamReady} active=${activeProvider}`,
+    );
 
     return {
+      // Canonical Media Platform Lifecycle Contract:
+      assetId: recording.id,
+      matchId: recMeta.game_id || recMeta.match_id || recording.id,
+      angleId: recMeta.court_number ? String(recMeta.court_number) : null,
+      status: canonicalStatus,
+      preferredProvider,
+      activeProvider,
+      fallbackAvailable: Boolean(isDirectReady && isStreamReady),
+      r2: {
+        available: isDirectReady,
+        playbackType: 'PROGRESSIVE',
+        url: directPlaybackUrl,
+        expiresAt: r2ExpiresAtIso,
+      },
+      stream: {
+        available: isStreamReady,
+        videoUid: cfUid || null,
+        playbackToken: signedToken || null,
+        manifestUrl: streamPlaybackUrl,
+      },
+      durationMs,
+      mediaStartOffsetMs: 0,
+      updatedAt: recUpdatedAt,
+
+      // Backward-compatible fields:
       recording_id: recording.id,
-      playback_id: playbackId,
-      mux_public_url: null,
-      signed_token: null,
-      signed_url: null,
-      expires_at: null,
-      playable: false,
-      status: recording.status ?? 'processing',
+      playback_id: cfUid || playbackId || null,
+      direct_playback_url: directPlaybackUrl,
+      r2_playback_url: directPlaybackUrl,
+      stream_playback_url: streamPlaybackUrl,
+      download_url: directPlaybackUrl,
+      is_direct_ready: isDirectReady,
+      is_stream_ready: isStreamReady,
+      mux_public_url: isCloudflare
+        ? publicStreamManifest
+        : playbackId
+          ? `https://stream.mux.com/${playbackId}.m3u8`
+          : primaryUrl,
+      signed_token: signedToken,
+      signed_url: primaryUrl,
+      expires_at: streamExpiresAt,
+      playable: isPlayable,
+      legacy_status: isPlayable ? 'ready' : status,
     };
+  }
+
+  /**
+   * Direct download endpoint for recording MP4 from R2 storage.
+   */
+  @Public()
+  @Get(':id/download')
+  @ApiOperation({
+    summary: 'Get direct download URL for recording from R2 storage',
+  })
+  async downloadRecording(
+    @Param('id') recordingId: string,
+    @Query('redirect') redirect: string,
+    @Res() res: Response,
+  ) {
+    const playback = await this.getRecordingPlayback(recordingId);
+    if (!playback.download_url) {
+      throw new NotFoundException(
+        `No downloadable media available for recording ${recordingId}`,
+      );
+    }
+    if (redirect === 'true' || redirect === '1') {
+      return res.redirect(HttpStatus.FOUND, playback.download_url);
+    }
+    return res.status(HttpStatus.OK).json({
+      recording_id: recordingId,
+      download_url: playback.download_url,
+      expires_at: playback.expires_at,
+    });
+  }
+
+  /**
+   * On-demand match video extraction from NVR.
+   */
+  @Post('extract-match')
+  @ApiOperation({
+    summary: 'Request on-demand match video extraction from venue NVR',
+  })
+  @ApiResponse({
+    status: HttpStatus.OK,
+    description: 'Extraction dispatched to R2 and Pi',
+  })
+  async extractMatch(
+    @Body(ValidationPipe) dto: ExtractMatchVideoDto,
+    @Req() req: Request,
+  ) {
+    let userId: string | undefined;
+    try {
+      const tokenData = await this.commonService.extractDataFromToken(req);
+      userId = tokenData?.user_id;
+    } catch {
+      // ignore
+    }
+    const resolvedUserId = userId || dto.userId;
+    return this.recordingService.extractMatchVideo({
+      ...dto,
+      userId: resolvedUserId,
+    });
   }
 
   /**

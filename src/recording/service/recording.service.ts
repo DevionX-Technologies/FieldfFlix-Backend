@@ -29,6 +29,7 @@ import {
   StartCourtLiveStreamDto,
   StopCourtLiveStreamDto,
 } from '../dto/extract-session.dto';
+import { ExtractMatchVideoDto } from '../dto/extract-match-video.dto';
 import {
   FindAndClaimRecordingDto,
   FindRecordingsDto,
@@ -255,6 +256,16 @@ export class RecordingService {
   private static readonly MUX_CYCLE_MAX_IDLE_ROUNDS = 2;
 
   private static defaultMediaBucket(): string {
+    if (
+      process.env.MEDIA_STORAGE_PROVIDER === 'r2' ||
+      process.env.MEDIA_VOD_PROVIDER === 'cloudflare'
+    ) {
+      return (
+        process.env.CLOUDFLARE_R2_BUCKET_NAME ||
+        process.env.AWS_S3_BUCKET_NAME ||
+        'fieldflicks-storage'
+      );
+    }
     return process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
   }
 
@@ -851,20 +862,44 @@ export class RecordingService {
                 passthrough: recordingId,
               });
 
+          // The video is already stored in R2, so it is directly playable and downloadable immediately!
           await this.recordingRepositoryForMedia.update(recordingId, {
             s3Path: `s3://${bucketName}/${key}`,
-            status: cfAsset.status === 'ready' ? 'ready' : 'processing',
+            status: 'ready',
             mux_playback_id: cfAsset.playbackId || null,
             mux_media_url: cfAsset.playbackUrl || null,
-            isVideoCreated: cfAsset.status === 'ready',
+            isVideoCreated: true,
             metadata: {
               ...meta,
               provider: 'cloudflare',
+              r2Key: key,
+              r2Bucket: bucketName,
+              r2Status: 'ready',
+              r2UploadedAt: new Date().toISOString(),
               cloudflareStreamUid: cfAsset.assetId,
+              cloudflareStreamStatus:
+                cfAsset.status === 'ready' ? 'ready' : 'processing',
               cloudflarePlaybackUrl: cfAsset.playbackUrl,
               vod_retries: muxRetries + 1,
             } as any,
           });
+
+          // Link to game if this recording was extracted for a game
+          if (meta.game_id) {
+            try {
+              await this.dataSource.query(
+                `UPDATE games SET "recordingId" = $1, status = 'completed', "endedAt" = NOW() WHERE id = $2 AND "recordingId" IS NULL`,
+                [recordingId, meta.game_id],
+              );
+              this.logger.log(
+                `Linked recording ${recordingId} to game ${meta.game_id}`,
+              );
+            } catch (gameErr: any) {
+              this.logger.warn(
+                `Failed to link recording ${recordingId} to game ${meta.game_id}: ${gameErr?.message}`,
+              );
+            }
+          }
 
           return { ok: true, action: 'cloudflare_ingest_started' };
         } catch (cfErr: any) {
@@ -3514,13 +3549,61 @@ export class RecordingService {
   ): Promise<{ publicUrl: string } | null> {
     const recording = await this.recordingRepository.findOne({
       where: { id: recordingId },
-      select: ['id', 'mux_playback_id'],
+      select: ['id', 'mux_playback_id', 's3Path', 'metadata', 'status'],
     });
 
     if (!recording) {
       throw new NotFoundException(
         `Recording with ID ${recordingId} not found.`,
       );
+    }
+
+    const meta = (recording.metadata ?? {}) as Record<string, any>;
+    const isCloudflare =
+      meta.provider === 'cloudflare' ||
+      meta.storage_provider === 'r2' ||
+      recording.s3Path?.startsWith('r2://') ||
+      process.env.MEDIA_STORAGE_PROVIDER === 'r2';
+
+    if (isCloudflare) {
+      const cfUid =
+        meta.cloudflareStreamUid ||
+        (recording.mux_playback_id &&
+        /^[a-f0-9]{32}$/i.test(recording.mux_playback_id)
+          ? recording.mux_playback_id
+          : null);
+
+      if (cfUid) {
+        return {
+          publicUrl: `https://customer-82fo9gohgj9tanfq.cloudflarestream.com/${cfUid}/manifest/video.m3u8`,
+        };
+      }
+
+      // If Stream is not ready yet, return R2 direct download URL
+      const r2Key =
+        meta.r2Key ||
+        meta.expected_s3_key ||
+        recording.s3Path?.replace(/^r2:\/\/[^/]+\//, '');
+      const r2Bucket =
+        meta.r2Bucket ||
+        process.env.CLOUDFLARE_R2_BUCKET_NAME ||
+        'fieldflicks-storage';
+
+      if (r2Key && this.mediaProviderFactory) {
+        try {
+          const storageProvider =
+            this.mediaProviderFactory.getStorageProvider();
+          const out = await storageProvider.generateDownloadPresignedUrl({
+            key: r2Key,
+            bucket: r2Bucket,
+            expiresInSeconds: 21600,
+          });
+          return { publicUrl: out.downloadUrl };
+        } catch {
+          // fallback to null
+        }
+      }
+      return null;
     }
 
     if (!recording.mux_playback_id) {
@@ -4517,8 +4600,17 @@ export class RecordingService {
     // via resolveNvrChannelsForCamera (multiple NVR channels, one camera row).
     const camerasToExtract = [primaryCamera];
 
-    const startDate = new Date(dto.startTime);
-    const endDate = new Date(dto.endTime);
+    const parseSessionIso = (raw: string): Date => {
+      const trimmed = (raw || '').trim();
+      if (!trimmed) return new Date(NaN);
+      if (/[zZ]|[+-]\d{2}:?\d{2}$/.test(trimmed)) {
+        return new Date(trimmed);
+      }
+      return new Date(`${trimmed}+05:30`);
+    };
+
+    const startDate = parseSessionIso(dto.startTime);
+    const endDate = parseSessionIso(dto.endTime);
 
     if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
       throw new BadRequestException('Invalid startTime or endTime ISO format.');
@@ -4732,11 +4824,34 @@ export class RecordingService {
           .slice(0, 14);
         const s3Key = `recordings/${recording.id}_${timestamp}.mp4`;
 
+        const bucketName = RecordingService.defaultMediaBucket();
         let uploadUrl = '';
         let uploadId = '';
-        let uploadProvider: 'mux' | 'cloudflare' = 'mux';
+        let uploadProvider: 'mux' | 'cloudflare' = 'cloudflare';
 
         if (this.mediaProviderFactory) {
+          const storageProvider =
+            this.mediaProviderFactory.getStorageProvider();
+          if (storageProvider) {
+            try {
+              const uploadOutput =
+                await storageProvider.generateUploadPresignedUrl({
+                  key: s3Key,
+                  bucket: bucketName,
+                  contentType: 'video/mp4',
+                  expiresInSeconds: 7200,
+                });
+              uploadUrl = uploadOutput.uploadUrl;
+              uploadProvider = 'cloudflare';
+            } catch (r2Err: any) {
+              this.logger.warn(
+                `R2 direct upload presigned URL generation failed: ${r2Err?.message}`,
+              );
+            }
+          }
+        }
+
+        if (!uploadUrl && this.mediaProviderFactory) {
           const vodProvider = this.mediaProviderFactory.getVodProvider();
           if (vodProvider.providerName === 'cloudflare') {
             try {
@@ -4777,14 +4892,18 @@ export class RecordingService {
           recording.mux_media_url = `https://videodelivery.net/${uploadId}/manifest/video.m3u8`;
         }
 
+        recording.s3Path = `r2://${bucketName}/${s3Key}`;
         recording.metadata = {
           ...(recording.metadata as Record<string, unknown>),
           expected_s3_key: s3Key,
+          r2Key: s3Key,
+          r2Bucket: bucketName,
           mux_upload_id: uploadId || null,
           direct_upload_provider: uploadProvider,
           provider: uploadProvider,
+          storage_provider: 'r2',
           cloudflareStreamUid:
-            uploadProvider === 'cloudflare' ? uploadId : undefined,
+            uploadProvider === 'cloudflare' && uploadId ? uploadId : undefined,
         } as Recording['metadata'];
         await this.recordingRepositoryForMedia.save(recording);
 
@@ -4803,17 +4922,22 @@ export class RecordingService {
           }
         }
 
-        if (camera.raspberryPiBaseUrl) {
+        const targetPiUrl =
+          camera.raspberryPiBaseUrl ||
+          process.env.PI_RECORDINGS_API_URL ||
+          process.env.RASPBERRY_PI_API_URL;
+
+        if (targetPiUrl) {
           const callbackWebhookUrl = `${process.env.APP_BASE_URL || 'https://api.fieldflicks.com'}/recording/pi-callback`;
 
           this.logger.log(
-            `Dispatching on-demand extraction for Recording ${recording.id} to Pi (${camera.raspberryPiBaseUrl}) on NVR channel ${channelNumber} (Camera: ${camera.name})`,
+            `Dispatching on-demand extraction for Recording ${recording.id} to Pi (${targetPiUrl}) on NVR channel ${channelNumber} (Camera: ${camera.name})`,
           );
 
           try {
             this.raspberryPiApiService
               .extractSession(
-                camera.raspberryPiBaseUrl,
+                targetPiUrl,
                 {
                   recordingId: recording.id,
                   channel: channelNumber,
@@ -4828,7 +4952,19 @@ export class RecordingService {
               .then((piResponse) => {
                 if (piResponse.status === 'SUCCESS') {
                   this.logger.log(
-                    `Pi reported initial extraction success for recording ${recording.id} (NVR ch ${channelNumber}). Waiting for Mux webhook.`,
+                    `Pi reported extraction success for recording ${recording.id} (NVR ch ${channelNumber}). Finalizing R2 availability...`,
+                  );
+                  const uploadInfo = (piResponse as any).uploads?.[0];
+                  this.handlePiExtractionCallback({
+                    recordingId: recording.id,
+                    status: 'SUCCESS',
+                    s3Key: uploadInfo?.s3Key || s3Key,
+                    fileSizeBytes: uploadInfo?.fileSizeBytes,
+                    durationSeconds: uploadInfo?.durationSeconds,
+                  }).catch((cbErr) =>
+                    this.logger.warn(
+                      `Immediate callback handler warning: ${cbErr.message}`,
+                    ),
                   );
                 } else {
                   this.logger.warn(
@@ -4989,10 +5125,89 @@ export class RecordingService {
     }
 
     const bucketName = RecordingService.defaultMediaBucket();
+    const meta = (recording.metadata ?? {}) as Record<string, any>;
+    const isCloudflare =
+      meta.provider === 'cloudflare' ||
+      meta.storage_provider === 'r2' ||
+      recording.s3Path?.startsWith('r2://') ||
+      process.env.MEDIA_STORAGE_PROVIDER === 'r2';
 
     if (dto.status === 'SUCCESS') {
       const key =
-        dto.s3Key || recording.s3Path?.replace(`s3://${bucketName}/`, '');
+        dto.s3Key ||
+        meta.r2Key ||
+        meta.expected_s3_key ||
+        recording.s3Path?.replace(/^(s3|r2):\/\/[^/]+\//, '');
+
+      if (isCloudflare) {
+        // Step A: Immediately ready for direct R2 progressive playback
+        await this.recordingRepositoryForMedia.update(recording.id, {
+          status: 'ready',
+          isVideoCreated: true,
+          s3Path: `r2://${bucketName}/${key}`,
+          metadata: {
+            ...meta,
+            r2Key: key,
+            r2Bucket: bucketName,
+            r2Status: 'ready',
+            durationSeconds: dto.durationSeconds || meta.durationSeconds,
+            fileSizeBytes: dto.fileSizeBytes || meta.fileSizeBytes,
+            cloudflareStreamStatus: 'processing',
+          } as any,
+        });
+
+        this.logger.log(
+          `[PI_CALLBACK] Recording ${recording.id} is now IMMEDIATELY PLAYABLE from R2! Kicking off parallel Cloudflare Stream copy...`,
+        );
+
+        // Step B: Parallel Ingest into Cloudflare Stream VOD
+        if (this.mediaProviderFactory) {
+          try {
+            const storageProvider =
+              this.mediaProviderFactory.getStorageProvider();
+            const vodProvider = this.mediaProviderFactory.getVodProvider();
+
+            const downloadOut =
+              await storageProvider.generateDownloadPresignedUrl({
+                key,
+                bucket: bucketName,
+                expiresInSeconds: 21600,
+              });
+
+            const cfAsset = await vodProvider.createAssetFromUrl({
+              sourceUrl: downloadOut.downloadUrl,
+              passthrough: recording.id,
+              name: `Recording ${recording.id}`,
+            });
+
+            await this.recordingRepositoryForMedia.update(recording.id, {
+              mux_playback_id: cfAsset.playbackId || null,
+              mux_media_url: cfAsset.playbackUrl || null,
+              metadata: {
+                ...meta,
+                r2Key: key,
+                r2Bucket: bucketName,
+                r2Status: 'ready',
+                cloudflareStreamUid: cfAsset.assetId,
+                cloudflareStreamStatus:
+                  cfAsset.status === 'ready' ? 'ready' : 'processing',
+                cloudflarePlaybackUrl: cfAsset.playbackUrl,
+                streamCopyStartedAt: new Date().toISOString(),
+              } as any,
+            });
+
+            this.logger.log(
+              `[PI_CALLBACK] Cloudflare Stream copy started for ${recording.id}: UID=${cfAsset.assetId}`,
+            );
+          } catch (cfErr: any) {
+            this.logger.warn(
+              `[PI_CALLBACK] Cloudflare Stream copy warning for ${recording.id}: ${cfErr?.message}. Recording remains directly playable from R2.`,
+            );
+          }
+        }
+
+        return { success: true };
+      }
 
       if (key) {
         await this.recordingRepositoryForMedia.update(recording.id, {
@@ -5337,5 +5552,191 @@ export class RecordingService {
       );
     }
     return null;
+  }
+
+  /**
+   * On-demand extraction of a match video (from tournament or game).
+   * Generates R2 upload presigned URL, commands Pi NVR extraction,
+   * and prepares for dual-path delivery:
+   * - Direct R2 playback immediately when upload finishes (zero wait for stream encoding)
+   * - Cloudflare Stream VOD adaptive HLS playback once processed in background
+   * - Direct video download without requiring stream playback
+   */
+  async extractMatchVideo(params: ExtractMatchVideoDto): Promise<{
+    recordingId: string;
+    status: string;
+    uploadUrl?: string;
+    expectedR2Key?: string;
+    message: string;
+  }> {
+    this.logger.log(
+      `Starting match extraction for game=${params.gameId || 'n/a'} tournament=${params.tournamentId || 'n/a'} court=${params.courtNumber || 'auto'}`,
+    );
+
+    let camera: Camera | null = null;
+    if (params.cameraId) {
+      camera = await this.cameraRepository.findOne({
+        where: { id: params.cameraId },
+        relations: ['turf'],
+      });
+    }
+
+    if (!camera && params.courtNumber) {
+      const qb = this.cameraRepository
+        .createQueryBuilder('c')
+        .leftJoinAndSelect('c.turf', 'turf');
+      if (params.tournamentId) {
+        try {
+          const tRows = await this.dataSource.query(
+            `SELECT "turfId" FROM tournaments WHERE id = $1`,
+            [params.tournamentId],
+          );
+          if (tRows[0]?.turfId) {
+            qb.where('c.turfId = :turfId', { turfId: tRows[0].turfId });
+          }
+        } catch {
+          // ignore error
+        }
+      }
+      camera = await qb
+        .andWhere('c.court_number = :court', { court: params.courtNumber })
+        .getOne();
+    }
+
+    if (!camera) {
+      camera = await this.cameraRepository.findOne({
+        where: {},
+        relations: ['turf'],
+      });
+    }
+
+    if (!camera) {
+      throw new BadRequestException(
+        'No suitable camera found for match extraction',
+      );
+    }
+
+    const startDate = new Date(params.startTime);
+    const endDate = new Date(params.endTime);
+
+    if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+      throw new BadRequestException('Invalid startTime or endTime format');
+    }
+
+    if (endDate <= startDate) {
+      throw new BadRequestException('endTime must be after startTime');
+    }
+
+    const recordingId = uuidv4();
+    const timestamp = new Date()
+      .toISOString()
+      .replace(/[-:T.]/g, '')
+      .slice(0, 14);
+    const channelNumber = params.courtNumber || camera.court_number || 1;
+
+    // R2 Object Key convention:
+    // tournaments/{tournamentId}/matches/{gameId}/recordings/{recordingId}_{timestamp}.mp4
+    const tournamentSegment = params.tournamentId || 'general';
+    const matchSegment = params.gameId || recordingId;
+    const r2Key = `tournaments/${tournamentSegment}/matches/${matchSegment}/recordings/${recordingId}_${timestamp}.mp4`;
+    const bucketName = RecordingService.defaultMediaBucket();
+
+    let uploadUrl = '';
+    if (this.mediaProviderFactory) {
+      try {
+        const storageProvider = this.mediaProviderFactory.getStorageProvider();
+        const uploadOutput = await storageProvider.generateUploadPresignedUrl({
+          key: r2Key,
+          bucket: bucketName,
+          contentType: 'video/mp4',
+          expiresInSeconds: 7200,
+        });
+        uploadUrl = uploadOutput.uploadUrl;
+      } catch (e: any) {
+        this.logger.warn(
+          `Storage provider upload presigned URL generation failed: ${e?.message}`,
+        );
+      }
+    }
+
+    if (!uploadUrl) {
+      uploadUrl = await this.fileServiceService.generateVideoUploadPresignedUrl(
+        r2Key,
+        7200,
+        bucketName,
+      );
+    }
+
+    const meta: Record<string, unknown> = {
+      is_match_extraction: true,
+      game_id: params.gameId || null,
+      tournament_id: params.tournamentId || null,
+      court_number: channelNumber,
+      expected_s3_key: r2Key,
+      r2_key: r2Key,
+      r2_bucket: bucketName,
+      provider: 'cloudflare',
+      storage_provider: 'r2',
+      extract_attempts: 1,
+      title: params.title || `Match Extraction ${recordingId}`,
+      ...params.metadata,
+    };
+
+    const recording = this.recordingRepositoryForMedia.create({
+      id: recordingId,
+      userId: params.userId || null,
+      turfId: camera.turfId,
+      cameraId: camera.id,
+      startTime: startDate,
+      endTime: endDate,
+      status: 'extracting',
+      recording_name: params.title || 'Match Extraction',
+      metadata: meta as any,
+    });
+
+    await this.recordingRepositoryForMedia.save(recording);
+
+    // Dispatch to venue Raspberry Pi / NVR Edge
+    const targetPiUrl =
+      camera.raspberryPiBaseUrl ||
+      process.env.PI_RECORDINGS_API_URL ||
+      process.env.RASPBERRY_PI_API_URL;
+
+    if (targetPiUrl) {
+      const callbackWebhookUrl = `${process.env.APP_BASE_URL || 'https://api.fieldflicks.com'}/recording/pi-callback`;
+      this.raspberryPiApiService
+        .extractSession(
+          targetPiUrl,
+          {
+            recordingId,
+            channel: channelNumber,
+            startTime: startDate.toISOString(),
+            endTime: endDate.toISOString(),
+            uploadUrl,
+            s3Key: r2Key,
+            callbackWebhookUrl,
+          },
+          camera.raspberryPiApiKey,
+        )
+        .then((piRes) => {
+          this.logger.log(
+            `Pi dispatch response for match extraction ${recordingId}: ${piRes.status}`,
+          );
+        })
+        .catch((piErr) => {
+          this.logger.warn(
+            `Pi dispatch failed for match extraction ${recordingId}: ${piErr?.message}`,
+          );
+        });
+    }
+
+    return {
+      recordingId,
+      status: 'extracting',
+      uploadUrl,
+      expectedR2Key: r2Key,
+      message:
+        'Match extraction dispatched. R2 storage key assigned. Upon upload callback, video will be immediately playable from R2 and Stream VOD ingest will begin in background.',
+    };
   }
 }

@@ -34,6 +34,8 @@ import { CouponsModule } from './coupons/coupons.module';
 import { TournamentModule } from './tournament/tournament.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { MediaProviderModule } from './media-provider/media-provider.module';
+import { GamesModule } from './games/games.module';
+import { CloudflareMediaModule } from './cloudflare-media/cloudflare-media.module';
 
 @Module({
   imports: [
@@ -77,6 +79,8 @@ import { MediaProviderModule } from './media-provider/media-provider.module';
     TournamentModule,
     DashboardModule,
     MediaProviderModule,
+    GamesModule,
+    CloudflareMediaModule,
   ],
   controllers: [AppController, SharedMediaRootController],
   providers: [

@@ -69,6 +69,7 @@ export class CloudflareR2StorageAdapter implements IStorageProvider {
         accessKeyId: accessKeyId || 'placeholder-access-key',
         secretAccessKey: secretAccessKey || 'placeholder-secret-key',
       },
+      forcePathStyle: true,
     });
   }
 

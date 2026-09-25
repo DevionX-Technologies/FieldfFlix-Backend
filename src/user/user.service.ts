@@ -188,6 +188,14 @@ export class UserService {
     return user;
   }
 
+  async findDemoUser(): Promise<User | null> {
+    return this.userRepository
+      .createQueryBuilder('user')
+      .where("user.phone_number LIKE '%11111111%'")
+      .orWhere("user.phone_number LIKE '%88888888%'")
+      .getOne();
+  }
+
   /**
    * Ultra-low latency user deletion for fast user offboarding.
    * Improved variable and function names for better readability and maintainability.

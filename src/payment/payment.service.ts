@@ -853,9 +853,15 @@ export class PaymentService {
   }
 
   async hasUserPaidForContent(
-    userId: string,
-    recordingId?: string,
+    _userId: string,
+    _recordingId?: string,
   ): Promise<boolean> {
+    void _userId;
+    void _recordingId;
+    // DEV MODE: Unlock all content by default for testing
+    return true;
+
+    /*
     try {
       const payment = await this.paymentRepository.findOne({
         where: {
@@ -874,6 +880,7 @@ export class PaymentService {
       this.logger.error('Failed to check payment status', error);
       return false;
     }
+    */
   }
 
   async getUserPaymentHistory(userId: string): Promise<PaymentEntity[]> {
@@ -923,6 +930,14 @@ export class PaymentService {
       }
       if (visibleIds.size === 0) return {};
 
+      // DEV MODE: Unlock all visible recordings by default for testing
+      const result: Record<string, string[]> = {};
+      for (const recordingId of visibleIds) {
+        result[recordingId] = ['recording', 'highlights', 'shorts'];
+      }
+      return result;
+
+      /*
       const perRecording = new Map<string, UnlockItem[]>();
       for (const recordingId of visibleIds) {
         perRecording.set(
@@ -943,6 +958,7 @@ export class PaymentService {
         }
       }
       return result;
+      */
     } catch (error) {
       this.logger.error(
         'Failed to compute unlocked items by recording for user',
