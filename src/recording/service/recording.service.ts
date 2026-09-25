@@ -4950,11 +4950,19 @@ export class RecordingService {
                 camera.raspberryPiApiKey,
               )
               .then((piResponse) => {
-                if (piResponse.status === 'SUCCESS') {
+                this.logger.log(
+                  `Pi acknowledged extraction dispatch for recording ${recording.id} (NVR ch ${channelNumber}, Pi Status: ${piResponse?.status}). Ingestion to R2 in progress...`,
+                );
+                // Only if Pi returned an immediate synchronous completed upload with actual file size/duration
+                const uploadInfo = (piResponse as any).uploads?.[0];
+                if (
+                  piResponse?.status === 'SUCCESS' &&
+                  uploadInfo?.fileSizeBytes &&
+                  uploadInfo?.durationSeconds
+                ) {
                   this.logger.log(
-                    `Pi reported extraction success for recording ${recording.id} (NVR ch ${channelNumber}). Finalizing R2 availability...`,
+                    `Pi returned synchronous completed extraction for ${recording.id}. Finalizing R2 availability...`,
                   );
-                  const uploadInfo = (piResponse as any).uploads?.[0];
                   this.handlePiExtractionCallback({
                     recordingId: recording.id,
                     status: 'SUCCESS',
@@ -4965,10 +4973,6 @@ export class RecordingService {
                     this.logger.warn(
                       `Immediate callback handler warning: ${cbErr.message}`,
                     ),
-                  );
-                } else {
-                  this.logger.warn(
-                    `Pi reported non-success status for recording ${recording.id} (NVR ch ${channelNumber}): ${piResponse.status}`,
                   );
                 }
               })
