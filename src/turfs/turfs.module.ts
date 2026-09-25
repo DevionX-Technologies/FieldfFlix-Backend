@@ -6,9 +6,11 @@ import { TurfEntity } from './entities/turfs.entity';
 import { TurfImageEntity } from './entities/turf-images.entity';
 import { FileServiceModule } from 'src/file-service/file-service.module';
 
+import { Camera } from 'src/camera/camera.entity';
+
 @Module({
   imports: [
-    TypeOrmModule.forFeature([TurfEntity, TurfImageEntity]),
+    TypeOrmModule.forFeature([TurfEntity, TurfImageEntity, Camera]),
     FileServiceModule,
   ],
   controllers: [TurfsController],

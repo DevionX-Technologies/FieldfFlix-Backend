@@ -31,6 +31,8 @@ import {
 } from 'tekvo-nest-typeorm-paginate';
 import { ESportsSupported } from './enum/turfs.enum';
 
+import { Camera } from 'src/camera/camera.entity';
+
 /** ILIKE fragment for operational Pickleball-only Balkanji venues (see turf-flick-sport.util). */
 const BALKANJI_NAME_ILIKE_PATTERN = '%balkanji%';
 
@@ -41,8 +43,233 @@ export class TurfsService {
     @InjectDataSource() private readonly dataSource: DataSource,
     @InjectRepository(TurfEntity)
     private readonly turfRepository: Repository<TurfEntity>,
+    @InjectRepository(Camera)
+    private readonly cameraRepository: Repository<Camera>,
     private readonly fileService: FileServiceService,
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    try {
+      await this.seedProductionVenues();
+    } catch (e: any) {
+      this.logger.warn(`Venue auto-seed deferred: ${e.message}`);
+    }
+  }
+
+  async seedProductionVenues(): Promise<void> {
+    const count = await this.turfRepository.count();
+    if (count > 0) return;
+
+    this.logger.log('Seeding production venues and courts...');
+
+    const venuesData = [
+      {
+        id: 'a1000001-0001-4001-8001-000000000001',
+        name: 'TSG Sports Arena | Eskay Resort',
+        location: 'Borivali West, Mumbai',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+        country: 'India',
+        sports_supported: [ESportsSupported.PICKLEBALL],
+        courts: [
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f329',
+            name: 'Court 1',
+            court_number: 1,
+            raspberryPiBaseUrl:
+              'https://raspberrypi-court11.taild82368.ts.net:8443',
+          },
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f318',
+            name: 'Court 2',
+            court_number: 2,
+          },
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f319',
+            name: 'Court 3',
+            court_number: 3,
+          },
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f31a',
+            name: 'Court 4',
+            court_number: 4,
+          },
+        ],
+      },
+      {
+        id: 'a1000002-0002-4002-8002-000000000002',
+        name: 'TSG Pickleball Arena | All India Balkanji Bari',
+        location: 'Santacruz West, Mumbai',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+        country: 'India',
+        sports_supported: [ESportsSupported.PICKLEBALL],
+        courts: [
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f31b',
+            name: 'Court 1',
+            court_number: 1,
+          },
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f31c',
+            name: 'Court 2',
+            court_number: 2,
+          },
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f31d',
+            name: 'Court 3',
+            court_number: 3,
+          },
+        ],
+      },
+      {
+        id: 'a1000003-0003-4003-8003-000000000003',
+        name: 'TSG Sports Arena | Santacruz West',
+        location: 'Santacruz West, Mumbai',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+        country: 'India',
+        sports_supported: [ESportsSupported.CRICKET],
+        courts: [
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f316',
+            name: 'Court 1',
+            court_number: 1,
+          },
+        ],
+      },
+      {
+        id: 'a1000004-0004-4004-8004-000000000004',
+        name: 'TSG Padel Arena',
+        location: 'Goregaon East, Mumbai',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+        country: 'India',
+        sports_supported: [ESportsSupported.PADDLE],
+        courts: [
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f31f',
+            name: 'Court 1',
+            court_number: 1,
+          },
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f320',
+            name: 'Court 2',
+            court_number: 2,
+          },
+        ],
+      },
+      {
+        id: '91238da1-a073-41b5-86a4-2cf873c33259',
+        name: 'PickPad by Aim Sports',
+        location: 'Goregaon West, Mumbai',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+        country: 'India',
+        sports_supported: [ESportsSupported.PADDLE],
+        courts: [
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f321',
+            name: 'Court 1',
+            court_number: 1,
+            raspberryPiBaseUrl:
+              'https://raspberrypi-court11.taild82368.ts.net:8443',
+          },
+        ],
+      },
+      {
+        id: 'a1000006-0006-4006-8006-000000000006',
+        name: 'Pickleflow Social',
+        location: 'Noida, Uttar Pradesh',
+        city: 'Noida',
+        state: 'Uttar Pradesh',
+        country: 'India',
+        sports_supported: [ESportsSupported.PICKLEBALL],
+        courts: [
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f322',
+            name: 'Court 1',
+            court_number: 1,
+          },
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f323',
+            name: 'Court 2',
+            court_number: 2,
+          },
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f324',
+            name: 'Court 3',
+            court_number: 3,
+          },
+        ],
+      },
+      {
+        id: 'a1000007-0007-4007-8007-000000000007',
+        name: 'TSG Pickleball and Sports Arena | Botanical Gardens',
+        location: 'Andheri West, Mumbai',
+        city: 'Mumbai',
+        state: 'Maharashtra',
+        country: 'India',
+        sports_supported: [ESportsSupported.PICKLEBALL],
+        courts: [
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f325',
+            name: 'Court 1',
+            court_number: 1,
+          },
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f326',
+            name: 'Court 2',
+            court_number: 2,
+          },
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f327',
+            name: 'Court 3',
+            court_number: 3,
+          },
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f328',
+            name: 'Court 4',
+            court_number: 4,
+          },
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f32b',
+            name: 'Court 5',
+            court_number: 5,
+          },
+          {
+            id: '27ce1af1-721a-421c-9223-3ddeda95f32c',
+            name: 'Court 6',
+            court_number: 6,
+          },
+        ],
+      },
+    ];
+
+    for (const v of venuesData) {
+      const { courts, ...turfData } = v;
+      const turf = await this.turfRepository.save(
+        this.turfRepository.create({
+          ...turfData,
+          address_line: turfData.location,
+        }),
+      );
+
+      for (const c of courts) {
+        await this.cameraRepository.save(
+          this.cameraRepository.create({
+            id: c.id,
+            name: c.name,
+            court_number: c.court_number,
+            turfId: turf.id,
+            raspberryPiBaseUrl: (c as any).raspberryPiBaseUrl,
+          }),
+        );
+      }
+    }
+
+    this.logger.log('Seeded 7 production venues and 20 courts successfully.');
+  }
 
   async createNewTurf(
     insertTurfInPayload: CreateTurfDto,

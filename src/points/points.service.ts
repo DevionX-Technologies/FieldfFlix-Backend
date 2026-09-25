@@ -68,9 +68,7 @@ export class PointsService implements OnModuleInit {
       await this.ensureDefaults();
       await this.ensureDefaultLevels();
     } catch (e: any) {
-      this.logger.warn(
-        `PointsService default seeding deferred: ${e.message}`,
-      );
+      this.logger.warn(`PointsService default seeding deferred: ${e.message}`);
     }
   }
 
