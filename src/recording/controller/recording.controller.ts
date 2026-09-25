@@ -794,6 +794,15 @@ export class RecordingController {
         if (this.mediaProviderFactory) {
           const storageProvider =
             this.mediaProviderFactory.getStorageProvider();
+          const object = await storageProvider.headObject(
+            storageKey,
+            storageBucket,
+          );
+          if (!object || object.sizeBytes <= 0) {
+            throw new NotFoundException(
+              `R2 object is missing or empty for recording ${recordingId}`,
+            );
+          }
           const downloadOutput =
             await storageProvider.generateDownloadPresignedUrl({
               key: storageKey,
@@ -855,7 +864,7 @@ export class RecordingController {
 
       isStreamReady = recMeta.cloudflareStreamStatus
         ? recMeta.cloudflareStreamStatus === 'ready'
-        : status === 'ready' || status === 'completed';
+        : false;
     }
 
     // 3. Mux Playback support (legacy / fallback)

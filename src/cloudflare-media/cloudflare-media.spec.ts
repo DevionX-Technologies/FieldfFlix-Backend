@@ -47,6 +47,13 @@ describe('CloudflareMediaService & Controller', () => {
   };
 
   const mockR2Adapter = {
+    headObject: jest.fn().mockResolvedValue({
+      key: 'recordings/test.mp4',
+      bucket: 'fieldflicks-media',
+      sizeBytes: 1024,
+      contentType: 'video/mp4',
+      etag: 'test-etag',
+    }),
     generateUploadPresignedUrl: jest.fn().mockResolvedValue({
       provider: 'r2',
       uploadUrl:

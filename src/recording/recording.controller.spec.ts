@@ -330,6 +330,7 @@ describe('RecordingController', () => {
         metadata: {
           provider: 'cloudflare',
           cloudflareStreamUid: 'cf_stream_uid_999',
+          cloudflareStreamStatus: 'ready',
         },
       } as any);
 

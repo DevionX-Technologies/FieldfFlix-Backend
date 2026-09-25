@@ -241,7 +241,47 @@ export class CloudflareMediaService {
       return { success: false, message: 'Extraction marked as failed' };
     }
 
-    // Step A: The MP4 is in Cloudflare R2 -> mark as READY immediately!
+    if (!key) {
+      await this.recordingRepo.update(recording.id, {
+        status: 'failed',
+        metadata: {
+          ...meta,
+          r2Status: 'verification_failed',
+          extract_failed_reason: 'R2 callback did not include an object key',
+          failed_at: new Date().toISOString(),
+        } as any,
+      });
+      return { success: false, message: 'R2 object key is missing' };
+    }
+
+    let verifiedObject;
+    try {
+      verifiedObject = await this.r2Adapter.headObject(key, bucketName);
+    } catch (error: any) {
+      this.logger.warn(
+        `R2 verification failed for ${recording.id}: ${error?.message ?? error}`,
+      );
+    }
+
+    if (!verifiedObject || verifiedObject.sizeBytes <= 0) {
+      await this.recordingRepo.update(recording.id, {
+        status: 'failed',
+        metadata: {
+          ...meta,
+          r2Key: key,
+          r2Bucket: bucketName,
+          r2Status: 'verification_failed',
+          extract_failed_reason: 'R2 object was not found or was empty',
+          failed_at: new Date().toISOString(),
+        } as any,
+      });
+      return {
+        success: false,
+        message: 'R2 object was not found or was empty',
+      };
+    }
+
+    // The recording is ready only after the object is verified in R2.
     await this.recordingRepo.update(recording.id, {
       status: 'ready',
       isVideoCreated: true,
@@ -250,6 +290,9 @@ export class CloudflareMediaService {
         r2Key: key,
         r2Bucket: bucketName,
         r2Status: 'ready',
+        r2VerifiedAt: new Date().toISOString(),
+        r2ObjectSize: verifiedObject.sizeBytes,
+        r2ObjectEtag: verifiedObject.etag,
         r2UploadedAt: new Date().toISOString(),
         durationSeconds: dto.durationSeconds || meta.durationSeconds,
         fileSizeBytes: dto.fileSizeBytes || meta.fileSizeBytes,
@@ -351,6 +394,10 @@ export class CloudflareMediaService {
         status === 'completed')
     ) {
       try {
+        const verifiedObject = await this.r2Adapter.headObject(r2Key, r2Bucket);
+        if (!verifiedObject || verifiedObject.sizeBytes <= 0) {
+          throw new Error('R2 object was not found or was empty');
+        }
         const downloadOutput =
           await this.r2Adapter.generateDownloadPresignedUrl({
             key: r2Key,

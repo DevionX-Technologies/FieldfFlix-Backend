@@ -243,7 +243,7 @@ export class CloudflareWebhookController {
                 >;
                 // If the raw MP4 is already in R2 storage, keep recording playable!
                 const isDirectReady = Boolean(
-                  meta.r2Status === 'ready' || recording.s3Path,
+                  meta.r2Status === 'ready' && meta.r2VerifiedAt,
                 );
                 await this.recordingRepository.update(recording.id, {
                   status: isDirectReady ? 'ready' : 'failed',

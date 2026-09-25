@@ -36,6 +36,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { MediaProviderModule } from './media-provider/media-provider.module';
 import { GamesModule } from './games/games.module';
 import { CloudflareMediaModule } from './cloudflare-media/cloudflare-media.module';
+import { CloudflareRecordingsModule } from './cloudflare-recordings/cloudflare-recordings.module';
 
 @Module({
   imports: [
@@ -81,6 +82,7 @@ import { CloudflareMediaModule } from './cloudflare-media/cloudflare-media.modul
     MediaProviderModule,
     GamesModule,
     CloudflareMediaModule,
+    CloudflareRecordingsModule,
   ],
   controllers: [AppController, SharedMediaRootController],
   providers: [

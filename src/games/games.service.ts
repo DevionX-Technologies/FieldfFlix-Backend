@@ -304,6 +304,12 @@ export class GamesService {
         if (this.mediaProviderFactory) {
           const storageProvider =
             this.mediaProviderFactory.getStorageProvider();
+          const object = await storageProvider.headObject(key, bucket);
+          if (!object || object.sizeBytes <= 0) {
+            throw new NotFoundException(
+              `R2 object for game ${gameId} was not found or was empty`,
+            );
+          }
           const downloadOutput =
             await storageProvider.generateDownloadPresignedUrl({
               key,

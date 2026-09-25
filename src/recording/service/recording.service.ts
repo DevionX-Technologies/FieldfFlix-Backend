@@ -2127,6 +2127,7 @@ export class RecordingService {
         : null;
     const r2Available =
       metadata.r2Status === 'ready' &&
+      Boolean(metadata.r2VerifiedAt) &&
       Boolean(metadata.r2Key || recording.s3Path);
     const streamStatus = String(
       metadata.cloudflareStreamStatus ?? 'not_started',
@@ -2880,7 +2881,11 @@ export class RecordingService {
           if (String(recording.status ?? '').toLowerCase() === 'completed') {
             (recording as any).status = 'processing';
           }
-        } else if (!assetDetails && recording.mux_playback_id) {
+        } else if (
+          process.env.MEDIA_VOD_PROVIDER !== 'cloudflare' &&
+          !assetDetails &&
+          recording.mux_playback_id
+        ) {
           if (recording.status !== 'ready') {
             (recording as any).status = 'ready';
             (recording as any).isVideoCreated = true;
@@ -2909,9 +2914,17 @@ export class RecordingService {
           } catch {}
         }
 
-        // When S3 video exists and Mux has not yet processed (e.g. Mux invoice lock),
-        // self-heal status to ready so the app immediately reflects 100% and enables playback.
-        if (recording.s3Path && recording.status !== 'ready') {
+        // A storage path is only a reference. R2 readiness is granted by the
+        // verified callback path, never by the presence of s3Path alone.
+        const recordingMeta = (recording.metadata ?? {}) as Record<
+          string,
+          unknown
+        >;
+        if (
+          recording.s3Path &&
+          recording.status !== 'ready' &&
+          recordingMeta.r2VerifiedAt
+        ) {
           (recording as any).status = 'ready';
           (recording as any).isVideoCreated = true;
           this.recordingRepository
@@ -5246,7 +5259,37 @@ export class RecordingService {
         recording.s3Path?.replace(/^(s3|r2):\/\/[^/]+\//, '');
 
       if (isCloudflare) {
-        // Step A: Immediately ready for direct R2 progressive playback
+        const storageProvider = this.mediaProviderFactory?.getStorageProvider();
+        let verifiedObject: { sizeBytes: number } | null = null;
+        try {
+          verifiedObject = storageProvider
+            ? await storageProvider.headObject(key, bucketName)
+            : null;
+        } catch (error: any) {
+          await this.recordingRepositoryForMedia.update(recording.id, {
+            status: 'failed',
+            metadata: {
+              ...meta,
+              r2Status: 'verification_failed',
+              extract_failed_reason: error?.message ?? 'R2 verification failed',
+            } as Recording['metadata'],
+          });
+          return { success: false };
+        }
+
+        if (!verifiedObject || verifiedObject.sizeBytes <= 0) {
+          await this.recordingRepositoryForMedia.update(recording.id, {
+            status: 'processing',
+            metadata: {
+              ...meta,
+              r2Status: 'verification_pending',
+              extract_failed_reason: 'R2 object is missing or empty',
+            } as Recording['metadata'],
+          });
+          return { success: false };
+        }
+
+        // Step A: Ready for direct R2 playback only after object verification.
         await this.recordingRepositoryForMedia.update(recording.id, {
           status: 'ready',
           isVideoCreated: true,
@@ -5256,6 +5299,8 @@ export class RecordingService {
             r2Key: key,
             r2Bucket: bucketName,
             r2Status: 'ready',
+            r2VerifiedAt: new Date().toISOString(),
+            r2ObjectSizeBytes: verifiedObject.sizeBytes,
             durationSeconds: dto.durationSeconds || meta.durationSeconds,
             fileSizeBytes: dto.fileSizeBytes || meta.fileSizeBytes,
             cloudflareStreamStatus: 'processing',
