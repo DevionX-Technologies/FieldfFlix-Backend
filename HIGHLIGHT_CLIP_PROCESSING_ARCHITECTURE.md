@@ -1,5 +1,3 @@
-
-
 ## Table of Contents
 
 1. [System Overview](#1-system-overview)

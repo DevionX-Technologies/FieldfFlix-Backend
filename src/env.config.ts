@@ -27,8 +27,14 @@ export const ENV = {
  */
 export default () => {
   const env = process.env.ENVIRONMENT;
-  if (!env) {
-    return { envFilePath: '.env' };
+  if (env === 'production' || env === 'prod') {
+    return { envFilePath: ['.env.production', '.env.prod', '.env'] };
   }
-  return { envFilePath: [`.env.${env}`, '.env'] };
+  if (env === 'dev' || env === 'development') {
+    return { envFilePath: ['.env.dev', '.env.development', '.env'] };
+  }
+  if (env) {
+    return { envFilePath: [`.env.${env}`, '.env'] };
+  }
+  return { envFilePath: ['.env.dev', '.env.development', '.env'] };
 };
