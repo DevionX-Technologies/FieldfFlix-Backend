@@ -266,36 +266,47 @@ export class RaspberryPiApiService {
     payload: ExtractSessionPayload,
     customApiKey?: string,
   ): Promise<ExtractSessionResponse> {
-    const liveTargetUrl = this.getLiveBaseUrl(raspberryPiBaseUrl);
     const recordingsTargetUrl = this.getRecordingsBaseUrl(raspberryPiBaseUrl);
+    const liveTargetUrl = this.getLiveBaseUrl(raspberryPiBaseUrl);
+
+    // Primary: EVMS NVR Extraction service runs on Port 443
+    const primaryUrl = recordingsTargetUrl || liveTargetUrl;
+    const primaryApiKey = this.getEvmsApiKey(raspberryPiBaseUrl, customApiKey);
+
+    // Fallback: Live streaming daemon on Port 8443
+    const fallbackUrl =
+      primaryUrl === recordingsTargetUrl ? liveTargetUrl : recordingsTargetUrl;
+    const fallbackApiKey = this.getLiveApiKey(raspberryPiBaseUrl, customApiKey);
+
     this.logger.log(
-      `Triggering extraction on Pi Gateway (${liveTargetUrl}) for Recording ${payload.recordingId} (Channel ${payload.channel})`,
+      `Triggering extraction on Pi Gateway (${primaryUrl}) for Recording ${payload.recordingId} (Channel ${payload.channel})`,
     );
+
     try {
       const response = await this.piPost<any>(
-        `${liveTargetUrl}/extract-session`,
+        `${primaryUrl}/extract-session`,
         payload,
         {
-          'X-API-KEY': this.getLiveApiKey(raspberryPiBaseUrl, customApiKey),
+          'X-API-KEY': primaryApiKey,
           'Content-Type': 'application/json',
         },
-        300000,
+        30000,
       );
       return (response?.detail || response) as ExtractSessionResponse;
     } catch (primaryErr: any) {
-      if (recordingsTargetUrl && recordingsTargetUrl !== liveTargetUrl) {
+      if (fallbackUrl && fallbackUrl !== primaryUrl) {
         this.logger.warn(
-          `Port 8443 extraction failed (${primaryErr.message}). Retrying on Port 443 (${recordingsTargetUrl})...`,
+          `Primary extraction on ${primaryUrl} failed (${primaryErr.message}). Retrying fallback on ${fallbackUrl}...`,
         );
         try {
           const fallbackRes = await this.piPost<any>(
-            `${recordingsTargetUrl}/extract-session`,
+            `${fallbackUrl}/extract-session`,
             payload,
             {
-              'X-API-KEY': this.getEvmsApiKey(raspberryPiBaseUrl, customApiKey),
+              'X-API-KEY': fallbackApiKey,
               'Content-Type': 'application/json',
             },
-            300000,
+            30000,
           );
           return (fallbackRes?.detail || fallbackRes) as ExtractSessionResponse;
         } catch (fallbackErr: any) {
@@ -305,10 +316,10 @@ export class RaspberryPiApiService {
             fallbackErr.message ||
             'Network error';
           this.logger.error(
-            `Error extracting session on Pi fallback (${recordingsTargetUrl}): ${errMsg}`,
+            `Error extracting session on Pi fallback (${fallbackUrl}): ${errMsg}`,
           );
           throw new BadGatewayException(
-            `Failed to communicate with Raspberry Pi at ${recordingsTargetUrl}: ${errMsg}`,
+            `Failed to communicate with Raspberry Pi at ${fallbackUrl}: ${errMsg}`,
           );
         }
       }
@@ -319,10 +330,10 @@ export class RaspberryPiApiService {
         primaryErr.message ||
         'Network error';
       this.logger.error(
-        `Error extracting session on Pi (${liveTargetUrl}): ${errMsg}`,
+        `Error extracting session on Pi (${primaryUrl}): ${errMsg}`,
       );
       throw new BadGatewayException(
-        `Failed to communicate with Raspberry Pi at ${liveTargetUrl}: ${errMsg}`,
+        `Failed to communicate with Raspberry Pi at ${primaryUrl}: ${errMsg}`,
       );
     }
   }
