@@ -768,6 +768,12 @@ export class RecordingController {
       process.env.AWS_S3_BUCKET_NAME ||
       'fieldflicks-production-media';
 
+    const isStatusReady =
+      status === 'ready' ||
+      status === 'completed' ||
+      recMeta.r2Status === 'ready' ||
+      recording.isVideoCreated === true;
+
     if (storageKey) {
       try {
         if (this.mediaProviderFactory) {
@@ -780,14 +786,14 @@ export class RecordingController {
               expiresInSeconds: 21600, // 6 hours
             });
           directPlaybackUrl = downloadOutput.downloadUrl;
-          isDirectReady = true;
+          isDirectReady = Boolean(isStatusReady && directPlaybackUrl);
         } else {
           directPlaybackUrl = await this.fileServiceService.getSignedUrlFromS3(
             storageKey,
             storageBucket,
             21600,
           );
-          isDirectReady = Boolean(directPlaybackUrl);
+          isDirectReady = Boolean(isStatusReady && directPlaybackUrl);
         }
       } catch (err: any) {
         this.logger.warn(
