@@ -2083,6 +2083,108 @@ export class RecordingService {
     return recording;
   }
 
+  async getRecordingTimeline(recordingId: string, userId: string) {
+    const recording = await this.recordingRepository.findOne({
+      where: { id: recordingId },
+      relations: ['sharedRecordings'],
+    });
+
+    if (!recording) {
+      throw new NotFoundException(`Recording with ID ${recordingId} not found`);
+    }
+
+    const isOwner = recording.userId === userId;
+    const isShared = (recording.sharedRecordings ?? []).some(
+      (share) => share.shared_with_user_id === userId,
+    );
+    if (!isOwner && !isShared) {
+      throw new ForbiddenException('You do not have access to this recording');
+    }
+
+    const metadata = (recording.metadata ?? {}) as Record<string, unknown>;
+    const durationValue = Number(
+      metadata.durationSeconds ?? metadata.duration_seconds ?? 0,
+    );
+    const durationSeconds =
+      Number.isFinite(durationValue) && durationValue > 0
+        ? Math.round(durationValue)
+        : null;
+    const startTime = recording.startTime
+      ? new Date(recording.startTime).toISOString()
+      : null;
+    const endTime = recording.endTime
+      ? new Date(recording.endTime).toISOString()
+      : null;
+    const plannedDurationSeconds =
+      startTime && endTime
+        ? Math.max(
+            0,
+            Math.round(
+              (new Date(endTime).getTime() - new Date(startTime).getTime()) /
+                1000,
+            ),
+          )
+        : null;
+    const r2Available =
+      metadata.r2Status === 'ready' &&
+      Boolean(metadata.r2Key || recording.s3Path);
+    const streamStatus = String(
+      metadata.cloudflareStreamStatus ?? 'not_started',
+    ).toLowerCase();
+    const streamAvailable = streamStatus === 'ready';
+    const playbackAvailable = r2Available || streamAvailable;
+    const normalizedStatus = String(recording.status ?? '').toLowerCase();
+    const status = playbackAvailable
+      ? durationSeconds == null ||
+        (plannedDurationSeconds != null &&
+          durationSeconds < plannedDurationSeconds)
+        ? 'PARTIALLY_AVAILABLE'
+        : 'AVAILABLE'
+      : normalizedStatus === 'failed'
+        ? 'FAILED'
+        : normalizedStatus === 'extracting' ||
+            normalizedStatus === 'processing' ||
+            normalizedStatus === 'uploading'
+          ? 'PROCESSING'
+          : 'NOT_AVAILABLE';
+
+    return {
+      recordingId: recording.id,
+      gameId: typeof metadata.game_id === 'string' ? metadata.game_id : null,
+      matchStartTime: startTime,
+      matchEndTime: endTime,
+      expectedDurationSeconds: plannedDurationSeconds,
+      availableDurationSeconds: playbackAvailable ? (durationSeconds ?? 0) : 0,
+      processingDurationSeconds: null,
+      status,
+      segments:
+        playbackAvailable && durationSeconds != null
+          ? [
+              {
+                id: recording.id,
+                sequence: 1,
+                matchStartOffsetSeconds: 0,
+                matchEndOffsetSeconds: durationSeconds,
+                recordingStartTime: startTime,
+                recordingEndTime:
+                  startTime != null
+                    ? new Date(
+                        new Date(startTime).getTime() + durationSeconds * 1000,
+                      ).toISOString()
+                    : null,
+                durationSeconds,
+                r2Status: r2Available ? 'AVAILABLE' : 'NOT_AVAILABLE',
+                streamStatus: streamStatus.toUpperCase(),
+                playbackStatus: 'AVAILABLE',
+                estimatedReadyAt: null,
+                errorCode: null,
+                errorMessage: null,
+              },
+            ]
+          : [],
+    };
+  }
+
   /**
    * Updates the display name of a recording (owner only).
    *

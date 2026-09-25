@@ -364,6 +364,21 @@ export class RecordingController {
     return this.recordingService.getRecordingStatus(recordingId);
   }
 
+  @Get(':id/timeline')
+  @ApiOperation({
+    summary: 'Get the authenticated user timeline for a recording',
+  })
+  async getRecordingTimeline(
+    @Param('id') recordingId: string,
+    @Req() req: Request,
+  ) {
+    const { user_id } = await this.commonService.extractDataFromToken(req);
+    if (!user_id) {
+      throw new UnauthorizedException('User ID not found in token');
+    }
+    return this.recordingService.getRecordingTimeline(recordingId, user_id);
+  }
+
   /** Count of venue highlight-button moments recorded for this session (includes clips still processing). */
   @Get(':id/button-highlight-count')
   @ApiOperation({ summary: 'Count highlight-button moments for a recording' })
