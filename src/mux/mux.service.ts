@@ -24,10 +24,20 @@ export class MuxService {
     @InjectRepository(Recording)
     private readonly recordingRepository: Repository<Recording>,
   ) {
-    this.mux = new Mux({
-      tokenId: ENV.MUX_TOKEN_ID,
-      tokenSecret: ENV.MUX_TOKEN_SECRET,
-    });
+    if (ENV.MUX_TOKEN_ID && ENV.MUX_TOKEN_SECRET) {
+      try {
+        this.mux = new Mux({
+          tokenId: ENV.MUX_TOKEN_ID,
+          tokenSecret: ENV.MUX_TOKEN_SECRET,
+        });
+      } catch (e: any) {
+        this.logger.warn(`Mux client init skipped: ${e.message}`);
+      }
+    } else {
+      this.logger.log(
+        'Mux credentials not present — operating in pure Cloudflare/R2 mode.',
+      );
+    }
   }
 
   /**
