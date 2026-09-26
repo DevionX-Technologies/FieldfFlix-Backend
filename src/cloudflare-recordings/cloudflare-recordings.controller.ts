@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   Param,
   Post,
   Req,
@@ -50,9 +51,21 @@ export class CloudflareRecordingsController {
   @Post('callback')
   @ApiOperation({
     summary: 'Verify an R2 recording upload and start Stream ingestion',
+    description:
+      'Called by the venue Pi. Requires headers `x-pi-timestamp` (unix seconds) and `x-pi-signature` (hex HMAC-SHA256 of `${timestamp}.${rawBody}` keyed by PI_CALLBACK_SECRET).',
   })
-  async callback(@Body(ValidationPipe) dto: CloudflareRecordingCallbackDto) {
-    return this.recordingsService.handleCallback(dto);
+  async callback(
+    @Body(ValidationPipe) dto: CloudflareRecordingCallbackDto,
+    @Req() req: Request & { rawBody?: string },
+    @Headers('x-pi-signature') signature?: string,
+    @Headers('x-pi-timestamp') timestamp?: string,
+  ) {
+    return this.recordingsService.handleCallback(
+      dto,
+      req.rawBody ?? null,
+      signature,
+      timestamp,
+    );
   }
 
   @Get(':id/playback')

@@ -1,4 +1,12 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import {
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  CreateDateColumn,
+  UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
+} from 'typeorm';
 import { Recording } from '../../recording/entities/recording.entity';
 
 export enum ExtractionJobStatus {
@@ -37,12 +45,25 @@ export class ExtractionJob {
   @Column({ type: 'varchar', nullable: true })
   worker_id: string; // which Pi is handling this
 
+  /**
+   * Denormalised Pi gateway base URL, captured at enqueue time. Lets the
+   * dispatcher apply per-Pi concurrency limits with a single indexed query
+   * instead of joining through `recordings.metadata`.
+   */
+  @Column({ type: 'varchar', nullable: true })
+  pi_base_url: string;
+
   @Column({ type: 'varchar', nullable: true })
   error_code: string;
 
   @Column({ type: 'text', nullable: true })
   error_message: string;
 
+  /** Time the job was first enqueued. Never reset by retries (telemetry). */
+  @Column({ type: 'timestamp', nullable: true })
+  first_queued_at: Date;
+
+  /** Time the job most recently (re)entered the QUEUED state (backoff window). */
   @Column({ type: 'timestamp', nullable: true })
   queued_at: Date;
 

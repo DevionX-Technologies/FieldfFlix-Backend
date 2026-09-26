@@ -11,16 +11,19 @@ import { resolve4 } from 'node:dns/promises';
 import * as https from 'node:https';
 import type { AxiosRequestConfig } from 'axios';
 
-/** Last-resort when VPC + public DNS both fail (Tailscale funnel IPs can change). */
+/**
+ * Last-resort static IP map for venues whose Tailscale Funnel DNS is
+ * unreachable from the ECS VPC. Values are overridable via
+ * PI_<VENUE>_GATEWAY_IP so venue networking can be re-pointed without a deploy.
+ */
 const PI_HOST_IP_FALLBACK: Record<string, string> = {
-  'cpu.taild82368.ts.net':
-    process.env.PI_BOTANICAL_GATEWAY_IP || '103.84.155.153',
+  'cpu.taild82368.ts.net': process.env.PI_BOTANICAL_GATEWAY_IP ?? '',
   'raspberrypi-court17-1.taild82368.ts.net':
-    process.env.PI_COURT17_GATEWAY_IP || '103.84.155.153',
+    process.env.PI_COURT17_GATEWAY_IP ?? '',
   'raspberrypi-court11.taild82368.ts.net':
-    process.env.PI_COURT11_GATEWAY_IP || '103.84.155.217',
+    process.env.PI_COURT11_GATEWAY_IP ?? '',
   'pickleflow-social.taild82368.ts.net':
-    process.env.PI_PICKLEFLOW_GATEWAY_IP || '103.84.155.153',
+    process.env.PI_PICKLEFLOW_GATEWAY_IP ?? '',
 };
 
 export interface StartRecordingResponse {
@@ -69,53 +72,52 @@ export interface PiHealthResponse {
 export class RaspberryPiApiService {
   private readonly logger = new Logger(RaspberryPiApiService.name);
 
+  /**
+   * Device API keys are NEVER hardcoded. Resolution order:
+   *   1. per-camera key passed by the caller (`camera.raspberryPiApiKey`)
+   *   2. per-venue override env var (PI_LIVE_API_KEY_<VENUE> / PI_EVMS_API_KEY_<VENUE>)
+   *   3. the shared PI_LIVE_API_KEY / PI_EVMS_API_KEY
+   *
+   * The previous per-venue literals were committed to git and must be treated
+   * as compromised — rotate them on the devices and set the env vars below.
+   */
   private readonly liveApiKey =
-    process.env.PI_LIVE_API_KEY ||
-    process.env.PI_API_KEY ||
-    process.env.RASPBERRY_PI_API_KEY ||
-    '9d6bdf976525e1641b6162ebd6c5d13ff9ee13345e7d6cfcd702b18293ebadfd';
+    process.env.PI_LIVE_API_KEY ?? process.env.PI_API_KEY ?? '';
 
   private readonly evmsApiKey =
-    process.env.PI_EVMS_API_KEY ||
-    process.env.EVMS_API_KEY ||
-    'b0967580ef4fe425b2336c25b0a9d19d06a9f3800a422ecd5785ddfd261172a6';
+    process.env.PI_EVMS_API_KEY ?? process.env.EVMS_API_KEY ?? '';
+
+  /** Derives `court17-1` / `court11` / `botanical` / `pickleflow` from a base URL. */
+  private venueSlug(raspberryPiBaseUrl: string): string {
+    const host = (raspberryPiBaseUrl || '').toLowerCase();
+    if (host.includes('pickleflow')) return 'pickleflow';
+    if (host.includes('court17-1')) return 'court17';
+    if (host.includes('court11')) return 'court11';
+    if (host.includes('cpu.taild')) return 'botanical';
+    return 'default';
+  }
+
+  private scopedKey(raspberryPiBaseUrl: string, kind: 'LIVE' | 'EVMS'): string {
+    const slug = this.venueSlug(raspberryPiBaseUrl).toUpperCase();
+    const scoped = process.env[`PI_${kind}_API_KEY_${slug}`];
+    if (scoped?.trim()) return scoped.trim();
+    return kind === 'LIVE' ? this.liveApiKey : this.evmsApiKey;
+  }
 
   private getLiveApiKey(
     raspberryPiBaseUrl: string,
     customKey?: string,
   ): string {
-    if (raspberryPiBaseUrl?.toLowerCase().includes('pickleflow')) {
-      return '20bb093ec778627c9f5108e126da8f2295d2ba867a30d7614132fbd3f3c97920';
-    }
-
-    if (customKey) return customKey;
-
-    if (
-      raspberryPiBaseUrl?.includes('court17-1') ||
-      raspberryPiBaseUrl?.includes('cpu.taild82368.ts.net')
-    ) {
-      return '8574b1b253c577210132a9dc0f084b69c4acfa4e82715b889cc5573d512ab6f2';
-    }
-    return this.liveApiKey;
+    if (customKey?.trim()) return customKey.trim();
+    return this.scopedKey(raspberryPiBaseUrl, 'LIVE');
   }
 
   private getEvmsApiKey(
     raspberryPiBaseUrl: string,
     customKey?: string,
   ): string {
-    if (raspberryPiBaseUrl?.toLowerCase().includes('pickleflow')) {
-      return 'f74a64b009c2b7eb322e6a954e16d0446f49bca19bde563dd051b9c290d16129';
-    }
-
-    if (customKey) return customKey;
-
-    if (
-      raspberryPiBaseUrl?.includes('court17-1') ||
-      raspberryPiBaseUrl?.includes('cpu.taild82368.ts.net')
-    ) {
-      return '7e323f6f3b08ddd9b5aa12a7fa2f3c575ee7021f7435a29b9e00f3c91d683f46';
-    }
-    return this.evmsApiKey;
+    if (customKey?.trim()) return customKey.trim();
+    return this.scopedKey(raspberryPiBaseUrl, 'EVMS');
   }
 
   constructor(private readonly httpService: HttpService) {}
@@ -225,6 +227,21 @@ export class RaspberryPiApiService {
   }
 
   /**
+   * Guards against dispatching to a device with no configured credential. An
+   * empty `X-API-KEY` would otherwise produce a confusing 401 from the Pi.
+   */
+  private assertApiKey(
+    apiKey: string,
+    baseUrl: string,
+    operation: string,
+  ): void {
+    if (apiKey?.trim()) return;
+    throw new BadGatewayException(
+      `No API key configured for ${operation} on ${baseUrl}. Set PI_EVMS_API_KEY / PI_LIVE_API_KEY, a PI_*_API_KEY_<VENUE> override, or the camera's own API key.`,
+    );
+  }
+
+  /**
    * Live streaming runs on Port 8443 on the Tailscale Funnel.
    */
   private getLiveBaseUrl(baseUrl: string): string {
@@ -272,6 +289,7 @@ export class RaspberryPiApiService {
     // Primary: EVMS NVR Extraction service runs on Port 443
     const primaryUrl = recordingsTargetUrl || liveTargetUrl;
     const primaryApiKey = this.getEvmsApiKey(raspberryPiBaseUrl, customApiKey);
+    this.assertApiKey(primaryApiKey, primaryUrl, 'extract-session');
 
     // Fallback: Live streaming daemon on Port 8443
     const fallbackUrl =
@@ -368,6 +386,11 @@ export class RaspberryPiApiService {
     this.logger.log(
       `Triggering Live Stream on Pi Gateway (${targetUrl}) for channel ${payload.channel} -> ${payload.rtmpUrl}`,
     );
+    this.assertApiKey(
+      this.getLiveApiKey(raspberryPiBaseUrl, customApiKey),
+      targetUrl,
+      'start-live-stream',
+    );
 
     try {
       return await this.piPost<any>(
@@ -423,6 +446,11 @@ export class RaspberryPiApiService {
     const targetUrl = this.getLiveBaseUrl(raspberryPiBaseUrl);
     this.logger.log(
       `Calling Pi to stop live stream on Channel ${payload.channel} via ${targetUrl}`,
+    );
+    this.assertApiKey(
+      this.getLiveApiKey(raspberryPiBaseUrl, customApiKey),
+      targetUrl,
+      'stop-live-stream',
     );
     try {
       return await this.piPost<{ status: string }>(

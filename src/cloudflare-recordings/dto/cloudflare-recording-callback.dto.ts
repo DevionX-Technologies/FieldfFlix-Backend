@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsIn,
+  IsISO8601,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -36,4 +37,19 @@ export class CloudflareRecordingCallbackDto {
   @IsOptional()
   @IsString()
   error?: string;
+
+  @ApiPropertyOptional({ description: 'ISO timestamp: NVR download finished' })
+  @IsOptional()
+  @IsISO8601()
+  nvrDownloadCompletedAt?: string;
+
+  @ApiPropertyOptional({ description: 'ISO timestamp: R2 upload started' })
+  @IsOptional()
+  @IsISO8601()
+  uploadStartedAt?: string;
+
+  @ApiPropertyOptional({ description: 'ISO timestamp: R2 upload finished' })
+  @IsOptional()
+  @IsISO8601()
+  uploadCompletedAt?: string;
 }

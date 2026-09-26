@@ -5,11 +5,13 @@ import {
   Logger,
   NotFoundException,
   ServiceUnavailableException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { ConfigService } from '@nestjs/config';
 import { Repository } from 'typeorm';
 import { v4 as uuidv4 } from 'uuid';
+import * as crypto from 'crypto';
 
 import { Recording } from '../recording/entities/recording.entity';
 import { Camera } from '../camera/camera.entity';
@@ -17,8 +19,12 @@ import { SharedRecording } from '../recording/entities/shared-recording.entity';
 import { CloudflareR2StorageAdapter } from '../media-provider/adapters/cloudflare-r2-storage.adapter';
 import { CloudflareStreamVodAdapter } from '../media-provider/adapters/cloudflare-stream-vod.adapter';
 import { RaspberryPiApiService } from '../raspberry-pi/raspberry-pi-api.service';
+import { ExtractionJobProgressService } from '../extraction-queue/extraction-job-progress.service';
 import { CloudflareRecordingExtractDto } from './dto/cloudflare-recording-extract.dto';
 import { CloudflareRecordingCallbackDto } from './dto/cloudflare-recording-callback.dto';
+
+/** Replay window for signed Pi callbacks, in seconds. */
+const CALLBACK_SIGNATURE_TOLERANCE_SECONDS = 300;
 
 @Injectable()
 export class CloudflareRecordingsService {
@@ -35,6 +41,7 @@ export class CloudflareRecordingsService {
     private readonly streamAdapter: CloudflareStreamVodAdapter,
     private readonly piApi: RaspberryPiApiService,
     private readonly configService: ConfigService,
+    private readonly jobProgress: ExtractionJobProgressService,
   ) {}
 
   private requiredConfig(name: string): string {
@@ -57,6 +64,88 @@ export class CloudflareRecordingsService {
 
   private getMetadata(recording: Recording): Record<string, any> {
     return (recording.metadata ?? {}) as Record<string, any>;
+  }
+
+  private env(name: string): string | undefined {
+    return (
+      this.configService.get<string>(name) ?? process.env[name]
+    )?.toString();
+  }
+
+  /**
+   * Verifies the HMAC-SHA256 signature a venue Pi attaches to its callback.
+   *
+   * The Pi signs `${timestamp}.${rawBody}` with `PI_CALLBACK_SECRET` and sends
+   * `x-pi-timestamp` / `x-pi-signature` as headers (same scheme as the
+   * Cloudflare Stream webhook), keeping the signature out of the signed bytes.
+   *
+   * Fails CLOSED whenever `PI_CALLBACK_REQUIRE_SIGNATURE` is not explicitly
+   * disabled, so a missing secret can never silently downgrade to an open
+   * endpoint. The escape hatch exists only for local development.
+   */
+  private verifyCallbackSignature(
+    rawBody: string | null,
+    signatureHeader: string | undefined,
+    timestampHeader: string | undefined,
+  ): void {
+    const required =
+      (this.env('PI_CALLBACK_REQUIRE_SIGNATURE') ?? 'true').toLowerCase() !==
+      'false';
+    const secret = this.env('PI_CALLBACK_SECRET');
+
+    if (!secret) {
+      if (required) {
+        this.logger.error(
+          'PI_CALLBACK_SECRET is not configured; rejecting unsigned Pi callback. Set PI_CALLBACK_SECRET, or explicitly set PI_CALLBACK_REQUIRE_SIGNATURE=false for local development.',
+        );
+        throw new ServiceUnavailableException(
+          'Pi callback signature verification is not configured',
+        );
+      }
+      this.logger.warn(
+        'PI_CALLBACK_SECRET missing and PI_CALLBACK_REQUIRE_SIGNATURE=false — callback signature check bypassed (development only).',
+      );
+      return;
+    }
+
+    if (!signatureHeader || !timestampHeader) {
+      throw new UnauthorizedException(
+        'Missing x-pi-signature or x-pi-timestamp header',
+      );
+    }
+    if (!rawBody) {
+      throw new UnauthorizedException(
+        'Missing raw request body for verification',
+      );
+    }
+
+    const timestamp = Number(timestampHeader);
+    if (!Number.isFinite(timestamp)) {
+      throw new UnauthorizedException('Malformed x-pi-timestamp header');
+    }
+
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    if (
+      Math.abs(nowSeconds - timestamp) > CALLBACK_SIGNATURE_TOLERANCE_SECONDS
+    ) {
+      throw new UnauthorizedException('Callback signature has expired');
+    }
+
+    const expected = crypto
+      .createHmac('sha256', secret)
+      .update(`${timestamp}.${rawBody}`)
+      .digest('hex');
+
+    const expectedBuf = Buffer.from(expected, 'utf8');
+    const receivedBuf = Buffer.from(signatureHeader, 'utf8');
+
+    if (
+      expectedBuf.length !== receivedBuf.length ||
+      !crypto.timingSafeEqual(expectedBuf, receivedBuf)
+    ) {
+      this.logger.warn('Rejected Pi callback: signature verification failed');
+      throw new UnauthorizedException('Callback signature verification failed');
+    }
   }
 
   async extract(
@@ -157,7 +246,18 @@ export class CloudflareRecordingsService {
     };
   }
 
-  async handleCallback(dto: CloudflareRecordingCallbackDto) {
+  async handleCallback(
+    dto: CloudflareRecordingCallbackDto,
+    rawBody?: string | null,
+    signatureHeader?: string,
+    timestampHeader?: string,
+  ) {
+    this.verifyCallbackSignature(
+      rawBody ?? null,
+      signatureHeader,
+      timestampHeader,
+    );
+
     const recording = await this.recordingRepository.findOne({
       where: { id: dto.recordingId },
     });
@@ -165,7 +265,20 @@ export class CloudflareRecordingsService {
       throw new NotFoundException(`Recording not found: ${dto.recordingId}`);
 
     const metadata = this.getMetadata(recording);
+
     if (dto.status === 'FAILED') {
+      // Never let a failure callback demote a recording that is already playable.
+      const applied = await this.jobProgress.onTerminalFailure(
+        recording.id,
+        dto.error ?? 'Pi extraction failed',
+      );
+      if (!applied.applied) {
+        return {
+          success: false,
+          status: String(recording.status),
+          ignored: applied.reason,
+        };
+      }
       await this.recordingRepository.update(recording.id, {
         status: 'failed',
         metadata: {
@@ -180,6 +293,16 @@ export class CloudflareRecordingsService {
     const bucket = metadata.r2Bucket ?? this.getBucket();
     const key = dto.r2Key ?? metadata.r2Key;
     if (!key) throw new BadRequestException('R2 object key is missing');
+
+    // The callback must not be able to point the recording at an arbitrary key.
+    const expectedKey = metadata.r2Key;
+    if (expectedKey && key !== expectedKey) {
+      this.logger.warn(
+        `Rejected Pi callback for recording=${recording.id}: r2Key mismatch`,
+      );
+      throw new BadRequestException('R2 object key does not match the request');
+    }
+
     const object = await this.r2Adapter.headObject(key, bucket);
     if (!object || object.sizeBytes <= 0) {
       await this.recordingRepository.update(recording.id, {
@@ -203,6 +326,20 @@ export class CloudflareRecordingsService {
       durationSeconds: dto.durationSeconds ?? metadata.durationSeconds ?? null,
       cloudflareStreamStatus: 'not_started',
     };
+
+    // R2 object is confirmed present and non-empty: advance the job pipeline.
+    await this.jobProgress.onR2Verified(recording.id, {
+      nvrDownloadCompletedAt: dto.nvrDownloadCompletedAt
+        ? new Date(dto.nvrDownloadCompletedAt)
+        : null,
+      uploadStartedAt: dto.uploadStartedAt
+        ? new Date(dto.uploadStartedAt)
+        : null,
+      uploadCompletedAt: dto.uploadCompletedAt
+        ? new Date(dto.uploadCompletedAt)
+        : null,
+    });
+
     await this.recordingRepository.update(recording.id, {
       status: 'ready',
       isVideoCreated: true,
@@ -211,6 +348,7 @@ export class CloudflareRecordingsService {
     });
 
     try {
+      await this.jobProgress.onStreamImportStarted(recording.id);
       const source = await this.r2Adapter.generateDownloadPresignedUrl({
         bucket,
         key,
@@ -221,14 +359,20 @@ export class CloudflareRecordingsService {
         passthrough: recording.id,
         name: `Recording ${recording.id}`,
       });
+      const playbackUrl =
+        asset.playbackUrl ??
+        `https://videodelivery.net/${asset.assetId}/manifest/video.m3u8`;
+
+      // NOTE: Cloudflare Stream values go in the `cloudflare*` namespace.
+      // `mux_playback_id` / `mux_media_url` are reserved for the Mux provider
+      // and are left untouched here.
       await this.recordingRepository.update(recording.id, {
-        mux_playback_id: asset.playbackId ?? null,
-        mux_media_url: asset.playbackUrl ?? null,
         metadata: {
           ...verifiedMetadata,
           cloudflareStreamUid: asset.assetId,
           cloudflareStreamStatus:
             asset.status === 'ready' ? 'ready' : 'processing',
+          cloudflarePlaybackUrl: playbackUrl,
           streamCopyStartedAt: new Date().toISOString(),
         } as any,
       });
@@ -338,7 +482,9 @@ export class CloudflareRecordingsService {
    * Generates a presigned upload URL for a known R2 key.
    * Used by ExtractionQueueService to obtain a fresh upload URL at dispatch time.
    */
-  async generateUploadUrl(r2Key: string): Promise<{ uploadUrl: string; key: string }> {
+  async generateUploadUrl(
+    r2Key: string,
+  ): Promise<{ uploadUrl: string; key: string }> {
     const bucket = this.getBucket();
     const upload = await this.r2Adapter.generateUploadPresignedUrl({
       bucket,

@@ -8,6 +8,7 @@ import { SharedRecording } from '../recording/entities/shared-recording.entity';
 import { Camera } from '../camera/camera.entity';
 import { CommonModule } from '../common/common.module';
 import { MediaProviderModule } from '../media-provider/media-provider.module';
+import { ExtractionJobProgressModule } from '../extraction-queue/extraction-job-progress.module';
 import { RaspberryPiApiService } from '../raspberry-pi/raspberry-pi-api.service';
 import { CloudflareRecordingsController } from './cloudflare-recordings.controller';
 import { CloudflareRecordingsService } from './cloudflare-recordings.service';
@@ -18,6 +19,7 @@ import { CloudflareRecordingsService } from './cloudflare-recordings.service';
     CommonModule,
     HttpModule,
     MediaProviderModule,
+    ExtractionJobProgressModule,
     TypeOrmModule.forFeature([Recording, SharedRecording, Camera]),
   ],
   controllers: [CloudflareRecordingsController],

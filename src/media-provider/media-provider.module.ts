@@ -13,6 +13,7 @@ import { FileServiceModule } from '../file-service/file-service.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Recording } from '../recording/entities/recording.entity';
 import { RecordingHighlights } from '../recording/entities/recording-highlights.entity';
+import { ExtractionJobProgressModule } from '../extraction-queue/extraction-job-progress.module';
 import { PaymentModule } from '../payment/payment.module';
 import { CommonModule } from '../common/common.module';
 
@@ -30,6 +31,7 @@ import { MediaPlaybackController } from './controllers/media-playback.controller
     FileServiceModule,
     PaymentModule,
     CommonModule,
+    ExtractionJobProgressModule,
     TypeOrmModule.forFeature([Recording, RecordingHighlights]),
   ],
   controllers: [CloudflareWebhookController, MediaPlaybackController],

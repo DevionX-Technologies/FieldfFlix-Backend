@@ -52,16 +52,17 @@ export function generateR2Key(params: {
       ? params.startTime
       : new Date(params.startTime);
   const end =
-    params.endTime instanceof Date
-      ? params.endTime
-      : new Date(params.endTime);
+    params.endTime instanceof Date ? params.endTime : new Date(params.endTime);
 
   const yyyy = start.getUTCFullYear();
   const mm = String(start.getUTCMonth() + 1).padStart(2, '0');
   const dd = String(start.getUTCDate()).padStart(2, '0');
 
   const fmt = (d: Date) =>
-    d.toISOString().replace(/[-:T.Z]/g, '').slice(0, 15) + 'Z';
+    d
+      .toISOString()
+      .replace(/[-:T.Z]/g, '')
+      .slice(0, 15) + 'Z';
 
   return [
     'recordings',

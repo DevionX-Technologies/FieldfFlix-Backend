@@ -6,6 +6,7 @@ import {
   Logger,
   ForbiddenException,
   BadRequestException,
+  ServiceUnavailableException,
   HttpException,
   Optional,
 } from '@nestjs/common';
@@ -102,8 +103,6 @@ import {
   upsertTournamentLiveStream,
   type LiveStreamSlot,
 } from 'src/utils/live-stream-slots.util';
-import { getBotanicalMuxKey } from 'src/utils/botanical-mux-keys.util';
-import { getPickleflowMuxKey } from 'src/utils/pickleflow-mux-keys.util';
 import {
   mergeUnlockItems,
   unlockItemsFromPaymentMetadata,
@@ -5441,62 +5440,35 @@ export class RecordingService {
 
     const channelNumber = dto.channel ?? camera.court_number ?? 1;
 
-    // Hardcoded Mux keys for Botanical Gardens provided by the Pi team
+    // Venue detection is based on the gateway hostname, never on API key values.
+    // Used only for NVR-channel -> logical-court mapping, not provider selection.
+    const piHost = (camera.raspberryPiBaseUrl ?? '').toLowerCase();
     const isBotanical =
-      camera.raspberryPiBaseUrl.includes('court17-1') ||
-      camera.raspberryPiBaseUrl.includes('cpu.taild82368.ts.net');
+      piHost.includes('court17-1') || piHost.includes('cpu.taild');
 
-    const isPickleflow =
-      camera.raspberryPiApiKey ===
-        'f74a64b009c2b7eb322e6a954e16d0446f49bca19bde563dd051b9c290d16129' ||
-      camera.raspberryPiApiKey ===
-        '20bb093ec778627c9f5108e126da8f2295d2ba867a30d7614132fbd3f3c97920' ||
-      (camera.raspberryPiBaseUrl &&
-        camera.raspberryPiBaseUrl.toLowerCase().includes('pickleflow'));
-
-    let rtmpUrl = '';
-    let liveStreamId = '';
-    let playbackUrl = '';
-
-    if (isBotanical) {
-      const keys = getBotanicalMuxKey(channelNumber);
-      if (keys) {
-        rtmpUrl = `rtmps://global-live.mux.com:443/app/${keys.streamKey}`;
-        liveStreamId = 'hardcoded-botanical-live-stream-id';
-        playbackUrl = `https://stream.mux.com/${keys.playbackId}.m3u8`;
-      }
-    } else if (isPickleflow) {
-      const keys = getPickleflowMuxKey(channelNumber);
-      if (keys) {
-        rtmpUrl = `rtmps://global-live.mux.com:443/app/${keys.streamKey}`;
-        liveStreamId = 'hardcoded-pickleflow-live-stream-id';
-        playbackUrl = `https://stream.mux.com/${keys.playbackId}.m3u8`;
-      }
+    // 1. Create the live input through the media provider abstraction.
+    //    Mux is retired: every venue now uses the configured live provider
+    //    (Cloudflare Stream). The previous per-venue hardcoded Mux stream keys
+    //    are gone, so a hostname can no longer select a provider credential.
+    if (!this.mediaProviderFactory) {
+      throw new ServiceUnavailableException(
+        'Live streaming is unavailable: MediaProviderFactory is not registered.',
+      );
     }
 
-    let liveProviderName: 'mux' | 'cloudflare' = 'mux';
-    if (!rtmpUrl) {
-      // 1. Create Live Stream via media provider abstraction (Mux or Cloudflare)
-      if (this.mediaProviderFactory) {
-        const liveProvider = this.mediaProviderFactory.getLiveStreamProvider();
-        const liveOutput = await liveProvider.createLiveStream({
-          courtNumber: camera.court_number,
-          channel: channelNumber,
-          cameraId: camera.id,
-        });
-        rtmpUrl = liveOutput.rtmpUrl;
-        liveStreamId = liveOutput.providerLiveStreamId;
-        playbackUrl = liveOutput.playbackUrl;
-        liveProviderName = liveOutput.provider;
-      } else {
-        const muxLive = await this.muxService.createLiveStream();
-        rtmpUrl = muxLive.rtmpUrl;
-        liveStreamId = muxLive.liveStreamId;
-        playbackUrl = muxLive.playbackUrl;
-      }
-    }
+    const liveProvider = this.mediaProviderFactory.getLiveStreamProvider();
+    const liveOutput = await liveProvider.createLiveStream({
+      courtNumber: camera.court_number,
+      channel: channelNumber,
+      cameraId: camera.id,
+    });
+    const rtmpUrl = liveOutput.rtmpUrl;
+    const liveStreamId = liveOutput.providerLiveStreamId;
+    const playbackUrl = liveOutput.playbackUrl;
+    const liveProviderName = liveOutput.provider;
 
-    // 2. Command Pi to relay RTSP from NVR to Mux RTMP (best-effort — playback URL works without Pi)
+    // 2. Command Pi to relay RTSP from the NVR to the provider ingest URL
+    //    (best-effort — playback URL works without the Pi).
     let piStatus = 'STARTED';
     let piWarning: string | undefined;
     try {
@@ -5509,10 +5481,10 @@ export class RecordingService {
         camera.raspberryPiApiKey,
       );
     } catch (err: any) {
-      piStatus = 'MUX_READY_PI_PENDING';
+      piStatus = 'PROVIDER_READY_PI_PENDING';
       const detail =
         err?.response?.message || err?.message || 'Pi bridge unreachable';
-      piWarning = `Mux playback is ready but the Pi relay did not start (${detail}). You can still open the playback URL; retry start when the Pi is online.`;
+      piWarning = `The provider ingest is ready but the Pi relay did not start (${detail}). You can still open the playback URL; retry start when the Pi is online.`;
       this.logger.warn(
         `Start live stream: Pi failed for camera ${camera.id} ch ${channelNumber}: ${detail}`,
       );
@@ -5617,33 +5589,32 @@ export class RecordingService {
       camera.raspberryPiApiKey,
     );
 
-    let muxLiveStreamId = dto.liveStreamId?.trim() || null;
-    if (
-      !muxLiveStreamId ||
-      muxLiveStreamId === 'hardcoded-botanical-live-stream-id'
-    ) {
-      muxLiveStreamId = await this.resolveStoredLiveStreamId(actualCameraId);
+    // Mux is retired. `hardcoded-botanical-live-stream-id` was persisted by
+    // the old venue-specific path and may still appear in tournament rows;
+    // it is a sentinel, not a real provider id, so never send it to a provider.
+    const LEGACY_SENTINEL = 'hardcoded-botanical-live-stream-id';
+
+    let providerLiveStreamId = dto.liveStreamId?.trim() || null;
+    if (!providerLiveStreamId || providerLiveStreamId === LEGACY_SENTINEL) {
+      providerLiveStreamId =
+        await this.resolveStoredLiveStreamId(actualCameraId);
     }
 
-    let muxStatus: string | undefined;
-    if (
-      muxLiveStreamId &&
-      muxLiveStreamId !== 'hardcoded-botanical-live-stream-id'
-    ) {
+    let providerStatus: string | undefined;
+    if (providerLiveStreamId && providerLiveStreamId !== LEGACY_SENTINEL) {
       try {
         if (this.mediaProviderFactory) {
           const liveProvider =
             this.mediaProviderFactory.getLiveStreamProvider();
-          await liveProvider.deleteLiveStream(muxLiveStreamId);
-          muxStatus = 'STOPPED';
+          await liveProvider.deleteLiveStream(providerLiveStreamId);
+          providerStatus = 'STOPPED';
         } else {
-          await this.muxService.disableLiveStream(muxLiveStreamId);
-          muxStatus = 'MUX_DISABLED';
+          providerStatus = 'NO_PROVIDER';
         }
       } catch (err: any) {
-        muxStatus = 'DISABLE_FAILED';
+        providerStatus = 'DISABLE_FAILED';
         this.logger.warn(
-          `Live stream stop failed for ${muxLiveStreamId}: ${err.message}`,
+          `Live stream stop failed for ${providerLiveStreamId}: ${err.message}`,
         );
       }
     }
@@ -5684,13 +5655,13 @@ export class RecordingService {
       cameraId: camera.id,
       nvrChannel: channelNumber,
       piStatus: piResult.status,
-      muxStatus,
+      providerStatus,
       warning: piResult.warning,
       logicalChannel: logicalSlot,
     };
   }
 
-  /** Read Mux live stream id from an active tournament row (fleet stop fallback). */
+  /** Read the provider live stream id from an active tournament row (fleet stop fallback). */
   private async resolveStoredLiveStreamId(
     tournamentCameraId: string,
   ): Promise<string | null> {

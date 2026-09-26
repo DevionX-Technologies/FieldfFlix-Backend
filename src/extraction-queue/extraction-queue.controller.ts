@@ -11,7 +11,14 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Request } from 'express';
-import { IsDateString, IsInt, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import {
+  IsDateString,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+} from 'class-validator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CommonService } from '../common/service/common.service';
 import { ExtractionQueueService } from './extraction-queue.service';
@@ -57,7 +64,8 @@ export class ExtractionQueueController {
 
   private async getUserId(req: Request): Promise<string> {
     const token = await this.commonService.extractDataFromToken(req);
-    if (!token?.user_id) throw new UnauthorizedException('User ID not found in token');
+    if (!token?.user_id)
+      throw new UnauthorizedException('User ID not found in token');
     return token.user_id;
   }
 
@@ -82,15 +90,23 @@ export class ExtractionQueueController {
   }
 
   @Get('pipeline-status')
-  @ApiOperation({ summary: 'Get the pipeline status for all user extractions with timing info' })
+  @ApiOperation({
+    summary:
+      'Get the pipeline status for all user extractions with timing info',
+  })
   async getPipelineStatus(@Req() req: Request) {
     const userId = await this.getUserId(req);
     return this.queueService.getPipelineStatus(userId);
   }
 
   @Get('job/:recordingId')
-  @ApiOperation({ summary: 'Get extraction job status for a specific recording' })
-  async getJobStatus(@Param('recordingId') recordingId: string, @Req() req: Request) {
+  @ApiOperation({
+    summary: 'Get extraction job status for a specific recording',
+  })
+  async getJobStatus(
+    @Param('recordingId') recordingId: string,
+    @Req() req: Request,
+  ) {
     await this.getUserId(req);
     const job = await this.queueService.getJobStatus(recordingId);
     if (!job) return { message: 'No job found for this recording.' };

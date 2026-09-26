@@ -6,6 +6,7 @@ import { ExtractionQueueController } from './extraction-queue.controller';
 import { Recording } from '../recording/entities/recording.entity';
 import { ExtractionRequest } from '../recording/entities/extraction-request.entity';
 import { CloudflareRecordingsModule } from '../cloudflare-recordings/cloudflare-recordings.module';
+import { ExtractionJobProgressModule } from './extraction-job-progress.module';
 import { HttpModule } from '@nestjs/axios';
 import { RaspberryPiApiService } from '../raspberry-pi/raspberry-pi-api.service';
 import { CommonModule } from '../common/common.module';
@@ -14,6 +15,7 @@ import { CommonModule } from '../common/common.module';
   imports: [
     TypeOrmModule.forFeature([ExtractionJob, Recording, ExtractionRequest]),
     CloudflareRecordingsModule,
+    ExtractionJobProgressModule,
     CommonModule,
     HttpModule,
   ],

@@ -15,6 +15,7 @@ import { Repository } from 'typeorm';
 import { Public } from '../../decorators/public.decorator';
 import { CloudflareWebhookService } from '../services/cloudflare-webhook.service';
 import { Recording } from '../../recording/entities/recording.entity';
+import { ExtractionJobProgressService } from '../../extraction-queue/extraction-job-progress.service';
 
 @ApiTags('Webhooks')
 @Controller('webhooks')
@@ -26,6 +27,8 @@ export class CloudflareWebhookController {
     @Optional()
     @InjectRepository(Recording)
     private readonly recordingRepository?: Repository<Recording>,
+    @Optional()
+    private readonly jobProgress?: ExtractionJobProgressService,
   ) {}
 
   @Public()
@@ -185,22 +188,27 @@ export class CloudflareWebhookController {
                   string,
                   unknown
                 >;
+                const playbackUrl =
+                  normalized.playbackUrl ||
+                  `https://videodelivery.net/${normalized.assetId}/manifest/video.m3u8`;
+
+                // Cloudflare Stream values stay in the `cloudflare*` namespace;
+                // `mux_playback_id` is reserved for the Mux provider.
                 await this.recordingRepository.update(recording.id, {
                   status: 'ready',
                   isVideoCreated: true,
-                  mux_playback_id: normalized.assetId,
-                  mux_media_url:
-                    normalized.playbackUrl ||
-                    `https://videodelivery.net/${normalized.assetId}/manifest/video.m3u8`,
                   metadata: {
                     ...meta,
                     cloudflareStreamStatus: 'ready',
-                    cloudflarePlaybackUrl:
-                      normalized.playbackUrl ||
-                      `https://videodelivery.net/${normalized.assetId}/manifest/video.m3u8`,
+                    cloudflarePlaybackUrl: playbackUrl,
                     cloudflareReadyAt: new Date().toISOString(),
                   } as any,
                 });
+
+                // Advance the extraction job so the pipeline tracker reflects
+                // STREAM_READY instead of stalling at R2_READY.
+                await this.jobProgress?.onStreamReady(recording.id);
+
                 this.logger.log(
                   `Updated recording ${recording.id} to ready from Cloudflare Stream webhook`,
                 );
