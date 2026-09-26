@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  BadGatewayException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -19,6 +20,7 @@ import { SharedRecording } from '../recording/entities/shared-recording.entity';
 import { CloudflareR2StorageAdapter } from '../media-provider/adapters/cloudflare-r2-storage.adapter';
 import { CloudflareStreamVodAdapter } from '../media-provider/adapters/cloudflare-stream-vod.adapter';
 import { RaspberryPiApiService } from '../raspberry-pi/raspberry-pi-api.service';
+import type { MultipartUploadInstruction } from '../raspberry-pi/raspberry-pi-api.service';
 import { ExtractionJobProgressService } from '../extraction-queue/extraction-job-progress.service';
 import { CloudflareRecordingExtractDto } from './dto/cloudflare-recording-extract.dto';
 import { CloudflareRecordingCallbackDto } from './dto/cloudflare-recording-callback.dto';
@@ -267,6 +269,25 @@ export class CloudflareRecordingsService {
     const metadata = this.getMetadata(recording);
 
     if (dto.status === 'FAILED') {
+      // A device that began a multipart upload and then failed leaves the parts
+      // behind, and R2 bills/holds them until they are explicitly aborted.
+      if (dto.uploadId) {
+        const failedKey = dto.r2Key ?? this.getMetadata(recording).r2Key;
+        const failedBucket =
+          this.getMetadata(recording).r2Bucket ?? this.getBucket();
+        if (failedKey) {
+          const abort = await this.r2Adapter.abortMultipartUpload(
+            dto.uploadId,
+            failedKey,
+            failedBucket,
+          );
+          this.logger.log(
+            `[VIDEO-UPLOAD] recording=${recording.id} storage=R2 method=multipart-abort ` +
+              `uploadId=${dto.uploadId} success=${abort.success}`,
+          );
+        }
+      }
+
       // Never let a failure callback demote a recording that is already playable.
       const applied = await this.jobProgress.onTerminalFailure(
         recording.id,
@@ -301,6 +322,44 @@ export class CloudflareRecordingsService {
         `Rejected Pi callback for recording=${recording.id}: r2Key mismatch`,
       );
       throw new BadRequestException('R2 object key does not match the request');
+    }
+
+    // Multipart uploads must be completed BEFORE verifying the object: R2 does
+    // not expose the object until CompleteMultipartUpload succeeds, so a
+    // headObject here would otherwise report "verification_pending" forever and
+    // the parts would be billed indefinitely.
+    if (dto.uploadId && dto.parts?.length) {
+      try {
+        const completed = await this.r2Adapter.completeMultipartUpload(
+          dto.uploadId,
+          key,
+          dto.parts,
+          bucket,
+        );
+        this.logger.log(
+          `[VIDEO-UPLOAD] recording=${recording.id} storage=R2 method=multipart ` +
+            `parts=${dto.parts.length} partSizeBytes=${metadata.r2PartSizeBytes ?? 'unknown'} ` +
+            `retriedParts=${dto.retriedPartCount ?? 0} failedParts=${dto.failedPartCount ?? 0} ` +
+            `durationMs=${this.uploadDurationMs(dto)} ` +
+            `throughputMBps=${this.throughputMBps(dto)} etag=${completed.etag ?? 'n/a'}`,
+        );
+      } catch (completeErr: any) {
+        // Leave the parts in place so a retry can resume rather than restart.
+        this.logger.error(
+          `Failed to complete multipart upload for recording=${recording.id} ` +
+            `(uploadId=${dto.uploadId}): ${completeErr?.message}`,
+        );
+        await this.recordingRepository.update(recording.id, {
+          metadata: {
+            ...metadata,
+            r2Status: 'multipart_completion_failed',
+            r2UploadId: dto.uploadId,
+          } as any,
+        });
+        throw new BadGatewayException(
+          'R2 multipart completion failed; the device should retry the failed parts',
+        );
+      }
     }
 
     const object = await this.r2Adapter.headObject(key, bucket);
@@ -383,6 +442,27 @@ export class CloudflareRecordingsService {
     }
 
     return { success: true, status: 'ready', r2Verified: true };
+  }
+
+  /**
+   * Upload wall-clock time as reported by the device. Falls back to null when
+   * the device did not send timestamps, so telemetry never fabricates numbers.
+   */
+  private uploadDurationMs(dto: CloudflareRecordingCallbackDto): number | null {
+    if (!dto.uploadStartedAt || !dto.uploadCompletedAt) return null;
+    const started = Date.parse(dto.uploadStartedAt);
+    const completed = Date.parse(dto.uploadCompletedAt);
+    if (!Number.isFinite(started) || !Number.isFinite(completed)) return null;
+    const ms = completed - started;
+    return ms >= 0 ? ms : null;
+  }
+
+  /** Upload throughput in MB/s, or null when size/duration is unknown. */
+  private throughputMBps(dto: CloudflareRecordingCallbackDto): number | null {
+    const ms = this.uploadDurationMs(dto);
+    if (ms === null || !dto.fileSizeBytes || ms <= 0) return null;
+    const mb = dto.fileSizeBytes / (1024 * 1024);
+    return Math.round((mb / (ms / 1000)) * 100) / 100;
   }
 
   async getPlayback(recordingId: string, userId: string) {
@@ -482,17 +562,47 @@ export class CloudflareRecordingsService {
    * Generates a presigned upload URL for a known R2 key.
    * Used by ExtractionQueueService to obtain a fresh upload URL at dispatch time.
    */
+  /**
+   * Generates a presigned upload URL for a known R2 key, plus — when the
+   * expected object size is known — a multipart plan the device can use for
+   * parallel, resumable, per-part-retryable upload.
+   *
+   * `expectedSizeBytes` is optional on purpose. When the backend does not know
+   * the size up front the device receives only the single-shot `uploadUrl`,
+   * which preserves the previous behaviour exactly.
+   */
   async generateUploadUrl(
     r2Key: string,
-  ): Promise<{ uploadUrl: string; key: string }> {
+    expectedSizeBytes?: number,
+  ): Promise<{
+    uploadUrl: string;
+    key: string;
+    multipart?: MultipartUploadInstruction;
+  }> {
     const bucket = this.getBucket();
     const upload = await this.r2Adapter.generateUploadPresignedUrl({
       bucket,
       key: r2Key,
       contentType: 'video/mp4',
       expiresInSeconds: 7200, // 2 hours
+      expectedSizeBytes,
     });
-    return { uploadUrl: upload.uploadUrl, key: r2Key };
+
+    if (!upload.multipart) {
+      return { uploadUrl: upload.uploadUrl, key: r2Key };
+    }
+
+    return {
+      uploadUrl: upload.uploadUrl,
+      key: r2Key,
+      multipart: {
+        uploadId: upload.multipart.uploadId,
+        partSizeBytes: upload.multipart.partSizeBytes,
+        partCount: upload.multipart.partCount,
+        concurrency: upload.multipart.concurrency,
+        partUrls: upload.multipart.partUrls,
+      },
+    };
   }
 
   private async getAuthorizedRecording(recordingId: string, userId: string) {

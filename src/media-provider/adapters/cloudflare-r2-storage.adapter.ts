@@ -16,6 +16,10 @@ import {
   DeleteObjectCommand,
   HeadObjectCommand,
   ListObjectsV2Command,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { MediaProviderError } from '../errors/media-provider.error';
@@ -122,6 +126,17 @@ export class CloudflareR2StorageAdapter implements IStorageProvider {
     );
   }
 
+  /**
+   * R2 (like S3) rejects any part smaller than 5 MiB except the last one.
+   * Clamping here keeps a misconfigured part size from failing every upload
+   * at CompleteMultipartUpload time.
+   */
+  private static readonly MIN_PART_SIZE_BYTES = 5 * 1024 * 1024;
+  private static readonly DEFAULT_PART_SIZE_BYTES = 64 * 1024 * 1024;
+  private static readonly DEFAULT_PART_CONCURRENCY = 3;
+  /** R2 allows at most 10,000 parts per multipart upload. */
+  private static readonly MAX_PARTS = 10000;
+
   private getEnv(key: string, defaultValue: string): string {
     if (this.configService) {
       return (
@@ -192,6 +207,56 @@ export class CloudflareR2StorageAdapter implements IStorageProvider {
     const expiresIn = input.expiresInSeconds || 3600;
 
     try {
+      // Multipart is strictly better for the multi-GB recordings this system
+      // handles: parallel parts, per-part retry, and resumability. But it is
+      // only offered when the caller knows the object size, because the part
+      // count is derived from it. A device that ignores `multipart` still has
+      // the single-shot `uploadUrl` below, so this stays backward compatible.
+      if (input.expectedSizeBytes && input.expectedSizeBytes > 0) {
+        try {
+          const multipart = await this.createMultipartUploadPlan(
+            bucket,
+            input.key,
+            input.contentType || 'video/mp4',
+            input.expectedSizeBytes,
+            input.partSizeBytes,
+            input.concurrency,
+            expiresIn,
+          );
+          // Still return a valid single-shot URL as the fallback path.
+          const singleCommand = new PutObjectCommand({
+            Bucket: bucket,
+            Key: input.key,
+            ContentType: input.contentType || 'video/mp4',
+          });
+          const uploadUrl = await getSignedUrl(
+            this.r2PresignClient,
+            singleCommand,
+            {
+              expiresIn,
+            },
+          );
+          this.logger.log(
+            `R2 multipart upload planned for ${input.key}: ` +
+              `${multipart.partCount} parts x ${multipart.partSizeBytes}B, concurrency ${multipart.concurrency}, uploadId=${multipart.uploadId}`,
+          );
+          return {
+            provider: 'r2',
+            uploadUrl,
+            key: input.key,
+            bucket,
+            expiresInSeconds: expiresIn,
+            multipart,
+          };
+        } catch (multipartErr: any) {
+          // Never fail the request because multipart could not be created;
+          // a single-shot PUT still works, just slower.
+          this.logger.warn(
+            `Falling back to single-shot R2 upload for ${input.key}: ${multipartErr?.message}`,
+          );
+        }
+      }
+
       const command = new PutObjectCommand({
         Bucket: bucket,
         Key: input.key,
@@ -214,13 +279,180 @@ export class CloudflareR2StorageAdapter implements IStorageProvider {
         `Failed to generate R2 upload presigned URL for ${input.key}: ${err.message}`,
       );
       throw new MediaProviderError(
-        err.message || 'Failed to generate R2 presigned upload URL',
+        err.message || 'Failed to generate R2 upload presigned URL',
         'r2',
         'generateUploadPresignedUrl',
         false,
         err.$metadata?.httpStatusCode,
         err,
       );
+    }
+  }
+
+  /**
+   * Creates the multipart upload and presigns every part URL up front.
+   *
+   * The venue device therefore never holds R2 credentials — only short-lived,
+   * per-part URLs scoped to a single upload. Part URLs are signed in parallel
+   * because presigning is pure local CPU work (SigV4 HMAC), not a network call.
+   */
+  private async createMultipartUploadPlan(
+    bucket: string,
+    key: string,
+    contentType: string,
+    expectedSizeBytes: number,
+    partSizeOverride?: number,
+    concurrencyOverride?: number,
+    expiresIn = 3600,
+  ): Promise<NonNullable<StorageUploadUrlOutput['multipart']>> {
+    let partSize = partSizeOverride ?? this.defaultPartSize();
+    partSize = Math.max(
+      Math.floor(partSize),
+      CloudflareR2StorageAdapter.MIN_PART_SIZE_BYTES,
+    );
+
+    let partCount = Math.ceil(expectedSizeBytes / partSize);
+    if (partCount > CloudflareR2StorageAdapter.MAX_PARTS) {
+      // Grow the part size rather than fail: a 10,000-part cap is the only
+      // hard limit, and 2-3 GB never approaches it at 64 MiB parts.
+      partSize = Math.ceil(
+        expectedSizeBytes / CloudflareR2StorageAdapter.MAX_PARTS,
+      );
+      partCount = Math.ceil(expectedSizeBytes / partSize);
+      this.logger.warn(
+        `Raised part size to ${partSize}B for ${key} to stay within the ${CloudflareR2StorageAdapter.MAX_PARTS}-part limit`,
+      );
+    }
+
+    const created = await this.r2Client.send(
+      new CreateMultipartUploadCommand({
+        Bucket: bucket,
+        Key: key,
+        ContentType: contentType,
+      }),
+    );
+
+    const uploadId = created.UploadId;
+    if (!uploadId) throw new Error('R2 did not return an UploadId');
+
+    const concurrency = Math.max(
+      1,
+      Math.min(
+        concurrencyOverride ?? this.defaultConcurrency(),
+        CloudflareR2StorageAdapter.MAX_PARTS,
+      ),
+    );
+
+    const partNumbers = Array.from({ length: partCount }, (_, i) => i + 1);
+    const partUrls = await Promise.all(
+      partNumbers.map(async (partNumber) => {
+        const signed = await getSignedUrl(
+          this.r2PresignClient,
+          new UploadPartCommand({
+            Bucket: bucket,
+            Key: key,
+            UploadId: uploadId,
+            PartNumber: partNumber,
+          }),
+          { expiresIn },
+        );
+        return signed;
+      }),
+    );
+
+    return {
+      uploadId,
+      key,
+      bucket,
+      partSizeBytes: partSize,
+      partCount,
+      concurrency,
+      partUrls,
+      expiresInSeconds: expiresIn,
+    };
+  }
+
+  private defaultPartSize(): number {
+    const raw = this.getEnv('R2_UPLOAD_PART_SIZE_BYTES', '');
+    const parsed = raw ? Number(raw) : NaN;
+    return Number.isFinite(parsed) && parsed > 0
+      ? parsed
+      : CloudflareR2StorageAdapter.DEFAULT_PART_SIZE_BYTES;
+  }
+
+  private defaultConcurrency(): number {
+    const raw = this.getEnv('R2_UPLOAD_CONCURRENCY', '');
+    const parsed = raw ? Number(raw) : NaN;
+    return Number.isFinite(parsed) && parsed > 0
+      ? parsed
+      : CloudflareR2StorageAdapter.DEFAULT_PART_CONCURRENCY;
+  }
+
+  async completeMultipartUpload(
+    uploadId: string,
+    key: string,
+    parts: Array<{ partNumber: number; etag: string }>,
+    bucket?: string,
+  ): Promise<{ success: boolean; etag?: string }> {
+    const targetBucket = bucket || this.defaultBucket;
+    try {
+      // S3/R2 require ascending part numbers.
+      const ordered = [...parts].sort((a, b) => a.partNumber - b.partNumber);
+      const res = await this.r2Client.send(
+        new CompleteMultipartUploadCommand({
+          Bucket: targetBucket,
+          Key: key,
+          UploadId: uploadId,
+          MultipartUpload: {
+            Parts: ordered.map((p) => ({
+              PartNumber: p.partNumber,
+              ETag: p.etag,
+            })),
+          },
+        }),
+      );
+      this.logger.log(
+        `Completed R2 multipart upload for ${key} (${ordered.length} parts, uploadId=${uploadId})`,
+      );
+      return { success: true, etag: res.ETag };
+    } catch (err: any) {
+      this.logger.error(
+        `Failed to complete R2 multipart upload for ${key} (uploadId=${uploadId}): ${err.message}`,
+      );
+      throw new MediaProviderError(
+        err.message || 'Failed to complete multipart upload',
+        'r2',
+        'completeMultipartUpload',
+        err.name === 'SlowDown' || err.name === 'ServiceUnavailable',
+        err.$metadata?.httpStatusCode,
+        err,
+      );
+    }
+  }
+
+  async abortMultipartUpload(
+    uploadId: string,
+    key: string,
+    bucket?: string,
+  ): Promise<{ success: boolean }> {
+    const targetBucket = bucket || this.defaultBucket;
+    try {
+      await this.r2Client.send(
+        new AbortMultipartUploadCommand({
+          Bucket: targetBucket,
+          Key: key,
+          UploadId: uploadId,
+        }),
+      );
+      this.logger.log(
+        `Aborted R2 multipart upload for ${key} (uploadId=${uploadId})`,
+      );
+      return { success: true };
+    } catch (err: any) {
+      this.logger.warn(
+        `Failed to abort R2 multipart upload for ${key} (uploadId=${uploadId}): ${err.message}`,
+      );
+      return { success: false };
     }
   }
 

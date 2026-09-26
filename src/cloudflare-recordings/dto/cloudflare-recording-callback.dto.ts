@@ -1,12 +1,32 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsIn,
   IsISO8601,
+  IsInt,
   IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
+  Max,
+  Min,
+  ValidateNested,
 } from 'class-validator';
+
+/** One completed part, as reported by the device after a multipart upload. */
+export class MultipartPartDto {
+  @ApiProperty({ description: '1-based part number' })
+  @IsInt()
+  @Min(1)
+  @Max(10000)
+  partNumber: number;
+
+  @ApiProperty({ description: 'ETag returned by R2 for this part' })
+  @IsString()
+  @IsNotEmpty()
+  etag: string;
+}
 
 export class CloudflareRecordingCallbackDto {
   @ApiProperty({ description: 'Recording UUID' })
@@ -52,4 +72,38 @@ export class CloudflareRecordingCallbackDto {
   @IsOptional()
   @IsISO8601()
   uploadCompletedAt?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'R2 multipart upload id. When present the backend completes the upload ' +
+      'from `parts` instead of assuming a single-shot PUT already landed.',
+  })
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty()
+  uploadId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Completed parts for a multipart upload (ordered by partNumber)',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MultipartPartDto)
+  parts?: MultipartPartDto[];
+
+  @ApiPropertyOptional({
+    description: 'Parts the device failed and retried; used for telemetry',
+  })
+  @IsOptional()
+  @IsNumber()
+  retriedPartCount?: number;
+
+  @ApiPropertyOptional({
+    description: 'Parts still missing after retries, for observability',
+  })
+  @IsOptional()
+  @IsNumber()
+  failedPartCount?: number;
 }

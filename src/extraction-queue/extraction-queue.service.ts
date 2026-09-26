@@ -14,6 +14,7 @@ import {
 } from './recording-fingerprint.util';
 import { CloudflareRecordingsService } from '../cloudflare-recordings/cloudflare-recordings.service';
 import { RaspberryPiApiService } from '../raspberry-pi/raspberry-pi-api.service';
+import type { MultipartUploadInstruction } from '../raspberry-pi/raspberry-pi-api.service';
 import { ExtractionJobProgressService } from './extraction-job-progress.service';
 import { ConfigService } from '@nestjs/config';
 
@@ -386,14 +387,19 @@ export class ExtractionQueueService {
 
   /**
    * Recover stale jobs that have been in an active state for too long. This
-   * handles the case where the Pi crashed after we sent the job but before it
-   * called back. Also re-arms jobs whose backoff window has elapsed.
+   * handles the case where the device crashed after we sent the job but before
+   * it called back. Also re-arms jobs whose backoff window has elapsed.
+   *
+   * The default threshold must comfortably exceed a full multi-GB
+   * NVR-read + upload cycle. If it is shorter than a legitimate transfer, stale
+   * recovery kills the in-flight attempt and starts the whole extraction again,
+   * which loops indefinitely and is indistinguishable from a total stall.
    */
   @Cron(CronExpression.EVERY_MINUTE)
   async recoverStaleJobs(): Promise<void> {
     const staleMs = Number(
       this.configService.get<string>('EXTRACTION_STALE_AFTER_MS') ??
-        45 * 60 * 1000,
+        120 * 60 * 1000,
     );
     const staleThreshold = new Date(Date.now() - staleMs);
 
@@ -412,12 +418,16 @@ export class ExtractionQueueService {
 
     for (const job of staleJobs) {
       this.logger.warn(
-        `[Queue] Stale job detected: job=${job.id}, retrying (attempt ${job.retry_count + 1}/${job.max_retries})`,
+        `[Queue] Stale job detected: job=${job.id}, retrying (attempt ${job.retry_count + 1}/${job.max_retries}, ` +
+          `active for >${Math.round(staleMs / 60000)} min)`,
       );
       await this.handleJobFailure(
         job,
         'STALE_TIMEOUT',
-        'Job became stale - Pi may have crashed or the callback was lost',
+        'Job became stale - the device may have crashed or the callback was lost',
+        // The device may still be transferring; do not immediately restart a
+        // second full extraction of a multi-GB clip.
+        { outcomeUnknown: true },
       );
     }
 
@@ -452,10 +462,18 @@ export class ExtractionQueueService {
     }
 
     let uploadUrl: string;
+    let multipart: MultipartUploadInstruction | undefined;
     try {
+      // Pass the expected size when the request declared one, so the device
+      // gets a parallel/resumable multipart plan. When it is unknown the
+      // adapter returns the single-shot URL only and nothing changes.
       const uploadInfo =
-        await this.cloudflareRecordingsService.generateUploadUrl(r2Key);
+        await this.cloudflareRecordingsService.generateUploadUrl(
+          r2Key,
+          this.expectedSizeBytes(meta),
+        );
       uploadUrl = uploadInfo.uploadUrl;
+      multipart = uploadInfo.multipart;
     } catch (err) {
       this.logger.error(
         `[Dispatch] Failed to generate upload URL for job=${job.id}: ${
@@ -468,6 +486,14 @@ export class ExtractionQueueService {
         err instanceof Error ? err.message : String(err),
       );
       return;
+    }
+
+    if (multipart) {
+      this.logger.log(
+        `[Dispatch] job=${job.id} using R2 multipart: ${multipart.partCount} parts ` +
+          `x ${multipart.partSizeBytes}B, concurrency ${multipart.concurrency}, ` +
+          `uploadId=${multipart.uploadId}`,
+      );
     }
 
     this.logger.log(`[Dispatch] Sending job=${job.id} to Pi at ${piBaseUrl}`);
@@ -486,6 +512,7 @@ export class ExtractionQueueService {
           uploadUrl,
           s3Key: r2Key,
           callbackWebhookUrl: this.callbackUrl(),
+          multipart,
         },
         piApiKey,
       )
@@ -503,11 +530,18 @@ export class ExtractionQueueService {
           );
         }
       })
-      .catch(async (err: Error) => {
+      .catch(async (err: any) => {
+        const code = (err?.piErrorCode as string) ?? 'PI_REQUEST_FAILED';
+        const outcomeUnknown = err?.outcomeUnknown === true;
         this.logger.error(
-          `[Dispatch] Pi request failed for job=${job.id}: ${err.message}`,
+          `[Dispatch] Trigger failed for job=${job.id} code=${code} ` +
+            `outcomeUnknown=${outcomeUnknown}: ${err?.message}`,
         );
-        await this.handleJobFailure(job, 'PI_REQUEST_FAILED', err.message);
+        // On a timeout the device may still be extracting/uploading, so this is
+        // a "don't start a second one yet" signal, not a plain failure.
+        await this.handleJobFailure(job, code, err?.message ?? String(err), {
+          outcomeUnknown,
+        });
       });
   }
 
@@ -529,6 +563,27 @@ export class ExtractionQueueService {
         `[Dispatch] Wake failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+  }
+
+  /**
+   * Extracts a pre-declared object size from recording metadata, if any.
+   *
+   * The NVR clip size is normally only known once the device has read the file,
+   * so this is usually `undefined` and the device receives the single-shot
+   * upload URL. When a size IS declared (e.g. a manual extraction with a known
+   * clip length) the adapter builds a parallel multipart plan from it.
+   */
+  private expectedSizeBytes(meta: Record<string, unknown>): number | undefined {
+    const candidates = [
+      meta.expectedSizeBytes,
+      meta.fileSizeBytes,
+      meta.nvrFileSizeBytes,
+    ];
+    for (const candidate of candidates) {
+      const value = Number(candidate);
+      if (Number.isFinite(value) && value > 0) return value;
+    }
+    return undefined;
   }
 
   /**
@@ -597,6 +652,7 @@ export class ExtractionQueueService {
     job: ExtractionJob,
     errorCode: string,
     errorMessage: string,
+    opts: { outcomeUnknown?: boolean } = {},
   ): Promise<void> {
     // Never let a late failure demote a job that already produced a video.
     if (TERMINAL_STATUSES.includes(job.status)) {
@@ -610,10 +666,22 @@ export class ExtractionQueueService {
     const canRetry = newRetryCount <= job.max_retries;
 
     // Exponential backoff: 2^retry_count minutes, capped.
-    const backoffMs = Math.min(
+    let backoffMs = Math.min(
       Math.pow(2, newRetryCount) * this.RETRY_BASE_DELAY_MS,
       this.MAX_BACKOFF_MS,
     );
+
+    // A timed-out trigger leaves the outcome UNKNOWN — the device is probably
+    // still pulling from the NVR and uploading. Re-dispatching after the normal
+    // few-minute backoff would start a SECOND full extraction of a multi-GB
+    // clip, which is exactly the retry amplification we are trying to avoid.
+    // Hold the job long enough for the in-flight attempt to finish and report
+    // via the callback before considering another extraction.
+    if (opts.outcomeUnknown) {
+      const unknownGraceMs = this.outcomeUnknownGraceMs();
+      backoffMs = Math.max(backoffMs, unknownGraceMs);
+    }
+
     const nextRetryAt = canRetry ? new Date(Date.now() + backoffMs) : null;
 
     await this.jobRepo.update(
@@ -646,8 +714,24 @@ export class ExtractionQueueService {
 
     await this.recordingRepo.update(job.recordingId, { status: 'queued' });
     this.logger.warn(
-      `[Queue] Job=${job.id} will retry in ${Math.round(backoffMs / 60000)} min (attempt ${newRetryCount}/${job.max_retries})`,
+      `[Queue] Job=${job.id} will retry in ${Math.round(backoffMs / 60000)} min ` +
+        `(attempt ${newRetryCount}/${job.max_retries}, code=${errorCode}` +
+        `${opts.outcomeUnknown ? ', outcome unknown — waiting for in-flight attempt' : ''})`,
     );
+  }
+
+  /**
+   * Grace period applied before re-dispatching after an unknown-outcome
+   * (timed-out) trigger. Must comfortably exceed a normal large-clip transfer so
+   * the in-flight device attempt can report its own result.
+   */
+  private outcomeUnknownGraceMs(): number {
+    const raw = this.configService.get<string>(
+      'EXTRACTION_UNKNOWN_OUTCOME_GRACE_MS',
+    );
+    const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+    return 45 * 60 * 1000;
   }
 
   async getJobStatus(recordingId: string): Promise<ExtractionJob | null> {

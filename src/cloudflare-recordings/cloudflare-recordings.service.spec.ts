@@ -1,4 +1,8 @@
-import { ForbiddenException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadGatewayException,
+  ForbiddenException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import * as crypto from 'crypto';
 import { CloudflareRecordingsService } from './cloudflare-recordings.service';
 
@@ -37,6 +41,8 @@ describe('CloudflareRecordingsService', () => {
     headObject: jest.fn(),
     generateUploadPresignedUrl: jest.fn(),
     generateDownloadPresignedUrl: jest.fn(),
+    completeMultipartUpload: jest.fn(),
+    abortMultipartUpload: jest.fn(),
   };
   const streamAdapter = { createAssetFromUrl: jest.fn() };
   const piApi = { extractSession: jest.fn() };
@@ -227,6 +233,164 @@ describe('CloudflareRecordingsService', () => {
     expect(jobProgress.onStreamImportStarted).toHaveBeenCalledWith(
       'recording-1',
     );
+  });
+
+  it('aborts the multipart upload when the device reports a failure', async () => {
+    recordingRepository.findOne.mockResolvedValue(makeRecording());
+    r2Adapter.abortMultipartUpload.mockResolvedValue({ success: true });
+    jobProgress.onTerminalFailure.mockResolvedValue({ applied: true });
+
+    await call(
+      signedCallback({
+        recordingId: 'recording-1',
+        status: 'FAILED',
+        uploadId: 'upload-abandoned',
+        error: 'NVR read error after 3 parts',
+      }),
+    );
+
+    // Otherwise the uploaded parts are held and billed forever.
+    expect(r2Adapter.abortMultipartUpload).toHaveBeenCalledWith(
+      'upload-abandoned',
+      'recordings/recording-1.mp4',
+      'dev-bucket',
+    );
+  });
+
+  it('does not abort anything when a single-PUT device fails', async () => {
+    recordingRepository.findOne.mockResolvedValue(makeRecording());
+    jobProgress.onTerminalFailure.mockResolvedValue({ applied: true });
+
+    await call(
+      signedCallback({
+        recordingId: 'recording-1',
+        status: 'FAILED',
+        error: 'no footage for window',
+      }),
+    );
+
+    expect(r2Adapter.abortMultipartUpload).not.toHaveBeenCalled();
+  });
+
+  it('completes a multipart upload before verifying the object', async () => {
+    recordingRepository.findOne.mockResolvedValue(makeRecording());
+    const callOrder: string[] = [];
+    r2Adapter.completeMultipartUpload.mockImplementation(async () => {
+      callOrder.push('complete');
+      return { success: true, etag: '"final-etag"' };
+    });
+    r2Adapter.headObject.mockImplementation(async () => {
+      callOrder.push('headObject');
+      return { sizeBytes: 3_000_000_000 };
+    });
+    r2Adapter.generateDownloadPresignedUrl.mockResolvedValue({
+      downloadUrl: 'https://dev-r2.example.test/signed',
+    });
+    streamAdapter.createAssetFromUrl.mockResolvedValue({
+      assetId: 'stream-multipart',
+      playbackId: 'stream-multipart',
+      playbackUrl:
+        'https://videodelivery.net/stream-multipart/manifest/video.m3u8',
+      status: 'processing',
+    });
+
+    const result = await call(
+      signedCallback({
+        recordingId: 'recording-1',
+        status: 'SUCCESS',
+        fileSizeBytes: 3_000_000_000,
+        uploadId: 'upload-abc',
+        parts: [
+          { partNumber: 1, etag: '"p1"' },
+          { partNumber: 2, etag: '"p2"' },
+        ],
+        retriedPartCount: 2,
+      }),
+    );
+
+    // R2 does not expose the object until completion, so completion MUST run
+    // first or verification would never succeed.
+    expect(callOrder).toEqual(['complete', 'headObject']);
+    expect(r2Adapter.completeMultipartUpload).toHaveBeenCalledWith(
+      'upload-abc',
+      'recordings/recording-1.mp4',
+      [
+        { partNumber: 1, etag: '"p1"' },
+        { partNumber: 2, etag: '"p2"' },
+      ],
+      'dev-bucket',
+    );
+    expect(result).toEqual({
+      success: true,
+      status: 'ready',
+      r2Verified: true,
+    });
+    expect(recordingRepository.update).toHaveBeenCalledWith(
+      'recording-1',
+      expect.objectContaining({ status: 'ready' }),
+    );
+  });
+
+  it('leaves parts in place and does not mark ready when completion fails', async () => {
+    recordingRepository.findOne.mockResolvedValue(makeRecording());
+    r2Adapter.completeMultipartUpload.mockRejectedValue(
+      new Error('EntityTooSmall: one part is below the minimum'),
+    );
+    r2Adapter.headObject.mockResolvedValue({ sizeBytes: 3_000_000_000 });
+
+    await expect(
+      call(
+        signedCallback({
+          recordingId: 'recording-1',
+          status: 'SUCCESS',
+          uploadId: 'upload-xyz',
+          parts: [{ partNumber: 1, etag: '"p1"' }],
+        }),
+      ),
+    ).rejects.toThrow(BadGatewayException);
+
+    // No premature verification, and no abort: the device can retry the parts.
+    expect(r2Adapter.headObject).not.toHaveBeenCalled();
+    expect(r2Adapter.abortMultipartUpload).not.toHaveBeenCalled();
+    expect(recordingRepository.update).toHaveBeenCalledWith(
+      'recording-1',
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          r2Status: 'multipart_completion_failed',
+          r2UploadId: 'upload-xyz',
+        }),
+      }),
+    );
+  });
+
+  it('keeps single-PUT callbacks working without any multipart call', async () => {
+    recordingRepository.findOne.mockResolvedValue(makeRecording());
+    r2Adapter.headObject.mockResolvedValue({ sizeBytes: 5_000_000 });
+    r2Adapter.generateDownloadPresignedUrl.mockResolvedValue({
+      downloadUrl: 'https://dev-r2.example.test/signed',
+    });
+    streamAdapter.createAssetFromUrl.mockResolvedValue({
+      assetId: 'stream-single',
+      playbackId: 'stream-single',
+      playbackUrl:
+        'https://videodelivery.net/stream-single/manifest/video.m3u8',
+      status: 'processing',
+    });
+
+    const result = await call(
+      signedCallback({
+        recordingId: 'recording-1',
+        status: 'SUCCESS',
+      }),
+    );
+
+    // Backward compatibility: an old device that knows nothing about multipart.
+    expect(r2Adapter.completeMultipartUpload).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      success: true,
+      status: 'ready',
+      r2Verified: true,
+    });
   });
 
   it('does not write Cloudflare Stream values into the Mux columns', async () => {

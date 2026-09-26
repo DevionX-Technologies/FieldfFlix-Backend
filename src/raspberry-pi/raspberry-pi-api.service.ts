@@ -34,6 +34,23 @@ export interface StopRecordingResponse {
   s3Path: string;
 }
 
+/**
+ * Multipart upload instructions for the venue device.
+ *
+ * Deliberately additive: a device that does not understand this field simply
+ * ignores it and uses the single-shot `uploadUrl`, which is still present and
+ * still valid. Only short-lived per-part URLs are sent — the device never
+ * holds R2 credentials.
+ */
+export interface MultipartUploadInstruction {
+  uploadId: string;
+  partSizeBytes: number;
+  partCount: number;
+  concurrency: number;
+  /** Presigned PUT URL per part, index 0 == PartNumber 1. */
+  partUrls: string[];
+}
+
 export interface ExtractSessionPayload {
   recordingId: string;
   channel: number;
@@ -42,6 +59,13 @@ export interface ExtractSessionPayload {
   uploadUrl: string;
   s3Key: string;
   callbackWebhookUrl?: string;
+  /**
+   * Preferred path for large files: upload `partUrls` (ideally `concurrency` at
+   * a time, retrying only the failed part), then POST the returned ETags to the
+   * callback so the backend can CompleteMultipartUpload. Optional — fall back to
+   * a single PUT of `uploadUrl` when absent.
+   */
+  multipart?: MultipartUploadInstruction;
 }
 
 export interface ExtractSessionResponse {
@@ -296,9 +320,31 @@ export class RaspberryPiApiService {
       primaryUrl === recordingsTargetUrl ? liveTargetUrl : recordingsTargetUrl;
     const fallbackApiKey = this.getLiveApiKey(raspberryPiBaseUrl, customApiKey);
 
-    this.logger.log(
-      `Triggering extraction on Pi Gateway (${primaryUrl}) for Recording ${payload.recordingId} (Channel ${payload.channel})`,
+    // The trigger used to wait 30 min on the primary and then ANOTHER 30 min on
+    // the fallback, so a stuck device could pin a worker for an hour and then
+    // be re-dispatched (re-running the whole NVR extraction). One shared budget
+    // now covers both attempts.
+    const perAttemptTimeoutMs = RaspberryPiApiService.readPositiveIntEnv(
+      'PI_EXTRACT_TRIGGER_TIMEOUT_MS',
+      1_800_000,
     );
+    const totalBudgetMs = RaspberryPiApiService.readPositiveIntEnv(
+      'PI_EXTRACT_TRIGGER_TOTAL_BUDGET_MS',
+      perAttemptTimeoutMs,
+    );
+    const budgetDeadline = Date.now() + totalBudgetMs;
+    const remainingBudget = () => budgetDeadline - Date.now();
+
+    this.logger.log(
+      `Triggering extraction on Pi Gateway (${primaryUrl}) for Recording ${payload.recordingId} ` +
+        `(Channel ${payload.channel}) [perAttempt=${perAttemptTimeoutMs}ms totalBudget=${totalBudgetMs}ms ` +
+        `multipart=${payload.multipart ? payload.multipart.partCount + ' parts' : 'single-PUT'}]`,
+    );
+
+    const isTimeout = (err: any) =>
+      err?.code === 'ETIMEDOUT' ||
+      err?.code === 'ECONNABORTED' ||
+      /timeout/i.test(err?.message ?? '');
 
     try {
       const response = await this.piPost<any>(
@@ -308,13 +354,29 @@ export class RaspberryPiApiService {
           'X-API-KEY': primaryApiKey,
           'Content-Type': 'application/json',
         },
-        1800000, // 30 minutes
+        Math.min(perAttemptTimeoutMs, remainingBudget()),
       );
       return (response?.detail || response) as ExtractSessionResponse;
     } catch (primaryErr: any) {
-      if (fallbackUrl && fallbackUrl !== primaryUrl) {
+      const primaryTimedOut = isTimeout(primaryErr);
+      const left = remainingBudget();
+
+      // A timeout means the OUTCOME IS UNKNOWN: the device may still be
+      // extracting/uploading right now. Flag it so the queue does not re-dispatch
+      // a second full extraction while the first one is still running.
+      if (primaryTimedOut) {
+        throw this.buildExtractionException(
+          primaryUrl,
+          primaryErr,
+          'PI_TRIGGER_TIMEOUT',
+          true,
+        );
+      }
+
+      if (fallbackUrl && fallbackUrl !== primaryUrl && left > 0) {
         this.logger.warn(
-          `Primary extraction on ${primaryUrl} failed (${primaryErr.message}). Retrying fallback on ${fallbackUrl}...`,
+          `Primary extraction on ${primaryUrl} failed (${primaryErr.message}). ` +
+            `Retrying fallback on ${fallbackUrl} (${left}ms of budget left)...`,
         );
         try {
           const fallbackRes = await this.piPost<any>(
@@ -324,20 +386,23 @@ export class RaspberryPiApiService {
               'X-API-KEY': fallbackApiKey,
               'Content-Type': 'application/json',
             },
-            1800000, // 30 minutes
+            Math.min(perAttemptTimeoutMs, left),
           );
           return (fallbackRes?.detail || fallbackRes) as ExtractSessionResponse;
         } catch (fallbackErr: any) {
-          const errMsg =
-            fallbackErr.response?.data?.message ||
-            fallbackErr.response?.data?.error ||
-            fallbackErr.message ||
-            'Network error';
+          const timedOut = isTimeout(fallbackErr);
           this.logger.error(
-            `Error extracting session on Pi fallback (${fallbackUrl}): ${errMsg}`,
+            `Error extracting session on Pi fallback (${fallbackUrl}): ${
+              fallbackErr.response?.data?.message ||
+              fallbackErr.response?.data?.error ||
+              fallbackErr.message
+            }`,
           );
-          throw new BadGatewayException(
-            `Failed to communicate with Raspberry Pi at ${fallbackUrl}: ${errMsg}`,
+          throw this.buildExtractionException(
+            fallbackUrl,
+            fallbackErr,
+            timedOut ? 'PI_TRIGGER_TIMEOUT' : 'PI_TRIGGER_FAILED',
+            timedOut,
           );
         }
       }
@@ -350,10 +415,44 @@ export class RaspberryPiApiService {
       this.logger.error(
         `Error extracting session on Pi (${primaryUrl}): ${errMsg}`,
       );
-      throw new BadGatewayException(
-        `Failed to communicate with Raspberry Pi at ${primaryUrl}: ${errMsg}`,
+      throw this.buildExtractionException(
+        primaryUrl,
+        primaryErr,
+        'PI_TRIGGER_FAILED',
+        false,
       );
     }
+  }
+
+  /**
+   * Builds the trigger error. `outcomeUnknown` marks cases where the device may
+   * still be working, which the queue must treat as "do not immediately
+   * re-extract" rather than "failed".
+   */
+  private buildExtractionException(
+    url: string,
+    err: any,
+    code: string,
+    outcomeUnknown: boolean,
+  ): BadGatewayException {
+    const message =
+      err?.response?.data?.message ||
+      err?.response?.data?.error ||
+      err?.message ||
+      'Network error';
+    const exception = new BadGatewayException(
+      `Failed to communicate with the venue gateway at ${url}: ${message}`,
+    );
+    (exception as any).piErrorCode = code;
+    (exception as any).outcomeUnknown = outcomeUnknown;
+    return exception;
+  }
+
+  private static readPositiveIntEnv(name: string, fallback: number): number {
+    const raw = process.env[name];
+    if (!raw) return fallback;
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   }
 
   async getLiveStreamStatus(
