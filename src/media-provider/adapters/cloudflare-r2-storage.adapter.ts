@@ -94,10 +94,26 @@ export class CloudflareR2StorageAdapter implements IStorageProvider {
       region: 'auto',
       endpoint,
       credentials,
-      forcePathStyle: true,
-      requestChecksumCalculation: 'WHEN_REQUIRED',
-      responseChecksumValidation: 'WHEN_REQUIRED',
+      forcePathStyle: true, // Revert to true as R2 works best with path-style
     });
+
+    // Explicitly strip the problematic checksum header that breaks R2 presigned GETs
+    this.r2PresignClient.middlewareStack.add(
+      (next) => async (args: any) => {
+        if (args.request && args.request.query) {
+          delete args.request.query['x-amz-checksum-mode'];
+        }
+        if (args.request && args.request.headers) {
+          delete args.request.headers['x-amz-checksum-mode'];
+        }
+        return next(args);
+      },
+      {
+        step: 'build',
+        name: 'removeChecksumMode',
+        priority: 'low',
+      },
+    );
   }
 
   private getEnv(key: string, defaultValue: string): string {

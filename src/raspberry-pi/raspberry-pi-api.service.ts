@@ -290,7 +290,7 @@ export class RaspberryPiApiService {
           'X-API-KEY': primaryApiKey,
           'Content-Type': 'application/json',
         },
-        30000,
+        1800000, // 30 minutes
       );
       return (response?.detail || response) as ExtractSessionResponse;
     } catch (primaryErr: any) {
@@ -306,7 +306,7 @@ export class RaspberryPiApiService {
               'X-API-KEY': fallbackApiKey,
               'Content-Type': 'application/json',
             },
-            30000,
+            1800000, // 30 minutes
           );
           return (fallbackRes?.detail || fallbackRes) as ExtractSessionResponse;
         } catch (fallbackErr: any) {
