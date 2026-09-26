@@ -62,11 +62,11 @@ export class CloudflareMediaService {
   ) {}
 
   private getDefaultR2Bucket(): string {
-    return (
-      this.configService.get<string>('CLOUDFLARE_R2_BUCKET_NAME') ||
-      process.env.CLOUDFLARE_R2_BUCKET_NAME ||
-      'fieldflicks-production-media'
-    );
+    const bucket = process.env.CLOUDFLARE_R2_BUCKET_NAME;
+    if (bucket && bucket.trim() !== '') {
+      return bucket.trim();
+    }
+    return 'fieldflicks-production-media';
   }
 
   private getAppBaseUrl(): string {
