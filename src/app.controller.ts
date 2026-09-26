@@ -11,4 +11,14 @@ export class AppController {
   getHello(): string {
     return this.appService.getHello();
   }
+
+  @Public()
+  @Get('debug-env')
+  getDebugEnv(): any {
+    return {
+      bucket: process.env.CLOUDFLARE_R2_BUCKET_NAME || 'NOT_SET',
+      account: !!process.env.CLOUDFLARE_R2_ACCOUNT_ID,
+      node_env: process.env.NODE_ENV,
+    };
+  }
 }
