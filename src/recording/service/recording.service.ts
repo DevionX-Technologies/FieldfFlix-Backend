@@ -256,12 +256,14 @@ export class RecordingService {
   private static readonly MUX_CYCLE_MAX_IDLE_ROUNDS = 2;
 
   private static defaultMediaBucket(): string {
+    const r2 = process.env.CLOUDFLARE_R2_BUCKET_NAME;
+    if (r2 && r2.trim() !== '') return r2.trim();
+
     if (
       process.env.MEDIA_STORAGE_PROVIDER === 'r2' ||
       process.env.MEDIA_VOD_PROVIDER === 'cloudflare'
     ) {
       return (
-        process.env.CLOUDFLARE_R2_BUCKET_NAME ||
         process.env.AWS_S3_BUCKET_NAME ||
         'fieldflicks-storage'
       );
