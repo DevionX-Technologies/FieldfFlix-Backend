@@ -131,10 +131,14 @@ export class CloudflareR2StorageAdapter implements IStorageProvider {
       const command = new GetObjectCommand({
         Bucket: bucket,
         Key: input.key,
+        // R2 does not support x-amz-checksum-mode in presigned GET URLs
+        ChecksumMode: undefined,
       });
 
       const downloadUrl = await getSignedUrl(this.r2Client, command, {
         expiresIn,
+        // Omit checksum headers which R2 rejects with 403
+        unhoistableHeaders: new Set(['x-amz-checksum-mode']),
       });
 
       return {
