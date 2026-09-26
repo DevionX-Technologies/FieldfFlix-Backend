@@ -25,6 +25,7 @@ import { WebhookEvent } from './entities/webhook-event.entity';
 import { PaymentModule } from 'src/payment/payment.module';
 import { ClipProcessingModule } from 'src/clip-processing/clip-processing.module';
 import { PointsModule } from 'src/points/points.module';
+import { ExtractionRequest } from './entities/extraction-request.entity';
 
 @Module({
   imports: [
@@ -34,6 +35,7 @@ import { PointsModule } from 'src/points/points.module';
       RecordingHighlights,
       RecordingHighlightEngagement,
       WebhookEvent,
+      ExtractionRequest,
     ]),
     CameraModule,
     UserModule,

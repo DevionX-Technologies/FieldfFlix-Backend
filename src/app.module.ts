@@ -37,6 +37,7 @@ import { MediaProviderModule } from './media-provider/media-provider.module';
 import { GamesModule } from './games/games.module';
 import { CloudflareMediaModule } from './cloudflare-media/cloudflare-media.module';
 import { CloudflareRecordingsModule } from './cloudflare-recordings/cloudflare-recordings.module';
+import { ExtractionQueueModule } from './extraction-queue/extraction-queue.module';
 
 @Module({
   imports: [
@@ -83,6 +84,7 @@ import { CloudflareRecordingsModule } from './cloudflare-recordings/cloudflare-r
     GamesModule,
     CloudflareMediaModule,
     CloudflareRecordingsModule,
+    ExtractionQueueModule,
   ],
   controllers: [AppController, SharedMediaRootController],
   providers: [

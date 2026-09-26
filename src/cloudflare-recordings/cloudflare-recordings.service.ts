@@ -334,6 +334,21 @@ export class CloudflareRecordingsService {
     };
   }
 
+  /**
+   * Generates a presigned upload URL for a known R2 key.
+   * Used by ExtractionQueueService to obtain a fresh upload URL at dispatch time.
+   */
+  async generateUploadUrl(r2Key: string): Promise<{ uploadUrl: string; key: string }> {
+    const bucket = this.getBucket();
+    const upload = await this.r2Adapter.generateUploadPresignedUrl({
+      bucket,
+      key: r2Key,
+      contentType: 'video/mp4',
+      expiresInSeconds: 7200, // 2 hours
+    });
+    return { uploadUrl: upload.uploadUrl, key: r2Key };
+  }
+
   private async getAuthorizedRecording(recordingId: string, userId: string) {
     const recording = await this.recordingRepository.findOne({
       where: { id: recordingId },

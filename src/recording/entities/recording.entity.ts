@@ -158,4 +158,11 @@ export class Recording {
 
   @Column({ type: 'boolean', default: false })
   isVideoCreated: boolean;
+
+  /**
+   * Deterministic hash to deduplicate physical extractions.
+   * Format: SHA256(venueId + cameraId + startTime + endTime)
+   */
+  @Column({ type: 'varchar', length: 255, nullable: true, unique: true })
+  recording_fingerprint: string;
 }
