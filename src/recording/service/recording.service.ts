@@ -1835,7 +1835,7 @@ export class RecordingService {
     // Keep Mux healing asynchronous so it never blocks playback readiness.
     if (
       recording.s3Path &&
-      !['failed', 'cancelled', 'interrupted'].includes(
+      !['failed', 'cancelled', 'interrupted', 'extracting', 'processing'].includes(
         String(recording.status ?? '').toLowerCase(),
       )
     ) {

@@ -78,11 +78,17 @@ export class MediaFeatureFlagsService implements IMediaFeatureFlags {
       return 'r2';
     }
 
-    const provider = this.getEnv(
-      'MEDIA_STORAGE_PROVIDER',
-      's3',
-    ).toLowerCase() as StorageProviderType;
-    return provider === 'r2' ? 'r2' : 's3';
+    const envProvider = this.getEnv('MEDIA_STORAGE_PROVIDER', '');
+    if (envProvider) {
+      return envProvider.toLowerCase() === 'r2' ? 'r2' : 's3';
+    }
+    
+    // Default to R2 if CLOUDFLARE_R2_BUCKET_NAME is present
+    if (process.env.CLOUDFLARE_R2_BUCKET_NAME) {
+      return 'r2';
+    }
+    
+    return 's3';
   }
 
   getLiveProvider(context?: MediaContext): LiveProviderType {
@@ -120,11 +126,17 @@ export class MediaFeatureFlagsService implements IMediaFeatureFlags {
       return 'cloudflare';
     }
 
-    const provider = this.getEnv(
-      'MEDIA_VOD_PROVIDER',
-      'mux',
-    ).toLowerCase() as VodProviderType;
-    return provider === 'cloudflare' ? 'cloudflare' : 'mux';
+    const envProvider = this.getEnv('MEDIA_VOD_PROVIDER', '');
+    if (envProvider) {
+      return envProvider.toLowerCase() === 'cloudflare' ? 'cloudflare' : 'mux';
+    }
+    
+    // Default to Cloudflare Stream if R2 is configured
+    if (process.env.CLOUDFLARE_R2_BUCKET_NAME) {
+      return 'cloudflare';
+    }
+    
+    return 'mux';
   }
 
   isCloudflareStorageEnabled(context?: MediaContext): boolean {
