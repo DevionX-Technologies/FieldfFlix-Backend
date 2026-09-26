@@ -33,6 +33,10 @@ import {
 } from './dto/cloudflare-live.dto';
 import { CloudflareCreateClipDto } from './dto/cloudflare-clip.dto';
 import {
+  buildStreamHlsUrl,
+  isCloudflareStreamUid,
+} from '../media-provider/utils/cloudflare-stream-url';
+import {
   liveStreamCameraId,
   resolveLiveStreamSlot,
   upsertTournamentLiveStream,
@@ -66,7 +70,7 @@ export class CloudflareMediaService {
     if (bucket && bucket.trim() !== '') {
       return bucket.trim();
     }
-    return 'fieldflicks-production-media';
+    return 'fieldflicks-storage';
   }
 
   private getAppBaseUrl(): string {
@@ -282,22 +286,24 @@ export class CloudflareMediaService {
     }
 
     // The recording is ready only after the object is verified in R2.
+    const verifiedMeta = {
+      ...meta,
+      r2Key: key,
+      r2Bucket: bucketName,
+      r2Status: 'ready',
+      r2VerifiedAt: new Date().toISOString(),
+      r2ObjectSize: verifiedObject.sizeBytes,
+      r2ObjectEtag: verifiedObject.etag,
+      r2UploadedAt: new Date().toISOString(),
+      durationSeconds: dto.durationSeconds || meta.durationSeconds,
+      fileSizeBytes: dto.fileSizeBytes || meta.fileSizeBytes,
+      cloudflareStreamStatus: 'processing',
+    };
+
     await this.recordingRepo.update(recording.id, {
       status: 'ready',
       isVideoCreated: true,
-      metadata: {
-        ...meta,
-        r2Key: key,
-        r2Bucket: bucketName,
-        r2Status: 'ready',
-        r2VerifiedAt: new Date().toISOString(),
-        r2ObjectSize: verifiedObject.sizeBytes,
-        r2ObjectEtag: verifiedObject.etag,
-        r2UploadedAt: new Date().toISOString(),
-        durationSeconds: dto.durationSeconds || meta.durationSeconds,
-        fileSizeBytes: dto.fileSizeBytes || meta.fileSizeBytes,
-        cloudflareStreamStatus: 'processing',
-      } as any,
+      metadata: verifiedMeta as any,
     });
 
     this.logger.log(
@@ -306,15 +312,21 @@ export class CloudflareMediaService {
 
     // Step B: Parallel Ingest into Cloudflare Stream VOD
     try {
-      // Generate a signed download URL from R2 for Cloudflare Stream copy (valid 6 hours)
-      const downloadOutput = await this.r2Adapter.generateDownloadPresignedUrl({
-        key,
-        bucket: bucketName,
-        expiresInSeconds: 21600,
-      });
+      // Cloudflare's ingesters fetch this URL from outside our network, so it
+      // must be reachable without our credentials. A public R2 URL is used when
+      // available; otherwise fall back to a long-lived presigned GET.
+      const sourceUrl =
+        this.r2Adapter.getPublicObjectUrl(key, bucketName) ??
+        (
+          await this.r2Adapter.generateDownloadPresignedUrl({
+            key,
+            bucket: bucketName,
+            expiresInSeconds: 21600,
+          })
+        ).downloadUrl;
 
       const cfAsset = await this.vodAdapter.createAssetFromUrl({
-        sourceUrl: downloadOutput.downloadUrl,
+        sourceUrl,
         passthrough: recording.id,
         name: `Recording ${recording.id}`,
       });
@@ -323,10 +335,9 @@ export class CloudflareMediaService {
         mux_playback_id: cfAsset.playbackId || null,
         mux_media_url: cfAsset.playbackUrl || null,
         metadata: {
-          ...meta,
-          r2Key: key,
-          r2Bucket: bucketName,
-          r2Status: 'ready',
+          // Spread verifiedMeta, not the pre-update `meta`, or the R2
+          // verification fields written above get clobbered.
+          ...verifiedMeta,
           cloudflareStreamUid: cfAsset.assetId,
           cloudflareStreamStatus:
             cfAsset.status === 'ready' ? 'ready' : 'processing',
@@ -394,27 +405,32 @@ export class CloudflareMediaService {
         status === 'completed')
     ) {
       try {
-        const verifiedObject = await this.r2Adapter.headObject(r2Key, r2Bucket);
-        if (!verifiedObject || verifiedObject.sizeBytes <= 0) {
+        // Prefer the bucket's public URL: stable, non-expiring, and immune to
+        // the presigned-URL checksum-signature 403. Falls back to presigning
+        // when no public delivery domain is configured.
+        const resolved = await this.r2Adapter.resolvePlaybackUrl(
+          r2Key,
+          r2Bucket,
+          ttlSeconds,
+        );
+
+        if (!resolved) {
           throw new Error('R2 object was not found or was empty');
         }
-        const downloadOutput =
-          await this.r2Adapter.generateDownloadPresignedUrl({
-            key: r2Key,
-            bucket: r2Bucket,
-            expiresInSeconds: ttlSeconds,
-          });
 
         r2Details = {
           available: true,
-          url: downloadOutput.downloadUrl,
+          url: resolved.url,
           key: r2Key,
           bucket: r2Bucket,
-          expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
+          expiresAt:
+            resolved.source === 'public'
+              ? null
+              : new Date(Date.now() + ttlSeconds * 1000).toISOString(),
         };
       } catch (err: any) {
         this.logger.warn(
-          `Failed to generate R2 download URL for ${recordingId}: ${err?.message}`,
+          `Failed to resolve R2 playback URL for ${recordingId}: ${err?.message}`,
         );
       }
     }
@@ -423,14 +439,12 @@ export class CloudflareMediaService {
     const streamUid =
       meta.cloudflareStreamUid ||
       (recording.mux_playback_id &&
-      /^[a-f0-9]{32}$/i.test(recording.mux_playback_id)
+      isCloudflareStreamUid(recording.mux_playback_id)
         ? recording.mux_playback_id
         : null);
 
     const isStreamReady = meta.cloudflareStreamStatus === 'ready';
-    let streamManifestUrl: string | null = streamUid
-      ? `https://videodelivery.net/${streamUid}/manifest/video.m3u8`
-      : null;
+    let streamManifestUrl: string | null = buildStreamHlsUrl(streamUid);
     let playbackToken: string | null = null;
 
     if (streamUid && isStreamReady) {
@@ -440,7 +454,7 @@ export class CloudflareMediaService {
           ttlSeconds,
         );
         playbackToken = res.token;
-        streamManifestUrl = `https://videodelivery.net/${playbackToken}/manifest/video.m3u8`;
+        streamManifestUrl = buildStreamHlsUrl(res.token);
       } catch {
         // Fallback to public manifest if token service is unconfigured
       }

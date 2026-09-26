@@ -27,7 +27,11 @@ export class CloudflareStreamVodAdapter implements IVodProvider {
     @Optional() private readonly configService?: ConfigService,
     @Optional() customHttpClient?: AxiosInstance,
   ) {
-    this.accountId = this.getEnv('CLOUDFLARE_ACCOUNT_ID', '');
+    this.accountId =
+      this.getEnv('CLOUDFLARE_ACCOUNT_ID', '') ||
+      this.getEnv('CLOUDFLARE_STREAM_ACCOUNT_ID', '') ||
+      this.getEnv('CLOUDFLARE_R2_ACCOUNT_ID', '');
+
     this.apiToken =
       this.getEnv('CLOUDFLARE_STREAM_API_TOKEN', '') ||
       this.getEnv('CLOUDFLARE_API_TOKEN', '');

@@ -60,6 +60,10 @@ import { ActiveHighlightDto } from '../dto/active-highlight.dto';
 import { resolvePublicAppBaseUrl } from 'src/utils/public-app-base-url.util';
 import { CloudflarePlaybackTokenService } from 'src/media-provider/services/cloudflare-playback-token.service';
 import { MediaProviderFactory } from 'src/media-provider/services/media-provider-factory.service';
+import {
+  buildStreamHlsUrl,
+  isCloudflareStreamUid,
+} from 'src/media-provider/utils/cloudflare-stream-url';
 import { ExtractMatchVideoDto } from '../dto/extract-match-video.dto';
 
 /**
@@ -430,15 +434,12 @@ export class RecordingController {
     const cfUid =
       recMeta.cloudflareStreamUid ||
       (recording.mux_playback_id &&
-      /^[a-f0-9]{32}$/i.test(recording.mux_playback_id)
+      isCloudflareStreamUid(recording.mux_playback_id)
         ? recording.mux_playback_id
         : null);
 
-    const streamPlaybackUrl = cfUid
-      ? `https://customer-82fo9gohgj9tanfq.cloudflarestream.com/${cfUid}/manifest/video.m3u8`
-      : null;
+    const streamPlaybackUrl = buildStreamHlsUrl(cfUid);
 
-    let directPlaybackUrl: string | null = null;
     const r2Key =
       recMeta.r2Key ||
       recMeta.expected_s3_key ||
@@ -448,15 +449,30 @@ export class RecordingController {
       process.env.CLOUDFLARE_R2_BUCKET_NAME ||
       'fieldflicks-storage';
 
+    let directPlaybackUrl: string | null = null;
     if (r2Key && this.mediaProviderFactory) {
       try {
         const storageProvider = this.mediaProviderFactory.getStorageProvider();
-        const out = await storageProvider.generateDownloadPresignedUrl({
-          key: r2Key,
-          bucket: r2Bucket,
-          expiresInSeconds: 21600,
-        });
-        directPlaybackUrl = out.downloadUrl;
+        // R2 exposes a public object URL that needs no signing and never
+        // expires; S3 keeps the presigned path.
+        const r2Aware = storageProvider as {
+          resolvePlaybackUrl?: (
+            k: string,
+            b?: string,
+            e?: number,
+          ) => Promise<{ url: string } | null>;
+        };
+        directPlaybackUrl =
+          typeof r2Aware.resolvePlaybackUrl === 'function'
+            ? ((await r2Aware.resolvePlaybackUrl(r2Key, r2Bucket, 21600))
+                ?.url ?? null)
+            : (
+                await storageProvider.generateDownloadPresignedUrl({
+                  key: r2Key,
+                  bucket: r2Bucket,
+                  expiresInSeconds: 21600,
+                })
+              ).downloadUrl;
       } catch {
         // fallback
       }
@@ -794,22 +810,41 @@ export class RecordingController {
         if (this.mediaProviderFactory) {
           const storageProvider =
             this.mediaProviderFactory.getStorageProvider();
-          const object = await storageProvider.headObject(
-            storageKey,
-            storageBucket,
-          );
-          if (!object || object.sizeBytes <= 0) {
-            throw new NotFoundException(
-              `R2 object is missing or empty for recording ${recordingId}`,
+          // R2's public object URL needs no signature and never expires.
+          const r2Aware = storageProvider as {
+            resolvePlaybackUrl?: (
+              k: string,
+              b?: string,
+              e?: number,
+            ) => Promise<{ url: string } | null>;
+          };
+          if (typeof r2Aware.resolvePlaybackUrl === 'function') {
+            directPlaybackUrl =
+              (
+                await r2Aware.resolvePlaybackUrl(
+                  storageKey,
+                  storageBucket,
+                  21600,
+                )
+              )?.url ?? null;
+          } else {
+            const object = await storageProvider.headObject(
+              storageKey,
+              storageBucket,
             );
+            if (!object || object.sizeBytes <= 0) {
+              throw new NotFoundException(
+                `R2 object is missing or empty for recording ${recordingId}`,
+              );
+            }
+            const downloadOutput =
+              await storageProvider.generateDownloadPresignedUrl({
+                key: storageKey,
+                bucket: storageBucket,
+                expiresInSeconds: 21600, // 6 hours
+              });
+            directPlaybackUrl = downloadOutput.downloadUrl;
           }
-          const downloadOutput =
-            await storageProvider.generateDownloadPresignedUrl({
-              key: storageKey,
-              bucket: storageBucket,
-              expiresInSeconds: 21600, // 6 hours
-            });
-          directPlaybackUrl = downloadOutput.downloadUrl;
           isDirectReady = Boolean(isStatusReady && directPlaybackUrl);
         } else {
           directPlaybackUrl = await this.fileServiceService.getSignedUrlFromS3(
@@ -831,15 +866,12 @@ export class RecordingController {
       recMeta.cloudflareStreamUid ||
       (recMeta.provider === 'cloudflare' ? recMeta.playbackId : null) ||
       (recording.mux_playback_id &&
-      /^[a-f0-9]{32}$/i.test(recording.mux_playback_id)
+      isCloudflareStreamUid(recording.mux_playback_id)
         ? recording.mux_playback_id
         : null);
     const isCloudflare = recMeta.provider === 'cloudflare' || Boolean(cfUid);
 
-    const publicStreamManifest = cfUid
-      ? `https://videodelivery.net/${cfUid}/manifest/video.m3u8`
-      : null;
-    let streamPlaybackUrl: string | null = publicStreamManifest;
+    let streamPlaybackUrl: string | null = buildStreamHlsUrl(cfUid);
     let isStreamReady = false;
     let signedToken: string | null = null;
     let streamExpiresAt: any = Math.floor(Date.now() / 1000) + 21600;
@@ -853,7 +885,7 @@ export class RecordingController {
               21600,
             );
           signedToken = res.token;
-          streamPlaybackUrl = `https://videodelivery.net/${signedToken}/manifest/video.m3u8`;
+          streamPlaybackUrl = buildStreamHlsUrl(signedToken);
           streamExpiresAt = res.expiresAt;
         } catch (err: any) {
           this.logger.warn(
@@ -999,7 +1031,7 @@ export class RecordingController {
       is_direct_ready: isDirectReady,
       is_stream_ready: isStreamReady,
       mux_public_url: isCloudflare
-        ? publicStreamManifest
+        ? buildStreamHlsUrl(cfUid)
         : playbackId
           ? `https://stream.mux.com/${playbackId}.m3u8`
           : primaryUrl,

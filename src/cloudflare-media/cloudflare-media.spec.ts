@@ -68,6 +68,13 @@ describe('CloudflareMediaService & Controller', () => {
         'https://r2.cloudflarestorage.com/fieldflicks-bucket/recordings/test.mp4?downloadSig=abc',
       expiresInSeconds: 21600,
     }),
+    // No CLOUDFLARE_R2_PUBLIC_URL is set in specs, so the real adapter reports
+    // no public delivery and falls through to a presigned GET.
+    getPublicObjectUrl: jest.fn().mockReturnValue(null),
+    resolvePlaybackUrl: jest.fn().mockResolvedValue({
+      url: 'https://r2.cloudflarestorage.com/fieldflicks-bucket/recordings/test.mp4?downloadSig=abc',
+      source: 'presigned',
+    }),
   };
 
   const mockVodAdapter = {

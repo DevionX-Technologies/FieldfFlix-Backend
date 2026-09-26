@@ -46,12 +46,23 @@ describe('Games Module', () => {
 
   const mockStorageProvider = {
     providerName: 'r2',
+    headObject: jest.fn().mockResolvedValue({
+      key: 'recordings/test.mp4',
+      sizeBytes: 1024,
+      contentType: 'video/mp4',
+    }),
     generateDownloadPresignedUrl: jest.fn().mockResolvedValue({
       downloadUrl:
         'https://test-account.r2.cloudflarestorage.com/recordings/test.mp4?signed=true',
       expiresInSeconds: 21600,
     }),
     generateUploadPresignedUrl: jest.fn(),
+    // R2 reports no public delivery domain in specs, so playback presigns.
+    getPublicObjectUrl: jest.fn().mockReturnValue(null),
+    resolvePlaybackUrl: jest.fn().mockResolvedValue({
+      url: 'https://test-account.r2.cloudflarestorage.com/recordings/test.mp4?signed=true',
+      source: 'presigned',
+    }),
   };
 
   const mockMediaProviderFactory = {

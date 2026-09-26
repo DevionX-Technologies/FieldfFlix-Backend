@@ -16,6 +16,7 @@ import { ExtractMatchDto } from './dto/extract-match.dto';
 import { RecordingService } from '../recording/service/recording.service';
 import { MediaProviderFactory } from '../media-provider/services/media-provider-factory.service';
 import { CloudflarePlaybackTokenService } from '../media-provider/services/cloudflare-playback-token.service';
+import { buildStreamHlsUrl } from '../media-provider/utils/cloudflare-stream-url';
 
 /**
  * GamesService
@@ -304,20 +305,49 @@ export class GamesService {
         if (this.mediaProviderFactory) {
           const storageProvider =
             this.mediaProviderFactory.getStorageProvider();
-          const object = await storageProvider.headObject(key, bucket);
-          if (!object || object.sizeBytes <= 0) {
-            throw new NotFoundException(
-              `R2 object for game ${gameId} was not found or was empty`,
-            );
-          }
-          const downloadOutput =
-            await storageProvider.generateDownloadPresignedUrl({
+          // `resolvePlaybackUrl` is R2-aware and prefers the bucket's public
+          // URL; the S3 adapter has no such method, so it falls back to the
+          // generic head + presign path below.
+          const r2Aware = storageProvider as {
+            resolvePlaybackUrl?: (
+              k: string,
+              b?: string,
+              e?: number,
+            ) => Promise<{
+              url: string;
+              source: 'public' | 'presigned';
+            } | null>;
+          };
+
+          if (typeof r2Aware.resolvePlaybackUrl === 'function') {
+            const resolved = await r2Aware.resolvePlaybackUrl(
               key,
               bucket,
-              expiresInSeconds: 21600, // 6 hours
-            });
-          directUrl = downloadOutput.downloadUrl;
-          isDirectReady = true;
+              21600,
+            );
+            if (!resolved) {
+              throw new NotFoundException(
+                `R2 object for game ${gameId} was not found or was empty`,
+              );
+            }
+            directUrl = resolved.url;
+            isDirectReady = true;
+          } else {
+            const object = await storageProvider.headObject(key, bucket);
+            if (!object || object.sizeBytes <= 0) {
+              throw new NotFoundException(
+                `S3 object for game ${gameId} was not found or was empty`,
+              );
+            }
+            const downloadOutput =
+              await storageProvider.generateDownloadPresignedUrl({
+                key,
+                bucket,
+                expiresInSeconds: 21600,
+              });
+            directUrl = downloadOutput.downloadUrl;
+            isDirectReady = true;
+          }
         }
       } catch (err: any) {
         this.logger.warn(
@@ -335,12 +365,12 @@ export class GamesService {
       (recMeta.provider === 'cloudflare' ? recMeta.playbackId : null);
 
     if (cfUid) {
-      streamUrl = `https://videodelivery.net/${cfUid}/manifest/video.m3u8`;
+      streamUrl = buildStreamHlsUrl(cfUid);
       if (this.cfPlaybackTokenService) {
         try {
           const tokenRes =
             await this.cfPlaybackTokenService.generateSignedToken(cfUid, 21600);
-          streamUrl = `https://videodelivery.net/${tokenRes.token}/manifest/video.m3u8`;
+          streamUrl = buildStreamHlsUrl(tokenRes.token);
         } catch (e: any) {
           this.logger.warn(`Stream token generation failed: ${e.message}`);
         }
@@ -392,7 +422,14 @@ export class GamesService {
           ? recMeta.duration
           : 0;
     const durationMs = Math.round(durationSeconds * 1000);
-    const r2ExpiresAtIso = new Date(Date.now() + 21600 * 1000).toISOString();
+    // A public R2 URL never expires; only a presigned one carries a deadline.
+    const directUrlIsPresigned =
+      isDirectReady &&
+      directUrl !== null &&
+      directUrl.includes('X-Amz-Signature');
+    const r2ExpiresAtIso = directUrlIsPresigned
+      ? new Date(Date.now() + 21600 * 1000).toISOString()
+      : null;
     const recUpdatedAt =
       (recording as any).updated_at instanceof Date
         ? (recording as any).updated_at.toISOString()

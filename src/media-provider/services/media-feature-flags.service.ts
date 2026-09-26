@@ -82,12 +82,12 @@ export class MediaFeatureFlagsService implements IMediaFeatureFlags {
     if (envProvider) {
       return envProvider.toLowerCase() === 'r2' ? 'r2' : 's3';
     }
-    
+
     // Default to R2 if CLOUDFLARE_R2_BUCKET_NAME is present
     if (process.env.CLOUDFLARE_R2_BUCKET_NAME) {
       return 'r2';
     }
-    
+
     return 's3';
   }
 
@@ -130,12 +130,12 @@ export class MediaFeatureFlagsService implements IMediaFeatureFlags {
     if (envProvider) {
       return envProvider.toLowerCase() === 'cloudflare' ? 'cloudflare' : 'mux';
     }
-    
+
     // Default to Cloudflare Stream if R2 is configured
     if (process.env.CLOUDFLARE_R2_BUCKET_NAME) {
       return 'cloudflare';
     }
-    
+
     return 'mux';
   }
 

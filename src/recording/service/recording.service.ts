@@ -11,6 +11,10 @@ import {
 } from '@nestjs/common';
 import { MediaProviderFactory } from 'src/media-provider/services/media-provider-factory.service';
 import { MediaFeatureFlagsService } from 'src/media-provider/services/media-feature-flags.service';
+import {
+  buildStreamHlsUrl,
+  isCloudflareStreamUid,
+} from 'src/media-provider/utils/cloudflare-stream-url';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import {
@@ -263,10 +267,7 @@ export class RecordingService {
       process.env.MEDIA_STORAGE_PROVIDER === 'r2' ||
       process.env.MEDIA_VOD_PROVIDER === 'cloudflare'
     ) {
-      return (
-        process.env.AWS_S3_BUCKET_NAME ||
-        'fieldflicks-storage'
-      );
+      return process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-storage';
     }
     return process.env.AWS_S3_BUCKET_NAME || 'fieldflicks-production-media';
   }
@@ -1835,9 +1836,13 @@ export class RecordingService {
     // Keep Mux healing asynchronous so it never blocks playback readiness.
     if (
       recording.s3Path &&
-      !['failed', 'cancelled', 'interrupted', 'extracting', 'processing'].includes(
-        String(recording.status ?? '').toLowerCase(),
-      )
+      ![
+        'failed',
+        'cancelled',
+        'interrupted',
+        'extracting',
+        'processing',
+      ].includes(String(recording.status ?? '').toLowerCase())
     ) {
       if (recording.status !== 'ready') {
         await this.recordingRepository.update(recordingId, {
@@ -3686,17 +3691,15 @@ export class RecordingService {
       const cfUid =
         meta.cloudflareStreamUid ||
         (recording.mux_playback_id &&
-        /^[a-f0-9]{32}$/i.test(recording.mux_playback_id)
+        isCloudflareStreamUid(recording.mux_playback_id)
           ? recording.mux_playback_id
           : null);
 
       if (cfUid) {
-        return {
-          publicUrl: `https://customer-82fo9gohgj9tanfq.cloudflarestream.com/${cfUid}/manifest/video.m3u8`,
-        };
+        return { publicUrl: buildStreamHlsUrl(cfUid) };
       }
 
-      // If Stream is not ready yet, return R2 direct download URL
+      // If Stream is not ready yet, return R2 direct playback URL
       const r2Key =
         meta.r2Key ||
         meta.expected_s3_key ||
@@ -3710,12 +3713,23 @@ export class RecordingService {
         try {
           const storageProvider =
             this.mediaProviderFactory.getStorageProvider();
-          const out = await storageProvider.generateDownloadPresignedUrl({
-            key: r2Key,
-            bucket: r2Bucket,
-            expiresInSeconds: 21600,
-          });
-          return { publicUrl: out.downloadUrl };
+          const r2Aware = storageProvider as {
+            resolvePlaybackUrl?: (
+              k: string,
+              b?: string,
+              e?: number,
+            ) => Promise<{ url: string } | null>;
+          };
+          const resolved =
+            typeof r2Aware.resolvePlaybackUrl === 'function'
+              ? await r2Aware.resolvePlaybackUrl(r2Key, r2Bucket, 21600)
+              : await storageProvider.generateDownloadPresignedUrl({
+                  key: r2Key,
+                  bucket: r2Bucket,
+                  expiresInSeconds: 21600,
+                });
+          const url = 'url' in resolved ? resolved?.url : resolved?.downloadUrl;
+          if (url) return { publicUrl: url };
         } catch {
           // fallback to null
         }
